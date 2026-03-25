@@ -201,11 +201,6 @@ function ToastItem({
   );
 }
 
-/**
- * Container for proactive suggestion toasts.
- * Renders up to 3 visible toasts stacked vertically in the top-right corner.
- * Toasts slide in from the right and auto-dismiss based on priority.
- */
 export default function ProactiveToast({ suggestions, onDismiss }: ProactiveToastProps) {
   const visible = suggestions.filter((s) => !s.dismissed).slice(0, 3);
 

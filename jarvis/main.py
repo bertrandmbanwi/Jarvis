@@ -1,4 +1,4 @@
-"""JARVIS main entry point. Launches voice listener, brain, speaker, and API server."""
+"""JARVIS main entry point."""
 import asyncio
 import logging
 import os
@@ -31,7 +31,7 @@ BANNER = r"""
 
 
 async def run_voice_mode():
-    """Run JARVIS in full voice mode (wake word + STT + TTS)."""
+    """Run JARVIS in voice mode."""
     from jarvis.core.brain import JarvisBrain
     from jarvis.voice.listener import VoiceListener
     from jarvis.voice.speaker import VoiceSpeaker
@@ -96,7 +96,7 @@ async def run_voice_mode():
 
 
 async def run_text_mode():
-    """Run JARVIS in text-only mode (terminal chat)."""
+    """Run JARVIS in text mode."""
     from jarvis.core.brain import JarvisBrain
     from jarvis.voice.speaker import VoiceSpeaker
 
@@ -160,7 +160,7 @@ async def run_text_mode():
 
 
 async def run_server_mode():
-    """Run JARVIS as an API server."""
+    """Run JARVIS as API server."""
     import uvicorn
     from jarvis.core.server import app
 
@@ -182,7 +182,7 @@ async def run_server_mode():
 
 
 async def run_full():
-    """Run API server and voice listener concurrently with WebSocket broadcast."""
+    """Run API server and voice listener concurrently."""
     import uvicorn
     from jarvis.core.server import app, brain, broadcast_voice_interaction, broadcast_voice_state, broadcast_voice_chunk, set_voice_components
     from jarvis.voice.listener import VoiceListener
@@ -205,7 +205,7 @@ async def run_full():
     server = uvicorn.Server(config)
 
     async def run_voice_with_shared_brain():
-        """Voice mode sharing server brain and broadcasting to UI."""
+        """Voice mode sharing server brain."""
         listener = VoiceListener()
         speaker = VoiceSpeaker()
 
@@ -281,6 +281,7 @@ async def run_full():
 
 def _display_auth_info():
     """Display PIN authentication info."""
+
     from jarvis.core.server import get_startup_pin
     pin = get_startup_pin()
     if pin:
@@ -298,6 +299,7 @@ def _display_auth_info():
 
 def main():
     """CLI entry point."""
+
     print(BANNER)
 
     mode = "text"  # Default mode

@@ -35,25 +35,19 @@ from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.agent.learning")
 
-# Directory for learning data (separate from raw plans)
 LEARNING_DIR = settings.DATA_DIR / "learning"
 LEARNING_DIR.mkdir(parents=True, exist_ok=True)
 
-# File paths for persisted learning state
 TOOL_STATS_FILE = LEARNING_DIR / "tool_stats.json"
 PLAN_PATTERNS_FILE = LEARNING_DIR / "plan_patterns.json"
 FAILURE_LOG_FILE = LEARNING_DIR / "failure_log.json"
 
-# Plans directory (written by TaskTracker)
 PLANS_DIR = settings.DATA_DIR / "plans"
 
-# Maximum number of failure entries to retain (prevents unbounded growth)
 MAX_FAILURE_LOG_ENTRIES = 200
 
-# Maximum number of plan pattern entries to retain
 MAX_PLAN_PATTERNS = 100
 
-# Minimum number of executions before a tool's stats are considered reliable
 MIN_EXECUTIONS_FOR_RELIABILITY = 3
 
 
@@ -98,7 +92,6 @@ class ToolStats:
             "avg_duration_s": round(self.avg_duration_s, 2),
             "last_used": self.last_used,
             "is_reliable": self.is_reliable,
-            # Keep only the last 10 failure reasons
             "failure_reasons": self.failure_reasons[-10:],
         }
 
@@ -160,16 +153,7 @@ class PlanPattern:
 
 
 class LearningLoop:
-    """
-    Learns from completed plans and agent executions to improve future performance.
-
-    The learning loop has three main functions:
-    1. Record: capture outcomes from completed plans and tool executions
-    2. Analyze: compute tool reliability scores, identify failure patterns
-    3. Advise: generate context strings that are injected into planner prompts
-
-    All learning data is persisted to disk so insights survive restarts.
-    """
+    """Learns from completed plans and tool executions to improve performance."""
 
     def __init__(self):
         self._tool_stats: dict[str, ToolStats] = {}
@@ -192,20 +176,8 @@ class LearningLoop:
             len(self._failure_log),
         )
 
-    # ================================================================
-    # Recording: capture outcomes
-    # ================================================================
-
     def record_plan_outcome(self, plan_dict: dict):
-        """
-        Record the outcome of a completed task plan.
-
-        Extracts tool stats from subtask results and records the overall
-        plan pattern for future reference.
-
-        Args:
-            plan_dict: The plan's to_dict() output from TaskTracker
-        """
+        """Record outcome of a completed task plan."""
         if not plan_dict:
             return
 
@@ -213,13 +185,11 @@ class LearningLoop:
         if not subtasks:
             return
 
-        # Extract per-subtask metrics
         completed = 0
         failed = 0
         total_duration = 0.0
         failure_reasons = []
         subtask_titles = []
-
         for st in subtasks:
             subtask_titles.append(st.get("title", "unknown"))
             status = st.get("status", "pending")
@@ -240,7 +210,6 @@ class LearningLoop:
                         plan_id=plan_dict.get("plan_id", ""),
                     )
 
-        # Determine overall outcome
         if failed == 0 and completed == len(subtasks):
             outcome = "success"
         elif completed > 0:
@@ -248,7 +217,6 @@ class LearningLoop:
         else:
             outcome = "failed"
 
-        # Record the plan pattern
         pattern = PlanPattern(
             request_summary=plan_dict.get("original_request", "")[:200],
             goal_summary=plan_dict.get("goal_summary", ""),
@@ -263,7 +231,6 @@ class LearningLoop:
         )
         self._plan_patterns.append(pattern)
 
-        # Cap pattern list size
         if len(self._plan_patterns) > MAX_PLAN_PATTERNS:
             self._plan_patterns = self._plan_patterns[-MAX_PLAN_PATTERNS:]
 
@@ -276,7 +243,6 @@ class LearningLoop:
             total_duration,
         )
 
-        # Persist
         self._save_plan_patterns()
         self._save_failure_log()
 
@@ -287,17 +253,7 @@ class LearningLoop:
         duration_s: float = 0.0,
         error: str = "",
     ):
-        """
-        Record a single tool execution outcome.
-
-        Called by the executor after each tool call completes (or fails).
-
-        Args:
-            tool_name: Name of the tool that was called
-            success: Whether the tool executed successfully
-            duration_s: How long the tool took to execute
-            error: Error message if the tool failed
-        """
+        """Record a single tool execution outcome."""
         if tool_name not in self._tool_stats:
             self._tool_stats[tool_name] = ToolStats(name=tool_name)
 
@@ -312,11 +268,9 @@ class LearningLoop:
             stats.failures += 1
             if error:
                 stats.failure_reasons.append(error[:200])
-                # Keep only the last 20 failure reasons
                 if len(stats.failure_reasons) > 20:
                     stats.failure_reasons = stats.failure_reasons[-20:]
 
-        # Persist periodically (every 10 calls to any tool)
         total_calls = sum(s.total_calls for s in self._tool_stats.values())
         if total_calls % 10 == 0:
             self._save_tool_stats()
@@ -328,22 +282,10 @@ class LearningLoop:
         success: bool,
         duration_s: float = 0.0,
     ):
-        """
-        Record a single-shot agent execution (non-plan).
-
-        Extracts tool call info for tool reliability tracking.
-
-        Args:
-            user_input: What the user asked
-            tool_calls: List of tool call dicts from the executor
-            success: Whether the overall execution succeeded
-            duration_s: Total execution duration
-        """
+        """Record a single-shot agent execution for tool reliability tracking."""
         for tc in tool_calls:
             tool_name = tc.get("name", "")
             if tool_name:
-                # For agent executions, we consider all tools successful
-                # unless the overall execution failed on the last tool
                 is_last = tc == tool_calls[-1]
                 tool_success = success or not is_last
                 self.record_tool_call(
@@ -351,10 +293,6 @@ class LearningLoop:
                     success=tool_success,
                     duration_s=duration_s / max(len(tool_calls), 1),
                 )
-
-    # ================================================================
-    # Analysis: compute insights
-    # ================================================================
 
     def get_tool_reliability_report(self) -> dict:
         """
@@ -377,31 +315,19 @@ class LearningLoop:
         ]
 
     def get_common_failure_patterns(self, limit: int = 5) -> list[dict]:
-        """
-        Identify the most common failure patterns from recent failures.
-
-        Returns a list of pattern dicts with:
-        - pattern: the common error substring
-        - count: how many times it appeared
-        - recent_example: a recent full error message
-        """
+        """Identify most common failure patterns from recent failures."""
         if not self._failure_log:
             return []
 
-        # Extract error keywords from recent failures
         recent = self._failure_log[-50:]
         error_keywords = Counter()
-
         for entry in recent:
             error = entry.get("error", "").lower()
-            # Extract meaningful phrases from errors
             for keyword in self._extract_error_keywords(error):
                 error_keywords[keyword] += 1
 
-        # Return the most common patterns
         patterns = []
         for keyword, count in error_keywords.most_common(limit):
-            # Find a recent example
             example = ""
             for entry in reversed(recent):
                 if keyword in entry.get("error", "").lower():
@@ -412,7 +338,6 @@ class LearningLoop:
                 "count": count,
                 "recent_example": example,
             })
-
         return patterns
 
     def get_plan_success_rate(self) -> dict:
@@ -442,11 +367,7 @@ class LearningLoop:
         }
 
     def get_insights_summary(self) -> dict:
-        """
-        Get a comprehensive summary of all learning insights.
-
-        Used by the REST endpoint and for debugging.
-        """
+        """Get comprehensive summary of all learning insights."""
         return {
             "plan_stats": self.get_plan_success_rate(),
             "unreliable_tools": self.get_unreliable_tools(),
@@ -459,24 +380,10 @@ class LearningLoop:
             "failure_log_size": len(self._failure_log),
         }
 
-    # ================================================================
-    # Advise: generate context for planner prompts
-    # ================================================================
-
     def get_planner_context(self) -> str:
-        """
-        Generate a context string to inject into the planner's system prompt.
-
-        This is the primary output of the learning loop. It tells the planner
-        about known issues, unreliable tools, common failure modes, and
-        effective decomposition patterns, so future plans avoid past mistakes.
-
-        Returns:
-            A concise context string (empty if no meaningful insights yet).
-        """
+        """Generate context to inject into planner's system prompt."""
         sections = []
 
-        # Section 1: Unreliable tools warning
         unreliable = self.get_unreliable_tools()
         if unreliable:
             tool_warnings = []
@@ -493,7 +400,6 @@ class LearningLoop:
                 + "\n".join(tool_warnings)
             )
 
-        # Section 2: Common failure patterns
         failure_patterns = self.get_common_failure_patterns(limit=3)
         if failure_patterns:
             pattern_lines = []
@@ -507,7 +413,6 @@ class LearningLoop:
                 + "\n".join(pattern_lines)
             )
 
-        # Section 3: Plan success stats (only if we have meaningful data)
         plan_stats = self.get_plan_success_rate()
         if plan_stats["total_plans"] >= 3:
             sections.append(
@@ -517,7 +422,6 @@ class LearningLoop:
                 f"{plan_stats['avg_duration_s']:.0f}s duration."
             )
 
-        # Section 4: Successful plan patterns (for reference)
         successful_patterns = [
             p for p in self._plan_patterns[-10:]
             if p.outcome == "success"
@@ -543,17 +447,8 @@ class LearningLoop:
             + "\n--- END LEARNING CONTEXT ---"
         )
 
-    # ================================================================
-    # Backfill: analyze existing plan files
-    # ================================================================
-
     def backfill_from_plan_files(self):
-        """
-        Scan existing plan JSON files and extract learning data.
-
-        Called on first initialization to bootstrap insights from any
-        plans that were completed before the learning loop was added.
-        """
+        """Scan plan files and extract learning data for bootstrap."""
         if not PLANS_DIR.exists():
             return
 
@@ -569,7 +464,6 @@ class LearningLoop:
         for pf in plan_files:
             try:
                 data = json.loads(pf.read_text(encoding="utf-8"))
-                # Only process if we haven't already recorded this plan
                 plan_id = data.get("plan_id", "")
                 already_recorded = any(
                     p.goal_summary == data.get("goal_summary", "")
@@ -584,10 +478,6 @@ class LearningLoop:
 
         if backfilled:
             logger.info("Backfilled learning data from %d existing plan(s).", backfilled)
-
-    # ================================================================
-    # Private helpers
-    # ================================================================
 
     def _record_failure(
         self,
@@ -609,16 +499,10 @@ class LearningLoop:
             self._failure_log = self._failure_log[-MAX_FAILURE_LOG_ENTRIES:]
 
     def _extract_error_keywords(self, error_text: str) -> list[str]:
-        """
-        Extract meaningful keyword phrases from an error message.
-
-        Groups errors into categories rather than treating each unique
-        message as separate. This helps identify systemic issues.
-        """
+        """Extract keyword phrases from error message for categorization."""
         keywords = []
         error_lower = error_text.lower()
 
-        # Known error categories
         category_patterns = {
             "timeout": ["timeout", "timed out", "deadline exceeded"],
             "permission denied": ["permission denied", "access denied", "forbidden", "403"],
@@ -634,18 +518,12 @@ class LearningLoop:
             if any(p in error_lower for p in patterns):
                 keywords.append(category)
 
-        # If no known category matched, use a truncated version of the error
         if not keywords and error_text:
-            # Take the first meaningful phrase (up to 40 chars)
             truncated = error_text[:40].strip()
             if truncated:
                 keywords.append(truncated.lower())
 
         return keywords
-
-    # ================================================================
-    # Persistence
-    # ================================================================
 
     def _save_tool_stats(self):
         """Persist tool statistics to disk."""

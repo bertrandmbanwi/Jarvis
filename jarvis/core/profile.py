@@ -1,20 +1,4 @@
-"""
-JARVIS User Profile Management
-
-Stores and retrieves user preferences and profile data from a JSON file
-at data/profile/profile.json. The profile is loaded once on import and
-written back to disk on every update.
-
-Profile data includes:
-    - User name and preferred form of address
-    - Preferred browser, search engine, and default apps
-    - Notification preferences
-    - Custom shortcuts and aliases
-    - Any other key-value preferences the user sets via voice or API
-
-Tools are registered so JARVIS can read and update the profile via voice commands
-(e.g., "Remember that my preferred browser is Chrome").
-"""
+"""User profile management with persistent JSON storage."""
 
 import json
 import logging
@@ -47,7 +31,7 @@ _profile: dict[str, Any] = {}
 
 
 def _load_profile() -> dict[str, Any]:
-    """Load profile from disk or create default if missing."""
+    """Load profile from disk or create default."""
     if PROFILE_FILE.exists():
         try:
             data = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
@@ -74,12 +58,12 @@ def _save_profile(data: dict[str, Any]) -> None:
         logger.error("Failed to save profile: %s", e)
 
 
-# Load on import
 _profile = _load_profile()
 
 
 def get_profile() -> dict[str, Any]:
     """Return the full user profile."""
+
     return dict(_profile)
 
 

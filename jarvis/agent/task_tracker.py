@@ -22,7 +22,6 @@ from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.agent.task_tracker")
 
-# Directory for persisting active and completed plans
 PLANS_DIR = settings.DATA_DIR / "plans"
 PLANS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -84,12 +83,7 @@ class Subtask:
 
 @dataclass
 class TaskPlan:
-    """
-    A decomposed plan for a complex user request.
-
-    Contains an ordered list of subtasks, the original user request,
-    and metadata about execution progress.
-    """
+    """A decomposed plan for a complex user request."""
     plan_id: str
     original_request: str
     goal_summary: str
@@ -192,12 +186,7 @@ class TaskPlan:
 
 
 class TaskTracker:
-    """
-    Manages active and historical task plans.
-
-    Provides methods to create, update, and query plans. Persists
-    completed plans to disk for the learning loop (Phase 5b).
-    """
+    """Manages active and historical task plans."""
 
     def __init__(self):
         self._active_plan: Optional[TaskPlan] = None
@@ -213,17 +202,7 @@ class TaskTracker:
         goal_summary: str,
         subtasks: list[dict],
     ) -> TaskPlan:
-        """
-        Create a new task plan from planner output.
-
-        Args:
-            original_request: The user's original message
-            goal_summary: Short summary of the overall goal
-            subtasks: List of dicts with 'title' and 'description' keys
-
-        Returns:
-            The new TaskPlan
-        """
+        """Create a new task plan from planner output."""
         plan_id = f"plan_{uuid4().hex[:8]}"
         plan = TaskPlan(
             plan_id=plan_id,
@@ -341,7 +320,7 @@ class TaskTracker:
         return self._active_plan.progress_summary()
 
     def _persist_plan(self, plan: TaskPlan):
-        """Save a plan to disk as JSON."""
+        """Save plan to disk as JSON."""
         try:
             plan_file = PLANS_DIR / f"{plan.plan_id}.json"
             plan_file.write_text(
@@ -352,7 +331,7 @@ class TaskTracker:
             logger.warning("Failed to persist plan %s: %s", plan.plan_id, e)
 
     def load_recent_plans(self, limit: int = 10) -> list[dict]:
-        """Load recent plan history from disk (for learning loop)."""
+        """Load recent plan history from disk."""
         try:
             plan_files = sorted(
                 PLANS_DIR.glob("plan_*.json"),

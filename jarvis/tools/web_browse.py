@@ -1,10 +1,4 @@
-"""
-JARVIS Web Browsing
-Fetch and extract readable text content from web pages using httpx + BeautifulSoup.
-
-Note: Playwright-based browser automation is handled by browser_agent.py.
-This module focuses on lightweight HTTP-based page fetching only.
-"""
+"""JARVIS Web Browsing: fetch and extract text from web pages using httpx and BeautifulSoup."""
 import logging
 import re
 from urllib.parse import urljoin

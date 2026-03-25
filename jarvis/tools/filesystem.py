@@ -1,7 +1,4 @@
-"""
-JARVIS File System Tools
-Safe file operations for managing files and folders on macOS.
-"""
+"""JARVIS File System Tools: safe file operations for managing files and folders."""
 import logging
 import os
 import shutil
@@ -11,14 +8,8 @@ from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.filesystem")
 
-# Directories that should never be modified
 PROTECTED_DIRS = [
-    "/System",
-    "/usr",
-    "/bin",
-    "/sbin",
-    "/private",
-    "/Library/Apple",
+    "/System", "/usr", "/bin", "/sbin", "/private", "/Library/Apple",
 ]
 
 
