@@ -1,8 +1,4 @@
-"""JARVIS LLM Engine: Multi-backend intelligence layer.
-
-Three-tier Claude API (Haiku, Sonnet, Opus) with Ollama offline fallback.
-Prompt caching reduces system prompt costs.
-"""
+"""Multi-backend LLM engine with three-tier Claude API and Ollama fallback."""
 import httpx
 import json
 import logging
@@ -72,18 +68,7 @@ def _get_anthropic_client():
 
 
 class JarvisLLM:
-    """
-    Multi-backend LLM engine for JARVIS.
-
-    Primary: Claude API (3-tier model routing)
-    Fallback: Ollama (offline mode)
-
-    Usage:
-        llm = JarvisLLM()
-        await llm.check_health()
-        response = await llm.chat("Hello", tier="fast")
-        response = await llm.chat("Complex task", tier="brain")
-    """
+    """Multi-backend LLM engine with Claude API primary and Ollama fallback."""
 
     def __init__(
         self,
@@ -232,10 +217,7 @@ class JarvisLLM:
         max_iterations: int = 10,
         system_prompt_override: Optional[str] = None,
     ) -> tuple[str, list[dict]]:
-        """Run agentic tool-use loop. Claude decides which tools to call.
-
-        Returns (final_text_response, tool_calls_log).
-        """
+        """Run agentic tool-use loop and return (final_response, tool_calls_log)."""
         client = _get_anthropic_client()
         if client is None:
             response = await self._chat_ollama(user_message, conversation_history)
@@ -317,33 +299,15 @@ class JarvisLLM:
                             result = f"Error executing {tool_name}: {e}"
 
                         if isinstance(result, list):
-                            log_text = " ".join(
-                                b.get("text", "") for b in result if b.get("type") == "text"
-                            )
-                            tool_calls_log.append({
-                                "name": tool_name,
-                                "input": tool_input,
-                                "result": log_text[:2000],
-                            })
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": result,
-                            })
+                            log_text = " ".join(b.get("text", "") for b in result if b.get("type") == "text")
+                            tool_calls_log.append({"name": tool_name, "input": tool_input, "result": log_text[:2000]})
+                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result})
                         else:
                             result_str = str(result)
-                            tool_calls_log.append({
-                                "name": tool_name,
-                                "input": tool_input,
-                                "result": result_str[:2000],
-                            })
+                            tool_calls_log.append({"name": tool_name, "input": tool_input, "result": result_str[:2000]})
                             if len(result_str) > 8000:
                                 result_str = result_str[:8000] + "\n... (truncated)"
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": result_str,
-                            })
+                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result_str})
 
                 messages.append({"role": "user", "content": tool_results})
 
@@ -386,7 +350,7 @@ class JarvisLLM:
         max_iterations: int = 10,
         system_prompt_override: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
-        """Like chat_with_tools but streams final response. Tool iterations run non-streaming."""
+        """Run tool-use loop non-streaming, then stream final response."""
         client = _get_anthropic_client()
         if client is None:
             response = await self._chat_ollama(user_message, conversation_history)
@@ -441,20 +405,12 @@ class JarvisLLM:
                             result = f"Error executing {tool_name}: {e}"
 
                         if isinstance(result, list):
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": result,
-                            })
+                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result})
                         else:
                             result_str = str(result)
                             if len(result_str) > 8000:
                                 result_str = result_str[:8000] + "\n... (truncated)"
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": result_str,
-                            })
+                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result_str})
 
                 messages.append({"role": "user", "content": tool_results})
 
@@ -512,7 +468,7 @@ class JarvisLLM:
         max_tokens_override: Optional[int] = None,
         temperature_override: Optional[float] = None,
     ) -> str:
-        """Send message to Claude API with circuit breaker and retry with backoff."""
+        """Send message to Claude API with circuit breaker and retry logic."""
         if not claude_circuit.allow_request():
             raise ConnectionError(
                 "Claude API circuit breaker is open (repeated failures). "
@@ -577,7 +533,7 @@ class JarvisLLM:
         conversation_history: Optional[list[dict]] = None,
         tier: str = "brain",
     ) -> AsyncGenerator[str, None]:
-        """Stream response from Claude API."""
+        """Stream response tokens from Claude API."""
         client = _get_anthropic_client()
         if client is None:
             raise ConnectionError("Anthropic client not available.")
@@ -613,7 +569,7 @@ class JarvisLLM:
         user_message: str,
         conversation_history: Optional[list[dict]] = None,
     ) -> list[dict]:
-        """Build messages for Claude API, merging consecutive same-role messages."""
+        """Build message list for Claude API."""
         messages = []
         if conversation_history:
             recent = conversation_history[-settings.MAX_CONTEXT_MESSAGES:]
@@ -634,7 +590,7 @@ class JarvisLLM:
         user_message: str,
         conversation_history: Optional[list[dict]] = None,
     ) -> str:
-        """Send message to Ollama and get response."""
+        """Send message to Ollama and return response."""
         messages = self._build_ollama_messages(user_message, conversation_history)
         try:
             resp = await self._ollama_client.post(
@@ -670,7 +626,7 @@ class JarvisLLM:
         user_message: str,
         conversation_history: Optional[list[dict]] = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream response from Ollama."""
+        """Stream response tokens from Ollama."""
         messages = self._build_ollama_messages(user_message, conversation_history)
         try:
             async with self._ollama_client.stream(
@@ -703,7 +659,7 @@ class JarvisLLM:
         user_message: str,
         conversation_history: Optional[list[dict]] = None,
     ) -> list[dict]:
-        """Build messages for Ollama API (includes system message)."""
+        """Build message list for Ollama API."""
         messages = [{"role": "system", "content": self.system_prompt}]
         if conversation_history:
             recent = conversation_history[-settings.MAX_CONTEXT_MESSAGES:]
@@ -712,7 +668,7 @@ class JarvisLLM:
         return messages
 
     def _track_usage(self, usage, model: str, tier: str, elapsed: float, user_preview: str = ""):
-        """Record token usage and estimated cost."""
+        """Record token usage and cost."""
         input_tokens = getattr(usage, "input_tokens", 0)
         output_tokens = getattr(usage, "output_tokens", 0)
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
@@ -788,7 +744,7 @@ class JarvisLLM:
         return "none"
 
     async def close(self):
-        """Close HTTP clients and log session cost."""
+        """Close HTTP clients and log final session cost."""
         await self._ollama_client.aclose()
         logger.info(
             "LLM engine shut down. Session cost: $%.4f across %d requests.",

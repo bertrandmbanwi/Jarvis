@@ -1,13 +1,4 @@
-"""
-JARVIS Brain: Central orchestration service (v2.1, Agentic + Task Decomposition).
-
-Routes user input to agentic executor or direct chat. Claude's native tool_use decides
-when tools are needed. Task decomposition breaks complex requests into subtask chains
-with progress broadcast to UI clients.
-
-Tier selection: fast (Haiku) for chat, brain (Sonnet) for default, deep (Opus) for
-complex reasoning.
-"""
+"""Central orchestration service with agentic executor and task decomposition."""
 import json
 import logging
 import re
@@ -37,8 +28,7 @@ MAX_CONVERSATION_TURNS = 100
 
 logger = logging.getLogger("jarvis.brain")
 
-# Phrases indicating complex reasoning (route to deep tier / Opus).
-# Only multi-word phrases to avoid false triggers on casual requests.
+# Phrases indicating complex reasoning; only multi-word to avoid false triggers.
 DEEP_KEYWORDS = [
     "analyze in detail",
     "compare and contrast",
@@ -54,7 +44,7 @@ DEEP_KEYWORDS = [
     "detailed breakdown",
 ]
 
-# Patterns for purely conversational messages (go to fast tier / Haiku).
+# Patterns for purely conversational messages.
 _CHAT_ONLY_PATTERNS = [
     r"^(?:hi|hello|hey|good (?:morning|afternoon|evening|night))[\s!.,]*$",
     r"^(?:thanks?|thank you|thx|cheers)[\s!.,]*$",
@@ -71,7 +61,7 @@ _CHAT_ONLY_PATTERNS = [
 
 
 def _is_single_chat(text: str) -> bool:
-    """Check if a single clause/sentence is purely conversational."""
+    """Check if text is purely conversational."""
     text_clean = text.strip().lower()
     if not text_clean:
         return True  # Empty fragments are not actionable
@@ -82,32 +72,21 @@ def _is_single_chat(text: str) -> bool:
 
 
 def _is_chat_only(text: str) -> bool:
-    """
-    Check if a message is purely conversational (no tool use needed).
-
-    Handles compound messages like "Okay, thank you. That's it for now."
-    by splitting on sentence boundaries and checking each part.
-    If ALL parts are conversational, the whole message is chat-only.
-    """
+    """Check if message is purely conversational by testing each clause."""
     text_clean = text.strip().lower()
 
-    # Quick check: try matching the entire message first
     if _is_single_chat(text_clean):
         return True
 
-    # Split on sentence boundaries (periods, exclamation, question marks, semicolons)
-    # then further split each fragment on commas to handle "okay, thank you" style phrases
     sentence_parts = re.split(r'[.!?;]+', text_clean)
     sentence_parts = [s.strip() for s in sentence_parts if s.strip()]
 
     if not sentence_parts:
         return False
 
-    # For each sentence fragment, try it whole first, then split on commas
     for part in sentence_parts:
         if _is_single_chat(part):
             continue
-        # Try splitting on commas (handles "okay, thank you" or "thanks, bye")
         sub_parts = [sp.strip() for sp in part.split(",") if sp.strip()]
         if not all(_is_single_chat(sp) for sp in sub_parts):
             return False
@@ -115,17 +94,14 @@ def _is_chat_only(text: str) -> bool:
     return True
 
 
-# Patterns that indicate the user wants to shut down JARVIS itself (not the computer).
-# These are intercepted before reaching the agent to prevent system shutdown.
+# Patterns that indicate the user wants to shut down JARVIS (intercepted to prevent system shutdown).
 _JARVIS_SHUTDOWN_PATTERNS = [
     # "shut down jarvis/javies/javis" (forgiving Whisper misspellings)
     r"\b(?:shut\s*down|shutdown|power\s*off|turn\s*off)\s*(?:jarvis|javies?|javis|yourself|the\s*system|the\s*assistant)\b",
     r"\b(?:jarvis|javies?|javis|system)\s*(?:shut\s*down|shutdown|power\s*off|turn\s*off)\b",
     r"\b(?:exit|quit|stop|terminate|kill)\s*(?:jarvis|javies?|javis|yourself|the\s*system|the\s*assistant)\b",
     r"\b(?:go\s*(?:to\s*)?(?:sleep|offline)|power\s*down)\b",
-    # Bare shutdown/poweroff when context is clearly about JARVIS
     r"^(?:shut\s*down|shutdown|power\s*off|turn\s*off)[\s!.,]*$",
-    # "quit now" / "shut down now" (bare commands with urgency)
     r"\b(?:shut\s*down|quit|exit)\s*now\b",
 ]
 
@@ -140,11 +116,7 @@ def _is_jarvis_shutdown(text: str) -> bool:
 
 
 def _select_tier(text: str) -> str:
-    """Select model tier based on complexity and cost awareness.
-
-    Requires 2 complexity signals for deep tier upgrade (Opus is 3-5x more expensive).
-    Returns "fast", "brain", or "deep".
-    """
+    """Select model tier based on complexity; requires 2 signals for deep upgrade."""
     text_lower = text.lower().strip()
 
     if _is_chat_only(text):
@@ -194,7 +166,7 @@ def _select_tier(text: str) -> str:
 
 @dataclass
 class ConversationTurn:
-    """A conversation turn with metadata."""
+    """Conversation turn with metadata."""
     role: str
     content: str
     timestamp: float = field(default_factory=time.time)
@@ -203,11 +175,7 @@ class ConversationTurn:
 
 
 class JarvisBrain:
-    """Central orchestrator for LLM, memory, agent, and response generation.
-
-    Pure chat goes to fast tier. Everything else to agent executor where Claude
-    decides tool use. No regex-based routing.
-    """
+    """Central orchestrator for LLM, memory, agent, and response generation."""
 
     def __init__(self):
         self.llm = JarvisLLM()
@@ -221,9 +189,7 @@ class JarvisBrain:
         self._initialized = False
         self._shutdown_requested = False
         self._conversation_file = CONVERSATION_FILE
-        # Callback for broadcasting plan progress to WebSocket clients.
-        # Set by server.py: async def(plan_event: dict) -> None
-        self._on_plan_progress = None
+        self._on_plan_progress = None  # Callback for broadcasting plan progress via WebSocket
 
     async def initialize(self) -> bool:
         """Initialize and check all dependencies."""
@@ -271,11 +237,7 @@ class JarvisBrain:
         return True
 
     async def process(self, user_input: str) -> str:
-        """Process user message and return response.
-
-        Routes trivial greetings to fast tier chat. Everything else to agent
-        executor where Claude decides tool use.
-        """
+        """Process user message and return response."""
         if not self._initialized:
             return "I am not fully initialized yet. Please wait a moment."
 
@@ -307,13 +269,8 @@ class JarvisBrain:
 
         if tier == "fast" and _is_chat_only(user_input):
             logger.info("Routing to CHAT mode [tier: fast].")
-
             enriched_context = self.memory.get_enriched_context(user_input, top_k=3)
-            if enriched_context:
-                enriched_input = f"{enriched_context}\n\nUser: {user_input}"
-            else:
-                enriched_input = user_input
-
+            enriched_input = f"{enriched_context}\n\nUser: {user_input}" if enriched_context else user_input
             response = await self.llm.chat(enriched_input, history, tier="fast")
         else:
             should_plan = await self.planner.should_decompose(user_input)
@@ -345,10 +302,7 @@ class JarvisBrain:
         )
 
         self._save_conversation()
-
         elapsed = time.time() - start_time
-
-        # Record performance metrics
         perf_tracker.record_request(elapsed, tier)
         perf_tracker.record(f"request.{tier}", elapsed)
 
@@ -439,11 +393,7 @@ class JarvisBrain:
         history: list[dict],
         tier: str,
     ) -> str:
-        """Execute a complex request by decomposing into subtasks.
-
-        Routes to specialized agents, identifies parallel-safe groups, executes
-        sequentially or in parallel, and synthesizes results.
-        """
+        """Execute complex request by decomposing into subtasks."""
         plan = await self.planner.create_plan(user_input, conversation_history=history)
 
         if not plan:
@@ -469,7 +419,6 @@ class JarvisBrain:
                 {sid: at for sid, at in agent_assignments.items()},
             )
 
-        # Broadcast plan creation with agent assignments
         await self._broadcast_plan_event({
             "event": "plan_created",
             "plan_id": plan.plan_id,
@@ -491,16 +440,13 @@ class JarvisBrain:
             plan.goal_summary, plan.total, len(parallel_groups),
         )
 
-        max_retries = 1
-
         for group_idx, group in enumerate(parallel_groups):
             if len(group) == 1:
                 idx = group[0]
                 subtask = plan.subtasks[idx]
                 await self._execute_single_subtask(
                     plan, subtask, history, tier,
-                    agent_assignments.get(subtask.id, "generalist"),
-                    max_retries,
+                    agent_assignments.get(subtask.id, "generalist"), 1,
                 )
             else:
                 logger.info(
@@ -694,10 +640,7 @@ class JarvisBrain:
                     )
 
     def _build_plan_detail_message(self, plan) -> str:
-        """Build detailed message from all subtask results for conversation history.
-
-        Allows follow-ups to reference specific outputs without re-executing.
-        """
+        """Build detailed message from all subtask results for conversation history."""
         parts = []
         for s in plan.subtasks:
             if s.status == SubtaskStatus.COMPLETED and s.result:
@@ -759,7 +702,7 @@ class JarvisBrain:
                 logger.debug("Plan progress broadcast failed: %s", e)
 
     def _save_conversation(self):
-        """Persist conversation history to disk. Failures are logged but non-critical."""
+        """Persist conversation history to disk."""
         try:
             turns = [
                 {
@@ -777,7 +720,7 @@ class JarvisBrain:
             logger.debug("Conversation save failed (non-critical): %s", e)
 
     def _load_conversation(self):
-        """Restore conversation from previous session. Starts fresh if file missing/corrupt."""
+        """Restore conversation from previous session."""
         if not self._conversation_file.exists():
             return
 
@@ -808,7 +751,6 @@ class JarvisBrain:
     def clear_conversation(self):
         """Clear the current conversation (memory persists)."""
         self.conversation.clear()
-        # Remove the persisted file too
         try:
             if self._conversation_file.exists():
                 self._conversation_file.unlink()

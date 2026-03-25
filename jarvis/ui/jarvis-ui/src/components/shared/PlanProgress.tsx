@@ -66,12 +66,6 @@ function StatusIcon({ status }: { status: PlanSubtask["status"] }) {
   }
 }
 
-/**
- * Plan execution progress panel.
- * Shows an animated list of subtasks with status indicators and agent badges.
- * Rendered as a floating overlay during plan execution; collapses to a minimal
- * progress bar when the user clicks the collapse button.
- */
 export default function PlanProgress({ plan, onCollapse }: PlanProgressProps) {
   const [collapsed, setCollapsed] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -219,7 +213,6 @@ export default function PlanProgress({ plan, onCollapse }: PlanProgressProps) {
                 ${isDone ? "opacity-60" : ""}
               `}
             >
-              {/* Status icon */}
               <div className="mt-0.5">
                 <StatusIcon status={subtask.status} />
               </div>

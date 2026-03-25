@@ -30,7 +30,7 @@ function storeToken(token: string): void {
   try {
     sessionStorage.setItem(TOKEN_KEY, token);
   } catch {
-    // sessionStorage not available (private browsing, etc.)
+    // Ignore if sessionStorage unavailable
   }
 }
 
@@ -43,19 +43,12 @@ function clearStoredToken(): void {
 }
 
 export interface AuthState {
-  /** Whether the user is authenticated (or local, which bypasses auth) */
   isAuthenticated: boolean;
-  /** Whether we are still checking auth status */
   isLoading: boolean;
-  /** Whether this is a local connection (no PIN needed) */
   isLocal: boolean;
-  /** The current auth token (null for local connections) */
   token: string | null;
-  /** Error message from the last login attempt */
   loginError: string | null;
-  /** Submit a PIN to authenticate */
   login: (pin: string) => Promise<boolean>;
-  /** Log out and clear the session */
   logout: () => Promise<void>;
 }
 

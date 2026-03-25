@@ -1,29 +1,4 @@
-"""
-JARVIS Performance Metrics (Phase 6.2: Performance Tuning)
-
-Lightweight latency profiling and throughput tracking for key code paths.
-Captures timing data for LLM calls, tool executions, plan orchestration,
-and end-to-end request processing. Used for identifying bottlenecks
-and tuning tier routing.
-
-Metrics are kept in memory (per-session) with optional periodic summaries
-logged at INFO level. No external dependencies.
-
-Usage:
-    from jarvis.core.perf import perf_tracker, timed
-
-    # Decorator for async functions
-    @timed("llm.chat")
-    async def chat(...):
-        ...
-
-    # Context manager for ad-hoc timing
-    async with perf_tracker.measure("tool.browser_navigate"):
-        result = await do_something()
-
-    # Get metrics
-    stats = perf_tracker.get_stats()
-"""
+"""Lightweight latency profiling and throughput tracking for bottleneck identification."""
 import asyncio
 import functools
 import logging
@@ -38,7 +13,7 @@ logger = logging.getLogger("jarvis.core.perf")
 
 @dataclass
 class LatencyBucket:
-    """Aggregated latency stats for a single operation type."""
+    """Aggregated latency stats for an operation."""
     name: str
     count: int = 0
     total_s: float = 0.0
@@ -89,22 +64,14 @@ class LatencyBucket:
 
 
 class PerfTracker:
-    """
-    Centralized performance metrics tracker.
-
-    Collects timing data across the application and provides
-    summaries for identifying bottlenecks.
-    """
+    """Centralized performance metrics tracker for bottleneck identification."""
 
     def __init__(self):
         self._buckets: dict[str, LatencyBucket] = {}
         self._lock = asyncio.Lock()
 
-        # End-to-end request tracking
         self._request_count = 0
         self._request_total_s = 0.0
-
-        # Tier usage tracking (for routing optimization)
         self._tier_usage: dict[str, dict] = defaultdict(
             lambda: {"count": 0, "total_s": 0.0, "downgrades": 0}
         )
@@ -121,7 +88,7 @@ class PerfTracker:
         bucket.record(duration_s)
 
     def record_request(self, duration_s: float, tier: str):
-        """Record an end-to-end request with tier info."""
+        """Record end-to-end request with tier info."""
         self._request_count += 1
         self._request_total_s += duration_s
         self._tier_usage[tier]["count"] += 1
@@ -201,7 +168,7 @@ class PerfTracker:
         return bottlenecks[:5]
 
     def _suggest_fix(self, bucket: LatencyBucket) -> str:
-        """Suggest a performance fix based on the operation name and stats."""
+        """Suggest a performance fix based on operation name and stats."""
         name = bucket.name
 
         if "llm" in name and "deep" in name:
@@ -217,7 +184,7 @@ class PerfTracker:
         return "Review for optimization opportunities"
 
     def get_summary_line(self) -> str:
-        """One-line performance summary for logging."""
+        """One-line performance summary."""
         if self._request_count == 0:
             return "No requests processed yet."
 
@@ -236,12 +203,11 @@ class PerfTracker:
         )
 
 
-# Global tracker instance
 perf_tracker = PerfTracker()
 
 
 def timed(name: str):
-    """Decorator that records execution time of an async function."""
+    """Decorator that records execution time of async functions."""
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
@@ -256,7 +222,7 @@ def timed(name: str):
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count using ~4 chars per token heuristic."""
+    """Estimate token count (~4 chars per token)."""
     if not text:
         return 0
     return max(1, (len(text) + 3) // 4)

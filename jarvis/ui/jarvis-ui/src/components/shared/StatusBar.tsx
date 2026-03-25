@@ -16,12 +16,10 @@ const statusLabels: Record<ConnectionStatus, string> = {
   error: "Error",
 };
 
-// Tab configuration with labels and multi-path SVG icons
 const tabs: { mode: ViewMode; label: string; iconPaths: string[] }[] = [
   {
     mode: "cinematic",
     label: "Voice",
-    // Orb/sphere icon (concentric circles)
     iconPaths: [
       "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z",
       "M12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z",
@@ -30,7 +28,6 @@ const tabs: { mode: ViewMode; label: string; iconPaths: string[] }[] = [
   {
     mode: "chat",
     label: "Chat",
-    // Chat bubble icon
     iconPaths: [
       "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
     ],
@@ -38,7 +35,6 @@ const tabs: { mode: ViewMode; label: string; iconPaths: string[] }[] = [
   {
     mode: "dashboard",
     label: "System",
-    // Bento grid icon
     iconPaths: [
       "M3 3h7v7H3z",
       "M14 3h7v7h-7z",
@@ -57,9 +53,7 @@ export default function StatusBar({
   return (
     <div className="w-full bg-jarvis-surface/80 backdrop-blur-xl border-b border-white/[0.04] px-3 sm:px-6 py-2 sm:py-2.5 flex-shrink-0">
       <div className="flex items-center justify-between">
-        {/* Left: JARVIS Logo */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Tiny glow dot before logo */}
           <div className="w-1.5 h-1.5 rounded-full bg-jarvis-cyan/60 hidden sm:block"
                style={{ boxShadow: '0 0 6px rgba(0,212,255,0.4)' }} />
           <span className="text-sm sm:text-base font-semibold jarvis-glow-subtle tracking-[0.18em] sm:tracking-[0.25em]">
@@ -70,9 +64,7 @@ export default function StatusBar({
           </span>
         </div>
 
-        {/* Center: Connection Status + Mode Toggle */}
         <div className="flex items-center gap-2 sm:gap-4">
-          {/* Connection Status */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             <div className={`status-dot ${connectionStatus}`} />
             <span className="text-3xs sm:text-2xs text-jarvis-text-dim/60 font-mono hidden sm:inline">
@@ -80,7 +72,6 @@ export default function StatusBar({
             </span>
           </div>
 
-          {/* Mode Toggle: refined pill tabs */}
           <div className="flex items-center jarvis-glass-subtle p-0.5 gap-0.5">
             {tabs.map(({ mode, label, iconPaths }) => {
               const isActive = viewMode === mode;
@@ -98,7 +89,7 @@ export default function StatusBar({
                     }
                   `}
                   aria-label={label}
-                >
+                  >
                   <svg
                     width="12"
                     height="12"
@@ -115,8 +106,6 @@ export default function StatusBar({
                     ))}
                   </svg>
                   <span className="hidden sm:inline">{label}</span>
-
-                  {/* Active indicator line */}
                   {isActive && (
                     <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-3 h-[2px] rounded-full bg-jarvis-cyan/50" />
                   )}
@@ -126,7 +115,6 @@ export default function StatusBar({
           </div>
         </div>
 
-        {/* Right: Session Cost */}
         <div className="text-right hidden sm:flex flex-col items-end">
           <div className="text-3xs text-jarvis-text-dim/35 uppercase tracking-[0.12em]">
             Session
@@ -136,7 +124,6 @@ export default function StatusBar({
           </div>
         </div>
 
-        {/* Mobile: Compact cost display */}
         <div className="sm:hidden">
           <div className="text-2xs font-mono text-jarvis-cyan/50 tabular-nums">
             ${sessionCost.toFixed(2)}

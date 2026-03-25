@@ -1,8 +1,4 @@
-"""
-JARVIS Web Search
-Free web search using DuckDuckGo (no API key needed).
-Uses the 'ddgs' package (formerly 'duckduckgo_search').
-"""
+"""JARVIS Web Search: free web search using DuckDuckGo (no API key required)."""
 import asyncio
 import logging
 from typing import Optional

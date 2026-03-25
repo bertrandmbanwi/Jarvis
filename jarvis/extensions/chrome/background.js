@@ -1,14 +1,4 @@
-/**
- * JARVIS Browser Bridge - Background Service Worker
- *
- * Maintains a WebSocket connection to the JARVIS server and routes
- * commands to content scripts running in browser tabs.
- *
- * Architecture:
- *   JARVIS Server <--WebSocket--> Background SW <--chrome.runtime--> Content Scripts
- */
-
-// Configuration (can be overridden via chrome.storage)
+// Background service worker: WebSocket connection to JARVIS server
 const DEFAULT_CONFIG = {
   serverUrl: "ws://localhost:8741/ws/extension",
   reconnectIntervalMs: 3000,
@@ -22,10 +12,6 @@ let reconnectAttempts = 0;
 let reconnectTimer = null;
 let pingTimer = null;
 let isConnected = false;
-
-// ============================================================
-// WebSocket Connection Management
-// ============================================================
 
 async function loadConfig() {
   try {
@@ -59,14 +45,12 @@ function connect() {
     reconnectAttempts = 0;
     updateBadge("on");
 
-    // Send handshake identifying this as the Chrome extension
     ws.send(JSON.stringify({
       type: "handshake",
       client: "chrome_extension",
       version: chrome.runtime.getManifest().version,
     }));
 
-    // Start keepalive pings
     startPingInterval();
   };
 
@@ -149,26 +133,20 @@ function sendToServer(msg) {
   return false;
 }
 
-// ============================================================
 // Badge / Status Indicator
-// ============================================================
 
 function updateBadge(status) {
   const badges = {
-    on: { text: "", color: "#22c55e" },   // Green (connected)
-    off: { text: "!", color: "#6b7280" },  // Gray (disconnected)
-    error: { text: "X", color: "#ef4444" }, // Red (error)
-    busy: { text: "...", color: "#f59e0b" }, // Yellow (processing)
+    on: { text: "", color: "#22c55e" },
+    off: { text: "!", color: "#6b7280" },
+    error: { text: "X", color: "#ef4444" },
+    busy: { text: "...", color: "#f59e0b" },
   };
 
   const badge = badges[status] || badges.off;
   chrome.action.setBadgeText({ text: badge.text });
   chrome.action.setBadgeBackgroundColor({ color: badge.color });
 }
-
-// ============================================================
-// Command Router: JARVIS Server -> Content Script / Chrome API
-// ============================================================
 
 async function handleServerMessage(msg) {
   if (msg.type === "pong") return;  // Keepalive response
@@ -185,32 +163,24 @@ async function handleServerMessage(msg) {
     let result;
 
     switch (action) {
-      // ---- Tab Management (Chrome APIs, no content script needed) ----
       case "get_tabs":
         result = await handleGetTabs();
         break;
-
       case "new_tab":
         result = await handleNewTab(msg.url || "about:blank");
         break;
-
       case "close_tab":
         result = await handleCloseTab(msg.tabId);
         break;
-
       case "switch_tab":
         result = await handleSwitchTab(msg.tabId);
         break;
-
       case "navigate":
         result = await handleNavigate(msg.url, msg.tabId);
         break;
-
       case "screenshot":
         result = await handleScreenshot(msg.tabId);
         break;
-
-      // ---- DOM Interaction (routed to content script) ----
       case "click":
       case "type":
       case "select":
@@ -222,7 +192,6 @@ async function handleServerMessage(msg) {
       case "wait_for":
         result = await routeToContentScript(msg);
         break;
-
       case "execute_js":
         result = await handleExecuteJs(msg.code, msg.tabId);
         break;
@@ -244,10 +213,6 @@ async function handleServerMessage(msg) {
     updateBadge(isConnected ? "on" : "off");
   }
 }
-
-// ============================================================
-// Tab Management Handlers
-// ============================================================
 
 async function handleGetTabs() {
   const tabs = await chrome.tabs.query({});
@@ -288,7 +253,6 @@ async function handleNavigate(url, tabId) {
   if (!id) return { success: false, error: "No active tab." };
   await chrome.tabs.update(id, { url });
 
-  // Wait for the page to finish loading
   return new Promise((resolve) => {
     const listener = (updatedTabId, changeInfo) => {
       if (updatedTabId === id && changeInfo.status === "complete") {
@@ -352,9 +316,7 @@ async function handleExecuteJs(code, tabId) {
   return { success: true, data: { result: result?.value } };
 }
 
-// ============================================================
 // Content Script Router
-// ============================================================
 
 async function routeToContentScript(msg) {
   const tabId = msg.tabId || (await getActiveTabId());
@@ -390,18 +352,14 @@ async function routeToContentScript(msg) {
   });
 }
 
-// ============================================================
 // Utility
-// ============================================================
 
 async function getActiveTabId() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.id || null;
 }
 
-// ============================================================
 // Event Listeners: Push browser events to JARVIS
-// ============================================================
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete" && isConnected) {
@@ -450,9 +408,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   });
 });
 
-// ============================================================
 // Message handler for popup and content scripts
-// ============================================================
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "getStatus") {
@@ -484,9 +440,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// ============================================================
 // Startup
-// ============================================================
 
 loadConfig().then(() => {
   console.log("[JARVIS] Background service worker started. Connecting...");

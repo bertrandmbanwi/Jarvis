@@ -24,47 +24,16 @@ COMPUTER_USE_TOOL_TYPE = "computer_20251124"
 COMPUTER_USE_MODEL = "claude-sonnet-4-6"
 
 KEY_TRANSLATION = {
-    # Modifier keys
-    "ctrl": "Control",
-    "control": "Control",
-    "cmd": "Meta",
-    "command": "Meta",
-    "super": "Meta",
-    "meta": "Meta",
-    "alt": "Alt",
-    "option": "Alt",
-    "shift": "Shift",
-    # Common keys
-    "return": "Enter",
-    "enter": "Enter",
-    "esc": "Escape",
-    "escape": "Escape",
-    "del": "Delete",
-    "delete": "Delete",
-    "backspace": "Backspace",
-    "space": " ",
-    "tab": "Tab",
-    # Arrow keys
-    "up": "ArrowUp",
-    "down": "ArrowDown",
-    "left": "ArrowLeft",
-    "right": "ArrowRight",
-    "arrowup": "ArrowUp",
-    "arrowdown": "ArrowDown",
-    "arrowleft": "ArrowLeft",
-    "arrowright": "ArrowRight",
-    # Function keys (already correct in most cases, but normalize case)
-    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4",
-    "f5": "F5", "f6": "F6", "f7": "F7", "f8": "F8",
+    "ctrl": "Control", "control": "Control", "cmd": "Meta", "command": "Meta",
+    "super": "Meta", "meta": "Meta", "alt": "Alt", "option": "Alt", "shift": "Shift",
+    "return": "Enter", "enter": "Enter", "esc": "Escape", "escape": "Escape",
+    "del": "Delete", "delete": "Delete", "backspace": "Backspace", "space": " ", "tab": "Tab",
+    "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight",
+    "arrowup": "ArrowUp", "arrowdown": "ArrowDown", "arrowleft": "ArrowLeft", "arrowright": "ArrowRight",
+    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f5": "F5", "f6": "F6", "f7": "F7", "f8": "F8",
     "f9": "F9", "f10": "F10", "f11": "F11", "f12": "F12",
-    # Navigation keys
-    "home": "Home",
-    "end": "End",
-    "pageup": "PageUp",
-    "pagedown": "PageDown",
-    "page_up": "PageUp",
-    "page_down": "PageDown",
-    "insert": "Insert",
+    "home": "Home", "end": "End", "pageup": "PageUp", "pagedown": "PageDown",
+    "page_up": "PageUp", "page_down": "PageDown", "insert": "Insert",
 }
 
 
@@ -109,7 +78,6 @@ class BrowserAgent:
 
             self._playwright = await async_playwright().start()
 
-            # Ensure directories exist
             DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
             BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -156,7 +124,7 @@ class BrowserAgent:
             accept_downloads=True,
         )
 
-        self._context.on("page", self._on_new_page)
+        self._context.on("page", self._on_new_page)  # Handle new tabs/popups
 
         pages = self._context.pages
         if pages:
@@ -172,11 +140,7 @@ class BrowserAgent:
         logger.info("Browser: new page opened: %s", page.url[:80])
 
     async def shutdown(self):
-        """Close the browser context and clean up.
-
-        The persistent profile is saved to disk automatically when the
-        context closes, so sessions survive JARVIS restarts.
-        """
+        """Close the browser context and clean up; persistent profile survives restarts."""
         try:
             if self._context:
                 await self._context.close()
@@ -207,15 +171,10 @@ class BrowserAgent:
             return False
 
     async def _ensure_ready(self) -> bool:
-        """Ensure the browser is initialized and the page is alive.
-
-        If the page was closed or the browser disconnected (e.g., after an
-        error), this will shut down the stale state and reinitialize.
-        """
+        """Ensure the browser is initialized and the page is alive; reinitialize if stale."""
         if self._initialized and self._is_page_alive():
             return True
 
-        # Stale state detected; reinitialize
         if self._initialized:
             logger.warning("Browser page/context is stale. Reinitializing...")
             await self.shutdown()
@@ -287,8 +246,7 @@ class BrowserAgent:
                 x, y = params.get("coordinate", [VIEWPORT_WIDTH // 2, VIEWPORT_HEIGHT // 2])
                 direction = params.get("scroll_direction", "down")
                 amount = params.get("scroll_amount", 3)
-                delta_x = 0
-                delta_y = 0
+                delta_x = delta_y = 0
                 if direction == "down":
                     delta_y = amount * 100
                 elif direction == "up":
@@ -298,7 +256,7 @@ class BrowserAgent:
                 elif direction == "left":
                     delta_x = -(amount * 100)
                 await self._page.mouse.wheel(delta_x, delta_y)
-                await asyncio.sleep(0.3)  # Let scroll settle
+                await asyncio.sleep(0.3)
                 return f"Scrolled {direction} by {amount} at ({x}, {y})"
 
             elif action == "left_click_drag":
@@ -324,17 +282,11 @@ class BrowserAgent:
             return f"Action '{action}' failed: {error_msg}"
 
     async def navigate(self, url: str) -> str:
-        """Navigate to a URL directly.
-
-        Automatically syncs Chrome cookies for the target domain before
-        navigating, so the user's existing login sessions carry over.
-        """
+        """Navigate to a URL and sync Chrome cookies for the target domain."""
         ok = await self._ensure_ready()
         if not ok:
             return "Error: browser not initialized"
         try:
-            # Sync cookies for this specific domain from Chrome before navigating.
-            # This ensures login sessions are available on the first visit.
             if self._context:
                 try:
                     from jarvis.tools.chrome_sync import sync_chrome_for_url
@@ -372,11 +324,7 @@ class BrowserAgent:
             self._task_running = False
 
     async def _run_computer_use_loop(self, task: str, start_url: Optional[str] = None) -> str:
-        """Core computer use loop: screenshot -> Claude -> action -> repeat.
-
-        Includes exponential backoff for rate limits (HTTP 429) and a small
-        inter-step delay to reduce API pressure during rapid screenshot loops.
-        """
+        """Core loop: screenshot, send to Claude, execute action, repeat; handles rate limits."""
         import anthropic
 
         api_key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -385,25 +333,20 @@ class BrowserAgent:
 
         client = anthropic.AsyncAnthropic(api_key=api_key, timeout=120.0)
 
-        # Rate limit / backoff configuration
         max_retries = 3
         base_backoff_seconds = 5.0
-        inter_step_delay = 0.3  # Small delay between steps to ease API pressure
+        inter_step_delay = 0.3
 
-        # Navigate to start URL if provided
         if start_url:
             nav_result = await self.navigate(start_url)
             logger.info("Browser: %s", nav_result)
 
-        # Wait for initial page load
         await asyncio.sleep(1)
 
-        # Take initial screenshot
         screenshot_b64 = await self.take_screenshot()
         if not screenshot_b64:
             return "Error: could not capture initial screenshot"
 
-        # Build the computer use tool definition
         computer_tool = {
             "type": COMPUTER_USE_TOOL_TYPE,
             "name": "computer",
@@ -411,7 +354,6 @@ class BrowserAgent:
             "display_height_px": VIEWPORT_HEIGHT,
         }
 
-        # System prompt for the browser agent
         system_prompt = (
             "You are a browser automation agent. You can see a browser window and "
             "interact with it using mouse clicks, keyboard input, and scrolling. "
@@ -445,7 +387,6 @@ class BrowserAgent:
             f"DOWNLOADS: {DOWNLOAD_DIR}\n"
         )
 
-        # Initial message with the task and first screenshot
         messages = [
             {
                 "role": "user",
@@ -471,11 +412,9 @@ class BrowserAgent:
             step += 1
             logger.info("Browser agent step %d/%d", step, MAX_STEPS)
 
-            # Small inter-step delay to reduce API pressure
             if step > 1:
                 await asyncio.sleep(inter_step_delay)
 
-            # Abort early if the browser window was closed mid-task
             if not self._is_page_alive():
                 logger.warning("Browser closed during task at step %d. Aborting.", step)
                 summary = "The browser window was closed while I was working. "
@@ -484,7 +423,6 @@ class BrowserAgent:
                 summary += "I can try again if you reopen the browser."
                 return summary
 
-            # API call with retry and exponential backoff for rate limits
             response = None
             for attempt in range(max_retries + 1):
                 try:
@@ -518,13 +456,10 @@ class BrowserAgent:
             if response is None:
                 return f"Browser task failed at step {step}: no response received."
 
-            # Process Claude's response
             assistant_content = response.content
             messages.append({"role": "assistant", "content": assistant_content})
 
-            # Check if Claude is done (no more tool calls)
             if response.stop_reason == "end_turn":
-                # Extract final text summary
                 final_text = ""
                 for block in assistant_content:
                     if hasattr(block, "text"):
@@ -534,7 +469,6 @@ class BrowserAgent:
                 logger.info("Browser agent completed: %s", final_text[:100])
                 return final_text
 
-            # Execute tool calls
             tool_results = []
             for block in assistant_content:
                 if block.type == "tool_use":
@@ -544,22 +478,16 @@ class BrowserAgent:
                     logger.info("Browser agent action: %s (params: %s)",
                                 action, {k: v for k, v in tool_input.items() if k != "action"})
 
-                    # Execute the action
                     if action == "screenshot":
                         result_text = "Here is the current screenshot."
                     else:
-                        # Filter out "action" from tool_input to avoid passing it
-                        # both as a positional arg and as a keyword arg.
                         action_params = {k: v for k, v in tool_input.items() if k != "action"}
                         result_text = await self.execute_action(action, **action_params)
                         actions_taken.append(f"Step {step}: {action} - {result_text}")
-                        # Small delay after actions for page to update
                         await asyncio.sleep(0.5)
 
-                    # Take a fresh screenshot after the action
                     new_screenshot = await self.take_screenshot()
 
-                    # Build tool result with screenshot
                     tool_result_content = []
                     if new_screenshot:
                         tool_result_content.append({
@@ -581,18 +509,13 @@ class BrowserAgent:
                         "content": tool_result_content,
                     })
 
-            # Add tool results as the next user message
             messages.append({"role": "user", "content": tool_results})
 
-        # Max steps reached
         summary = f"Browser task stopped after {MAX_STEPS} steps (safety limit). Actions taken:\n"
-        summary += "\n".join(actions_taken[-10:])  # Last 10 actions
+        summary += "\n".join(actions_taken[-10:])
         return summary
 
 
-# ============================================================
-# Singleton browser agent instance
-# ============================================================
 _browser_agent: Optional[BrowserAgent] = None
 
 
@@ -602,24 +525,8 @@ def _get_browser_agent() -> BrowserAgent:
     if _browser_agent is None:
         _browser_agent = BrowserAgent()
     return _browser_agent
-
-
-# ============================================================
-# Tool functions exposed to JARVIS agent
-# ============================================================
 async def browse_web(task: str, url: str = "") -> str:
-    """Execute a browser automation task using Claude Computer Use.
-
-    Opens a real browser, navigates to the specified URL (or starts from
-    a blank page), and uses AI vision to complete the task step by step.
-
-    Args:
-        task: Natural language description of what to accomplish
-        url: Optional starting URL
-
-    Returns:
-        Summary of what was accomplished
-    """
+    """Execute a browser automation task using Claude Computer Use."""
     agent = _get_browser_agent()
     start_url = url if url else None
     logger.info("Browser task started: '%s' (url: %s)", task[:80], start_url or "blank")
@@ -629,14 +536,7 @@ async def browse_web(task: str, url: str = "") -> str:
 
 
 async def browser_navigate(url: str) -> list:
-    """Navigate the browser to a specific URL.
-
-    Use this for simple navigation when you just need to open a page.
-    For complex multi-step tasks, use browse_web instead.
-
-    Returns rich content including a screenshot so you can SEE the page
-    and verify whether it loaded correctly (e.g. 404 errors, login walls).
-    """
+    """Navigate the browser to a specific URL and return screenshot."""
     agent = _get_browser_agent()
     ok = await agent._ensure_ready()
     if not ok:
@@ -645,8 +545,6 @@ async def browser_navigate(url: str) -> list:
     result = await agent.navigate(url)
     screenshot_b64 = await agent.take_screenshot()
 
-    # Build rich result with the actual screenshot image so the brain
-    # can visually inspect what the page looks like (catch 404s, errors, etc.)
     content = [{"type": "text", "text": f"{result}\nHere is what the browser is currently showing:"}]
     if screenshot_b64:
         content.append({
@@ -664,12 +562,7 @@ async def browser_navigate(url: str) -> list:
 
 
 async def browser_screenshot() -> list:
-    """Take a screenshot of the current browser state.
-
-    Returns the actual screenshot image so you can SEE what is on the page.
-    Use this to visually inspect the browser, verify page content, check for
-    errors, or see the result of previous actions.
-    """
+    """Take a screenshot of the current browser state."""
     agent = _get_browser_agent()
     if not agent._initialized or not agent._is_page_alive():
         return [{"type": "text", "text": "Browser is not open. Use browse_web or browser_navigate first."}]
@@ -678,7 +571,6 @@ async def browser_screenshot() -> list:
     if not screenshot_b64:
         return [{"type": "text", "text": "Failed to capture screenshot."}]
 
-    # Return the actual image so Claude can see the page
     current_url = agent._page.url if agent._page else "unknown"
     return [
         {"type": "text", "text": f"Current URL: {current_url}\nHere is the current browser screenshot:"},
@@ -694,20 +586,7 @@ async def browser_screenshot() -> list:
 
 
 async def sync_browser_sessions(domains: str = "") -> str:
-    """Sync login sessions from Chrome into JARVIS's browser.
-
-    Imports cookies from your real Google Chrome so that JARVIS's browser
-    inherits your existing login sessions (Google, GitHub, LinkedIn, etc.)
-    without requiring you to log in again.
-
-    Args:
-        domains: Optional comma-separated list of domains to sync
-                 (e.g., "github.com,google.com"). If empty, syncs all
-                 common domains (Google, GitHub, LinkedIn, etc.)
-
-    Returns:
-        Summary of synced sessions.
-    """
+    """Sync login sessions from Chrome into JARVIS's browser."""
     agent = _get_browser_agent()
     ok = await agent._ensure_ready()
     if not ok:
@@ -725,18 +604,11 @@ async def sync_browser_sessions(domains: str = "") -> str:
 
 
 async def get_browser_state() -> list:
-    """Get the current state of the browser: all open tabs, the active page URL,
-    and a screenshot of the active tab.
-
-    Use this to see what JARVIS has open in the browser, check which tabs are
-    active, and visually inspect the current page. This is the tool to use
-    when you need to "look at" the browser.
-    """
+    """Get the current state of the browser: tabs, active URL, and screenshot."""
     agent = _get_browser_agent()
     if not agent._initialized or not agent._context:
         return [{"type": "text", "text": "Browser is not open. Use browse_web or browser_navigate to open it first."}]
 
-    # List all open tabs/pages
     pages = agent._context.pages
     tab_info = []
     for i, page in enumerate(pages):
@@ -746,7 +618,6 @@ async def get_browser_state() -> list:
 
     tabs_text = f"Open tabs ({len(pages)}):\n" + "\n".join(tab_info)
 
-    # Get page title if available
     title = ""
     if agent._page and not agent._page.is_closed():
         try:
@@ -758,7 +629,6 @@ async def get_browser_state() -> list:
     if title:
         active_info += f"\nPage title: {title}"
 
-    # Take screenshot of active tab
     screenshot_b64 = await agent.take_screenshot()
 
     content = [
@@ -812,17 +682,7 @@ async def browser_switch_tab(tab_number: int) -> list:
 
 
 async def browser_upload_file(file_path: str, selector: str = "") -> str:
-    """Upload a file to a file input on the current page.
-
-    Args:
-        file_path: Absolute path to the file to upload (e.g., resume, document).
-        selector: CSS selector of the file input element. If empty, looks for
-                  the first <input type="file"> on the page.
-
-    Use this when a web form requires a file upload (resume, cover letter,
-    document, image, etc.). First navigate to the page with the upload form,
-    then call this with the path to the file.
-    """
+    """Upload a file to a file input on the current page."""
     import os
     agent = _get_browser_agent()
     if not agent._initialized or not agent._is_page_alive():
@@ -835,7 +695,6 @@ async def browser_upload_file(file_path: str, selector: str = "") -> str:
         if selector:
             file_input = agent._page.locator(selector)
         else:
-            # Find the first file input on the page
             file_input = agent._page.locator('input[type="file"]').first
 
         await file_input.set_input_files(file_path)

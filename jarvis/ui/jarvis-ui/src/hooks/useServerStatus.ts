@@ -14,7 +14,7 @@ function getApiBaseUrl(): string {
   return `${window.location.protocol}//${hostname}:8741`;
 }
 const STATUS_URL = `${getApiBaseUrl()}/`;
-const POLL_INTERVAL_MS = 10000; // Poll every 10 seconds
+const POLL_INTERVAL_MS = 10000;
 
 export function useServerStatus(authToken?: string | null) {
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);

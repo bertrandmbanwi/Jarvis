@@ -1,16 +1,4 @@
-"""
-JARVIS Hardening Module (Phase 6.1)
-
-Provides production-grade error handling, retry logic, timeout guards,
-input sanitization, and graceful degradation for the entire JARVIS system.
-
-Components:
-    - RetryPolicy: configurable exponential backoff with jitter for API calls
-    - ToolTimeout: asyncio-based timeout wrapper for tool executions
-    - ErrorClassifier: categorizes errors into actionable types
-    - InputSanitizer: validates and cleans user input and tool arguments
-    - CircuitBreaker: prevents cascading failures from repeated errors
-"""
+"""Production-grade error handling, retry logic, timeouts, input sanitization, and circuit breaking."""
 import asyncio
 import logging
 import random
@@ -36,7 +24,6 @@ class ErrorCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
-# Patterns for classifying errors by their message content
 _ERROR_PATTERNS = [
     (ErrorCategory.RATE_LIMIT, [
         r"rate.?limit", r"429", r"too many requests",
@@ -67,17 +54,7 @@ _ERROR_PATTERNS = [
 
 
 def classify_error(error: Exception) -> ErrorCategory:
-    """
-    Classify an exception into a structured error category.
-
-    Uses both exception type and message content for classification.
-
-    Args:
-        error: The exception to classify
-
-    Returns:
-        The most likely ErrorCategory
-    """
+    """Classify an exception into a structured error category."""
     error_str = str(error).lower()
     error_type = type(error).__name__.lower()
     combined = f"{error_type}: {error_str}"
@@ -99,16 +76,7 @@ def classify_error(error: Exception) -> ErrorCategory:
 
 
 def user_friendly_error(category: ErrorCategory, context: str = "") -> str:
-    """
-    Generate a user-friendly error message for a given category.
-
-    Args:
-        category: The classified error category
-        context: Optional context (e.g., "checking your calendar")
-
-    Returns:
-        A conversational error message suitable for voice/text
-    """
+    """Generate user-friendly error message for a category."""
     ctx = f" while {context}" if context else ""
 
     messages = {
@@ -153,15 +121,7 @@ def user_friendly_error(category: ErrorCategory, context: str = "") -> str:
 
 @dataclass
 class RetryPolicy:
-    """Configurable retry policy with exponential backoff and jitter.
-
-    Attributes:
-        max_retries: Maximum number of retry attempts
-        base_delay_s: Starting delay between retries (seconds)
-        max_delay_s: Maximum delay cap (seconds)
-        jitter: Whether to add random jitter to prevent thundering herd
-        retryable_categories: Which error categories should be retried
-    """
+    """Configurable retry policy with exponential backoff and jitter."""
     max_retries: int = 3
     base_delay_s: float = 1.0
     max_delay_s: float = 30.0
@@ -188,11 +148,7 @@ class RetryPolicy:
         return delay
 
 
-# Default policies for different use cases
-API_RETRY_POLICY = RetryPolicy(
-    max_retries=3, base_delay_s=1.0, max_delay_s=30.0,
-)
-
+API_RETRY_POLICY = RetryPolicy(max_retries=3, base_delay_s=1.0, max_delay_s=30.0)
 TOOL_RETRY_POLICY = RetryPolicy(
     max_retries=1, base_delay_s=0.5, max_delay_s=5.0,
     retryable_categories={ErrorCategory.TIMEOUT, ErrorCategory.NETWORK},
@@ -206,22 +162,7 @@ async def retry_with_backoff(
     context: str = "",
     **kwargs,
 ) -> Any:
-    """
-    Execute an async function with retry and exponential backoff.
-
-    Args:
-        func: Async callable to execute
-        *args: Positional arguments for func
-        policy: RetryPolicy to use
-        context: Description for logging
-        **kwargs: Keyword arguments for func
-
-    Returns:
-        The result of the successful function call
-
-    Raises:
-        The last exception if all retries are exhausted
-    """
+    """Execute async function with retry and exponential backoff."""
     last_error = None
 
     for attempt in range(policy.max_retries + 1):
@@ -252,10 +193,7 @@ async def retry_with_backoff(
     raise last_error
 
 
-# Per-tool timeout configuration (seconds)
-# Tools not listed here use DEFAULT_TOOL_TIMEOUT
 TOOL_TIMEOUTS: dict[str, float] = {
-    # Fast tools (system queries, clipboard, etc.)
     "get_system_info": 10.0,
     "get_battery_status": 5.0,
     "get_clipboard": 5.0,
@@ -267,7 +205,6 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "get_unread_count": 15.0,
     "get_calendar_list": 15.0,
     "send_notification": 5.0,
-    # Medium tools (file ops, calendar, email)
     "read_file": 15.0,
     "write_file": 15.0,
     "list_directory": 10.0,
@@ -279,7 +216,6 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "send_email": 20.0,
     "search_emails": 25.0,
     "read_email": 20.0,
-    # Slow tools (web, browser, shell)
     "search_web": 30.0,
     "search_news": 30.0,
     "search_and_read": 45.0,
@@ -289,7 +225,6 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "run_claude_code": 120.0,
     "run_terminal_command_smart": 60.0,
     "scaffold_project": 90.0,
-    # Browser automation (can be slow)
     "browse_web": 60.0,
     "browser_navigate": 30.0,
     "browser_screenshot": 20.0,
@@ -318,20 +253,7 @@ async def execute_with_timeout(
     timeout_s: float,
     tool_name: str = "",
 ) -> Any:
-    """
-    Execute a coroutine with a timeout guard.
-
-    Args:
-        coro: The coroutine to execute
-        timeout_s: Maximum execution time in seconds
-        tool_name: Tool name for logging
-
-    Returns:
-        The coroutine result
-
-    Raises:
-        asyncio.TimeoutError: If execution exceeds the timeout
-    """
+    """Execute coroutine with timeout guard."""
     try:
         return await asyncio.wait_for(coro, timeout=timeout_s)
     except asyncio.TimeoutError:
@@ -345,12 +267,10 @@ async def execute_with_timeout(
         )
 
 
-# Maximum input lengths
 MAX_USER_INPUT_LENGTH = 10000
 MAX_TOOL_ARG_LENGTH = 5000
 MAX_FILE_PATH_LENGTH = 500
 
-# Dangerous shell patterns (warn, don't block)
 _DANGEROUS_SHELL_PATTERNS = [
     r"rm\s+(-rf?|--force)\s+[/~]",  # rm -rf /
     r">\s*/dev/sd[a-z]",             # Writing to disk devices
@@ -379,19 +299,7 @@ def sanitize_user_input(text: str) -> str:
 
 
 def validate_tool_args(tool_name: str, args: dict) -> dict:
-    """
-    Validate and sanitize tool arguments.
-
-    Checks for overly long strings, dangerous paths, and
-    missing required values. Returns cleaned args.
-
-    Args:
-        tool_name: The tool being called
-        args: The argument dict from Claude
-
-    Returns:
-        Validated and potentially trimmed argument dict
-    """
+    """Validate and sanitize tool arguments."""
     cleaned = {}
     for key, value in args.items():
         if isinstance(value, str):
@@ -418,18 +326,7 @@ def validate_tool_args(tool_name: str, args: dict) -> dict:
 
 
 def check_dangerous_command(command: str) -> Optional[str]:
-    """
-    Check if a shell command contains dangerous patterns.
-
-    Does NOT block execution. Returns a warning string if dangerous
-    patterns are detected, or None if the command appears safe.
-
-    Args:
-        command: The shell command to check
-
-    Returns:
-        Warning message if dangerous, None otherwise
-    """
+    """Check if command contains dangerous patterns (warns but doesn't block)."""
     for pattern in _DANGEROUS_SHELL_PATTERNS:
         if re.search(pattern, command, re.IGNORECASE):
             return (
@@ -441,27 +338,12 @@ def check_dangerous_command(command: str) -> Optional[str]:
 
 @dataclass
 class CircuitBreaker:
-    """
-    Prevents cascading failures by temporarily disabling a subsystem
-    after repeated errors.
-
-    States:
-        CLOSED: Normal operation, requests pass through
-        OPEN: Too many failures, requests are immediately rejected
-        HALF_OPEN: Testing if the subsystem has recovered
-
-    Attributes:
-        name: Identifier for this circuit breaker
-        failure_threshold: Failures before opening the circuit
-        recovery_timeout_s: Seconds to wait before testing recovery
-        half_open_max_calls: Max test calls in half-open state
-    """
+    """Prevents cascading failures with CLOSED/OPEN/HALF_OPEN states."""
     name: str
     failure_threshold: int = 5
     recovery_timeout_s: float = 60.0
     half_open_max_calls: int = 1
 
-    # Internal state
     _failure_count: int = field(default=0, init=False)
     _last_failure_time: float = field(default=0.0, init=False)
     _state: str = field(default="closed", init=False)
@@ -535,18 +417,8 @@ class CircuitBreaker:
         }
 
 
-# Pre-configured circuit breakers for key subsystems
-claude_circuit = CircuitBreaker(
-    name="claude_api",
-    failure_threshold=5,
-    recovery_timeout_s=60.0,
-)
-
-ollama_circuit = CircuitBreaker(
-    name="ollama",
-    failure_threshold=3,
-    recovery_timeout_s=30.0,
-)
+claude_circuit = CircuitBreaker(name="claude_api", failure_threshold=5, recovery_timeout_s=60.0)
+ollama_circuit = CircuitBreaker(name="ollama", failure_threshold=3, recovery_timeout_s=30.0)
 
 tool_circuits: dict[str, CircuitBreaker] = {}
 

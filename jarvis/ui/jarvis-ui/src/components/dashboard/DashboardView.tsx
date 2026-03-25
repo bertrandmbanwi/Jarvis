@@ -21,7 +21,6 @@ export default function DashboardView({
 }: DashboardViewProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll chat to bottom
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTo({
@@ -31,7 +30,6 @@ export default function DashboardView({
     }
   }, [messages]);
 
-  // Filter out empty messages
   const visibleMessages = messages.filter(
     (msg) => msg.content || (msg.role === "assistant" && msg.isStreaming)
   );
@@ -75,20 +73,16 @@ export default function DashboardView({
               return (
                 <div key={msg.id} className="animate-fade-in py-2">
                   <div className="flex items-start gap-3">
-                    <div
-                      className={`
+                    <div className={`
                         w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0
                         text-3xs font-semibold mt-0.5
                         ${isUser
                           ? "bg-jarvis-cyan/8 text-jarvis-cyan/50 border border-jarvis-cyan/10"
                           : "bg-white/[0.03] text-jarvis-text-dim/40 border border-white/[0.05]"
                         }
-                      `}
-                    >
+                      `}>
                       {isUser ? "B" : "J"}
                     </div>
-
-                    {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="text-2xs font-medium text-jarvis-text-dim/50">

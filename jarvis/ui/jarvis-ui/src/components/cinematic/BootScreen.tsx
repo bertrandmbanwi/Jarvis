@@ -3,12 +3,10 @@
 import React, { useEffect, useRef } from 'react';
 
 interface BootScreenProps {
-  /** 0 = just started, 1 = fully visible, >1 = fading out */
   progress: number;
   className?: string;
 }
 
-// Cyan JARVIS HUD palette
 const CYAN: [number, number, number] = [0, 200, 255];
 const CYAN_BRIGHT: [number, number, number] = [140, 230, 255];
 const WHITE: [number, number, number] = [255, 255, 255];
@@ -57,9 +55,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
       const ringReveal = Math.min(1, progress * 1.2);
       const rot = t * 0.08;
 
-      // ================================================================
-      // 1. AMBIENT GLOW
-      // ================================================================
+      // Ambient glow background
       const amb = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR * 2);
       amb.addColorStop(0, rgba(CYAN, 0.06));
       amb.addColorStop(0.3, rgba(CYAN, 0.02));
@@ -67,9 +63,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
       ctx.fillStyle = amb;
       ctx.fillRect(0, 0, W, H);
 
-      // ================================================================
-      // 2. CONCENTRIC RINGS with tick marks
-      // ================================================================
+      // Concentric rings with tick marks
       const rings = [
         { radius: 0.92, width: 1.2, opacity: 0.3, ticks: 72, tickLen: 0.02, rotDir: 1, delay: 0.0 },
         { radius: 0.78, width: 1.5, opacity: 0.45, ticks: 60, tickLen: 0.025, rotDir: -1, delay: 0.1 },
@@ -105,7 +99,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
           // Every 4th tick is longer
           const isLong = i % 4 === 0;
           const actualInnerR = isLong ? rr - maxR * ring.tickLen * 1.8 : innerR;
-          const tickAlpha = isLong ? ring.opacity * 0.8 : ring.opacity * 0.4;
+          const tickAlpha = isLong ? ring.opacity * 0.8 : ring.opacity * 0.4; // Every 4th tick is longer
 
           ctx.strokeStyle = rgba(CYAN, tickAlpha * reveal);
           ctx.lineWidth = isLong ? 1.2 : 0.7;

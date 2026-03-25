@@ -88,7 +88,7 @@ def _read_raw_cookies(
         return []
 
     playwright_cookies = []
-    seen = set()
+    seen = set()  # Dedup cookies by (name, domain, path)
 
     for domain in target_domains:
         url = f"https://{domain.lstrip('.')}"

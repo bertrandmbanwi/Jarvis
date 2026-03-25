@@ -41,20 +41,10 @@ logger = logging.getLogger("jarvis.agent")
 
 
 class AgentExecutor:
-    """
-    Executes user requests using Claude's native tool_use agentic loop.
-
-    Claude receives the user's request along with all available tool schemas.
-    It autonomously decides which tools to call, processes results, chains
-    multi-step actions, and produces a final conversational response.
-
-    No regex matching. No intent patterns. Claude drives the entire flow.
-    """
+    """Executes user requests using Claude's native tool_use agentic loop."""
 
     def __init__(self, llm: Optional[JarvisLLM] = None):
         self.llm = llm or JarvisLLM()
-        # Callback for recording tool execution outcomes (set by brain.py).
-        # Signature: (tool_name: str, success: bool, duration_s: float, error: str) -> None
         self._on_tool_executed = None
 
     async def execute(
@@ -63,23 +53,7 @@ class AgentExecutor:
         conversation_history: Optional[list[dict]] = None,
         tier: str = "brain",
     ) -> str:
-        """
-        Process a user request using Claude's agentic tool-use loop.
-
-        Claude receives the full set of available tools and decides:
-        - Which tools to call (if any)
-        - What arguments to pass
-        - Whether to chain multiple tool calls
-        - When to stop and produce a final response
-
-        Args:
-            user_input: What the user said
-            conversation_history: Prior conversation turns
-            tier: Model tier to use ("brain" for most tasks, "deep" for complex)
-
-        Returns:
-            Final response text from Claude
-        """
+        """Process a user request using Claude's agentic tool-use loop."""
         logger.info("Agent executing (tier=%s): '%s'", tier, user_input[:100])
 
         response_text, tool_calls = await self.llm.chat_with_tools(
@@ -106,15 +80,7 @@ class AgentExecutor:
         conversation_history: Optional[list[dict]] = None,
         tier: str = "brain",
     ):
-        """
-        Like execute(), but streams the final response token by token.
-
-        Tool-use iterations run non-streaming. The final text response is
-        streamed to give the user real-time feedback.
-
-        Yields:
-            Individual tokens/chunks of the final response
-        """
+        """Stream the final response token by token after tool iterations."""
         logger.info("Agent executing (streaming, tier=%s): '%s'", tier, user_input[:100])
 
         async for token in self.llm.chat_with_tools_stream(
@@ -134,18 +100,7 @@ class AgentExecutor:
         conversation_history: Optional[list[dict]] = None,
         tier: str = "brain",
     ) -> str:
-        """
-        Execute a single subtask from a decomposed plan with accumulated context.
-
-        Args:
-            subtask_description: What this subtask should accomplish
-            prior_context: Results from completed prior subtasks
-            conversation_history: Prior conversation turns
-            tier: Model tier to use
-
-        Returns:
-            Result text from this subtask
-        """
+        """Execute a single subtask from a decomposed plan."""
         if prior_context:
             prompt = (
                 f"You are executing one step of a multi-step plan. "
@@ -179,22 +134,7 @@ class AgentExecutor:
         return response_text
 
     async def _execute_tool(self, tool_name: str, tool_input: dict):
-        """
-        Execute a tool by name with the given input dict.
-
-        This is the callback passed to llm.chat_with_tools(). Includes hardening
-        (validation, timeout, circuit breaker) and performance tuning (caching).
-
-        Args:
-            tool_name: Name of the tool to execute
-            tool_input: Dict of arguments from Claude
-
-        Returns:
-            Tool result as a string, OR a list of content blocks for rich results
-            (e.g. images). Each item should be a dict like:
-              {"type": "text", "text": "..."}
-              {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}
-        """
+        """Execute a tool with validation, timeout, circuit breaker, and caching."""
         if tool_name not in TOOL_REGISTRY:
             return f"Unknown tool: {tool_name}. Available tools: {', '.join(TOOL_REGISTRY.keys())}"
 
@@ -308,7 +248,7 @@ class AgentExecutor:
         duration_s: float,
         error: str = "",
     ):
-        """Notify learning loop about tool execution."""
+        """Notify learning loop of tool execution outcome."""
         if self._on_tool_executed:
             try:
                 self._on_tool_executed(tool_name, success, duration_s, error)

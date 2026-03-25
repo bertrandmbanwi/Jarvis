@@ -1,28 +1,4 @@
-"""
-JARVIS Authentication System
-
-PIN-based authentication for remote access via Cloudflare Tunnel.
-Local connections (localhost/127.0.0.1) bypass authentication entirely.
-
-How it works:
-    1. On first run, JARVIS generates a random 6-digit PIN and stores it
-       hashed (SHA-256 with salt) in data/auth/pin.hash.
-    2. The PIN is displayed in the terminal on startup.
-    3. When connecting remotely (via phone through Cloudflare Tunnel),
-       the user enters the PIN on a login screen.
-    4. On successful PIN entry, the server issues a session token (random
-       hex string) stored in memory with an expiry time.
-    5. All subsequent API/WebSocket requests include this token.
-    6. Local connections skip all of this.
-
-Security notes:
-    - PIN is never stored in plaintext, only the salted hash.
-    - Session tokens expire after 24 hours by default.
-    - Failed PIN attempts are rate-limited (5 per minute).
-    - The PIN can be regenerated with JARVIS_REGEN_PIN=true env var.
-    - A custom PIN can be set via JARVIS_PIN env var (4-8 digits).
-      When set, it overrides the stored PIN on every startup.
-"""
+"""PIN-based authentication for remote access; local connections bypass auth."""
 
 import hashlib
 import hmac
@@ -37,37 +13,28 @@ from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.auth")
 
-# Auth data storage
 AUTH_DIR = settings.DATA_DIR / "auth"
 AUTH_DIR.mkdir(parents=True, exist_ok=True)
 PIN_HASH_FILE = AUTH_DIR / "pin.hash"
 PIN_SALT_FILE = AUTH_DIR / "pin.salt"
 
-# Configuration
 PIN_LENGTH = 6
-SESSION_TOKEN_EXPIRY = 24 * 60 * 60  # 24 hours in seconds
+SESSION_TOKEN_EXPIRY = 24 * 60 * 60
 MAX_FAILED_ATTEMPTS = 5
-RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_WINDOW = 60
 
-# In-memory session store
-# Maps token -> expiry timestamp
-_active_sessions: dict[str, float] = {}
-
-# Rate limiting for failed attempts
-# Maps IP -> list of failed attempt timestamps
-_failed_attempts: dict[str, list[float]] = {}
-
-# The plaintext PIN (only kept in memory for display on startup)
-_current_pin: Optional[str] = None
+_active_sessions: dict[str, float] = {}  # Maps token -> expiry timestamp
+_failed_attempts: dict[str, list[float]] = {}  # Maps IP -> list of failed attempt timestamps
+_current_pin: Optional[str] = None  # Plaintext PIN for display on startup
 
 
 def _hash_pin(pin: str, salt: bytes) -> str:
-    """Hash a PIN with salt using SHA-256."""
+    """Hash a PIN with salt."""
     return hashlib.sha256(salt + pin.encode("utf-8")).hexdigest()
 
 
 def initialize_pin() -> str:
-    """Initialize or load the PIN from env vars, disk, or generate new."""
+    """Initialize or load PIN from env vars, disk, or generate new."""
     global _current_pin
 
     custom_pin = os.getenv("JARVIS_PIN", "").strip()
@@ -112,7 +79,7 @@ def get_current_pin() -> Optional[str]:
 
 
 def verify_pin(pin: str, client_ip: str = "") -> Optional[str]:
-    """Verify a PIN and return a session token if correct."""
+    """Verify PIN and return session token if correct."""
     if client_ip:
         now = time.time()
         attempts = _failed_attempts.get(client_ip, [])
@@ -152,7 +119,7 @@ def verify_pin(pin: str, client_ip: str = "") -> Optional[str]:
 
 
 def validate_token(token: str) -> bool:
-    """Check if a session token is valid and not expired."""
+    """Check if session token is valid and not expired."""
     if not token:
         return False
 
@@ -168,18 +135,18 @@ def validate_token(token: str) -> bool:
 
 
 def revoke_token(token: str):
-    """Revoke a session token (logout)."""
+    """Revoke a session token."""
     _active_sessions.pop(token, None)
 
 
 def is_local_request(client_host: str) -> bool:
-    """Check if request is from localhost; these bypass authentication."""
+    """Check if request is from localhost (which bypasses authentication)."""
     local_hosts = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
     return client_host in local_hosts
 
 
 def cleanup_expired_sessions():
-    """Remove expired session tokens from memory."""
+    """Remove expired session tokens."""
     now = time.time()
     expired = [t for t, exp in _active_sessions.items() if now > exp]
     for t in expired:
@@ -189,7 +156,7 @@ def cleanup_expired_sessions():
 
 
 def set_pin(new_pin: str) -> bool:
-    """Set a specific PIN and invalidate all existing sessions."""
+    """Set a specific PIN and invalidate existing sessions."""
     global _current_pin
 
     if not new_pin.isdigit() or not (4 <= len(new_pin) <= 8):

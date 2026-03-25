@@ -20,45 +20,19 @@ const MAX_RECORD_NO_SPEECH_MS = 10000;
 const MAX_RECORD_DURATION_MS = 60000;
 
 interface UseVoiceRecorderOptions {
-  /** Called when recording starts/stops so the caller can notify the
-   *  server to pause the terminal mic listener and prevent duplicates. */
   onRecordingStateChange?: (recording: boolean) => void;
-  /** Auth token for remote access (included in transcription requests). */
   authToken?: string | null;
 }
 
 interface UseVoiceRecorderReturn {
-  /** Whether the browser is currently recording from the microphone */
   isRecording: boolean;
-  /** Whether a recorded clip is being transcribed by the server */
   isTranscribing: boolean;
-  /** Start recording from the browser microphone */
   startRecording: () => Promise<void>;
-  /** Stop recording and transcribe. Returns the transcribed text. */
   stopRecording: () => Promise<string | null>;
-  /** Whether browser mic access is supported */
   isSupported: boolean;
-  /** Error message if something failed */
   error: string | null;
-  /** Ref for setting an auto-stop callback. When silence detection auto-stops
-   *  recording, it calls this with the transcribed text so the component can
-   *  submit it without the user manually tapping stop. */
   onAutoStopRef: React.MutableRefObject<((text: string | null) => void) | null>;
 }
-
-/**
- * Hook for browser-based voice recording + server-side transcription.
- *
- * Records audio from the browser microphone using MediaRecorder,
- * then sends the audio blob to the JARVIS server's /voice/transcribe
- * endpoint for Whisper-based speech-to-text.
- *
- * Includes automatic silence detection: after the user speaks and goes
- * silent for ~2 seconds, recording auto-stops and submits. If no speech
- * is detected within 10 seconds, recording is cancelled.
- *
- * Works on desktop browsers and iPhone Safari (iOS 14.3+).
- */
 export function useVoiceRecorder(options?: UseVoiceRecorderOptions): UseVoiceRecorderReturn {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -180,6 +154,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): UseVoiceRec
     recordStartRef.current = Date.now();
 
     try {
+      // Request microphone with audio enhancement
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,

@@ -1,19 +1,6 @@
-/**
- * JARVIS Browser Bridge - Content Script
- *
- * Injected into web pages to provide DOM access for JARVIS commands.
- * Receives commands from the background service worker via chrome.runtime
- * and returns structured results.
- */
-
 (() => {
-  // Prevent double injection
   if (window.__jarvisContentScriptLoaded) return;
   window.__jarvisContentScriptLoaded = true;
-
-  // ============================================================
-  // Message Handler
-  // ============================================================
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type !== "command") return false;
@@ -50,32 +37,18 @@
     }
   }
 
-  // ============================================================
-  // Element Finder: Unified way to locate elements
-  // ============================================================
-
-  /**
-   * Find an element using multiple strategies:
-   * 1. CSS selector
-   * 2. Text content match
-   * 3. ARIA label match
-   * 4. Coordinate-based (x, y)
-   */
   function findElement(target) {
     if (!target) return null;
 
-    // Strategy 1: CSS selector
     if (target.selector) {
       const el = document.querySelector(target.selector);
       if (el) return el;
     }
 
-    // Strategy 2: Text content match
     if (target.text) {
       const text = target.text.toLowerCase().trim();
       const index = target.index || 0;
 
-      // Check common interactive elements first
       const interactiveSelectors = [
         "a", "button", "input[type='submit']", "input[type='button']",
         "[role='button']", "[role='link']", "[role='tab']",
@@ -93,7 +66,6 @@
         });
       }
 
-      // If no interactive element found, search all visible elements
       if (candidates.length === 0) {
         const walker = document.createTreeWalker(
           document.body,
@@ -119,13 +91,11 @@
       }
     }
 
-    // Strategy 3: ARIA label
     if (target.ariaLabel) {
       const el = document.querySelector(`[aria-label="${CSS.escape(target.ariaLabel)}"]`);
       if (el) return el;
     }
 
-    // Strategy 4: Coordinate-based
     if (target.coordinate && Array.isArray(target.coordinate)) {
       const [x, y] = target.coordinate;
       return document.elementFromPoint(x, y);
@@ -134,9 +104,6 @@
     return null;
   }
 
-  /**
-   * Find multiple elements matching the criteria.
-   */
   function findElements(target, limit = 20) {
     const results = [];
 
@@ -152,7 +119,6 @@
       for (const el of allElements) {
         if (results.length >= limit) break;
         const elText = (el.textContent || "").toLowerCase().trim();
-        // Only match leaf-ish elements (avoid matching a parent div that contains the text)
         if (elText.includes(text) && el.children.length < 5) {
           results.push(el);
         }
@@ -162,9 +128,6 @@
     return results;
   }
 
-  /**
-   * Serialize an element into a human-readable descriptor.
-   */
   function describeElement(el) {
     const tag = el.tagName.toLowerCase();
     const id = el.id ? `#${el.id}` : "";
@@ -194,21 +157,15 @@
     return true;
   }
 
-  // ============================================================
-  // Command Handlers
-  // ============================================================
-
   async function handleClick(msg) {
     const el = findElement(msg.target || msg);
     if (!el) {
       return { success: false, error: "Element not found for click." };
     }
 
-    // Scroll into view if needed
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     await sleep(200);
 
-    // Simulate a real click sequence
     el.focus();
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
@@ -233,7 +190,6 @@
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.focus();
 
-    // Clear existing content if requested
     if (msg.clear || target.clear) {
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
         el.value = "";
@@ -243,7 +199,6 @@
       el.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
-    // Type the text
     const text = msg.text || target.text || "";
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
       el.value += text;
@@ -344,7 +299,6 @@
     }
 
     if (format === "markdown" || format === "text") {
-      // Extract meaningful text content (skip scripts, styles, hidden elements)
       const textParts = [];
       const walker = document.createTreeWalker(
         document.body,
@@ -368,7 +322,6 @@
         textParts.push(walker.currentNode.textContent.trim());
       }
 
-      // Also extract links
       const links = [];
       document.querySelectorAll("a[href]").forEach((a) => {
         if (isVisible(a)) {
@@ -473,10 +426,6 @@
 
     return { success: false, error: `Element not found within ${timeout}ms.` };
   }
-
-  // ============================================================
-  // Utilities
-  // ============================================================
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));

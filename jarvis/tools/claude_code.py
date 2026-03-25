@@ -1,15 +1,4 @@
-"""
-JARVIS Claude Code Integration
-
-Spawns Claude Code (the Anthropic CLI agent) as a subprocess to handle:
-  - Coding tasks (write code, debug, refactor, review)
-  - Terminal/shell commands with intelligent orchestration
-  - Project scaffolding and file generation
-  - Git operations and repository management
-
-Claude Code runs in its own process with full access to the local filesystem
-and shell, so JARVIS can delegate complex development work to it.
-"""
+"""JARVIS Claude Code integration: spawns Claude Code CLI for coding, shell, scaffolding, git."""
 import asyncio
 import json
 import logging

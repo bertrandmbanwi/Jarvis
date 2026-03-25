@@ -1,8 +1,4 @@
-"""
-JARVIS Voice Listener
-Handles microphone input, wake word detection, and speech-to-text.
-Uses OpenWakeWord for wake detection and faster-whisper for STT.
-"""
+"""JARVIS Voice Listener: microphone input, wake word detection, and speech-to-text."""
 import asyncio
 import logging
 import numpy as np
@@ -50,9 +46,7 @@ else:
 
 
 class VoiceListener:
-    """
-    Listens for the wake word, then captures and transcribes speech.
-    """
+    """Listens for wake word, captures and transcribes speech."""
 
     def __init__(self):
         self._audio: Optional[object] = None
@@ -60,15 +54,15 @@ class VoiceListener:
         self._wake_model: Optional[object] = None
         self._whisper_model: Optional[object] = None
         self._is_listening = False
-        self._is_speaking = False  # True while JARVIS is speaking (prevent self-trigger)
-        self._in_followup_window = False  # True when listening for follow-up without wake word
-        self._followup_start = 0.0  # When the follow-up window opened
-        self._last_wake_time = 0.0  # Debounce wake word triggers
+        self._is_speaking = False
+        self._in_followup_window = False
+        self._followup_start = 0.0
+        self._last_wake_time = 0.0
         self._on_wake_callback: Optional[Callable] = None
         self._on_speech_callback: Optional[Callable] = None
-        self.FOLLOWUP_WINDOW_SECONDS = 8.0  # How long to listen for follow-ups after speaking
-        self._followup_sustained_frames = 0  # Count of consecutive frames above sustained threshold
-        self._followup_max_amplitude = 0.0  # Track max amplitude seen in followup attempt
+        self.FOLLOWUP_WINDOW_SECONDS = 8.0
+        self._followup_sustained_frames = 0
+        self._followup_max_amplitude = 0.0
 
     def initialize(self) -> bool:
         """Set up audio, wake word model, and whisper."""
@@ -134,34 +128,20 @@ class VoiceListener:
         self._on_speech_callback = callback
 
     def set_speaking(self, speaking: bool, open_followup: bool = True):
-        """Set whether JARVIS is currently speaking (to avoid self-triggering).
-
-        Args:
-            speaking: True while JARVIS is actively speaking.
-            open_followup: When speaking transitions to False, whether to open
-                the follow-up window (listen without wake word). Set to False
-                for browser-originated responses, since the audio plays on the
-                remote device and the computer mic would pick up that playback
-                as a false follow-up trigger.
-        """
+        """Set whether JARVIS is speaking; open follow-up window to listen without wake word."""
         self._is_speaking = speaking
         if not speaking:
             if open_followup:
-                # When JARVIS stops speaking, enter follow-up window.
-                # Add a small delay (via future start time) so residual speaker
-                # vibrations and mic feedback don't trigger the window immediately.
                 self._in_followup_window = True
-                self._followup_start = time.time() + 0.5  # 500ms grace period
+                self._followup_start = time.time() + 0.5
                 logger.info("Follow-up window open (%.0fs to respond without wake word).",
                             self.FOLLOWUP_WINDOW_SECONDS)
             else:
-                # Browser-originated response: skip follow-up window to prevent
-                # the computer mic from picking up audio playing on the phone.
                 self._in_followup_window = False
                 logger.info("Resuming wake-word mode (no follow-up window for browser-originated response).")
 
     async def listen_loop(self):
-        """Main listening loop: wait for wake word, record speech until silence, transcribe, and callback."""
+        """Main listening loop: wait for wake word, record until silence, transcribe, callback."""
         if not HAS_PYAUDIO or self._audio is None:
             logger.error("Cannot start listening: PyAudio not available.")
             return
@@ -278,7 +258,7 @@ class VoiceListener:
             self._cleanup_stream()
 
     def _get_transcription_hints(self) -> tuple[Optional[str], Optional[list[str]]]:
-        """Build initial_prompt and hotwords from user profile to improve transcription accuracy."""
+        """Build initial_prompt and hotwords from user profile for better transcription."""
         if not settings.WHISPER_USE_LOCATION_HINTS:
             return None, None
 
@@ -342,7 +322,7 @@ class VoiceListener:
             return False
 
     async def _record_speech(self) -> Optional[np.ndarray]:
-        """Record speech until silence is detected. Returns numpy array or None if too short."""
+        """Record speech until silence detected; return numpy array or None if too short."""
         logger.info("Listening... (speak now, threshold=%d)", settings.SILENCE_THRESHOLD)
         frames = []
         silence_start = None
@@ -493,7 +473,7 @@ class VoiceListener:
         return True
 
     async def listen_keyboard(self):
-        """Keyboard-activated listening: Press Enter to record, stops on silence. Fallback mode."""
+        """Keyboard-activated listening (fallback): press Enter to record."""
         logger.info("Keyboard mode: Press Enter to speak, Ctrl+C to quit.")
         self._is_listening = True
 
@@ -534,7 +514,7 @@ class VoiceListener:
                 logger.error("Keyboard listen error: %s", e)
 
     def _cleanup_stream(self):
-        """Close and reset audio stream."""
+        """Close and reset audio stream."""  # Simple cleanup
         if self._stream is not None:
             try:
                 self._stream.stop_stream()

@@ -9,7 +9,6 @@ from typing import Optional
 logger = logging.getLogger("jarvis.tools.chrome_extension")
 
 _extension_ws = None
-
 _pending_commands: dict[str, asyncio.Future] = {}
 
 COMMAND_TIMEOUT = 15.0
@@ -67,7 +66,6 @@ async def handle_extension_message(data: dict):
         )
 
     elif msg_type == "ping":
-        # Respond with pong
         if _extension_ws:
             try:
                 await _extension_ws.send_json({"type": "pong"})
@@ -75,24 +73,8 @@ async def handle_extension_message(data: dict):
                 pass
 
 
-# ============================================================
-# Command Sender
-# ============================================================
-
 async def _send_command(action: str, **params) -> dict:
-    """Send a command to the Chrome extension and wait for the response.
-
-    Args:
-        action: The command action (e.g., 'click', 'navigate', 'read_page')
-        **params: Additional parameters for the command
-
-    Returns:
-        The result dict from the extension (contains 'success' and 'data' or 'error')
-
-    Raises:
-        ConnectionError: If the extension is not connected
-        TimeoutError: If the command times out
-    """
+    """Send a command to the Chrome extension and wait for the response."""
     if not is_extension_connected():
         raise ConnectionError(
             "Chrome extension is not connected. "
@@ -107,7 +89,6 @@ async def _send_command(action: str, **params) -> dict:
         **params,
     }
 
-    # Create a future for the response
     loop = asyncio.get_running_loop()
     future = loop.create_future()
     _pending_commands[cmd_id] = future
@@ -126,28 +107,9 @@ async def _send_command(action: str, **params) -> dict:
         raise
 
 
-# ============================================================
-# Tool Functions (registered in tools_schema.py)
-# ============================================================
-
 async def chrome_navigate(url: str, tab_id: int = None, new_tab: bool = False) -> str:
-    """Navigate a Chrome tab to a URL.
-
-    Uses the user's actual Chrome browser (with all their login sessions),
-    not a separate Playwright instance. Automatically avoids navigating
-    tabs that are showing the JARVIS UI.
-
-    Args:
-        url: The URL to navigate to.
-        tab_id: Optional specific tab ID. If omitted, uses the active tab.
-        new_tab: If True, always open in a new tab.
-
-    Returns:
-        Navigation result summary.
-    """
+    """Navigate a Chrome tab to a URL; avoids navigating JARVIS UI tabs."""
     try:
-        # If no explicit tab_id, check whether the active tab is the JARVIS UI.
-        # Navigating the JARVIS UI tab away kills the WebSocket connection.
         if not tab_id and not new_tab:
             try:
                 tabs_result = await _send_command("get_tabs")
@@ -208,20 +170,7 @@ async def chrome_navigate(url: str, tab_id: int = None, new_tab: bool = False) -
 
 
 async def chrome_click(selector: str = "", text: str = "", index: int = 0) -> str:
-    """Click an element in the active Chrome tab.
-
-    Finds the element by CSS selector or visible text content, scrolls it
-    into view, and clicks it. This is much faster and more reliable than
-    vision-based clicking via Computer Use.
-
-    Args:
-        selector: CSS selector (e.g., 'button.submit', '#login-btn')
-        text: Visible text to search for (e.g., 'Sign In', 'Next')
-        index: If multiple matches, click the Nth one (0-based)
-
-    Returns:
-        Click result summary.
-    """
+    """Click an element in the active Chrome tab by selector or text."""
     try:
         target = {}
         if selector:
@@ -244,16 +193,7 @@ async def chrome_click(selector: str = "", text: str = "", index: int = 0) -> st
 
 
 async def chrome_type(selector: str, text: str, clear: bool = False) -> str:
-    """Type text into an input field in the active Chrome tab.
-
-    Args:
-        selector: CSS selector of the input element
-        text: Text to type
-        clear: If True, clear the field before typing
-
-    Returns:
-        Typing result summary.
-    """
+    """Type text into an input field in the active Chrome tab."""
     try:
         result = await _send_command(
             "type",
@@ -271,17 +211,7 @@ async def chrome_type(selector: str, text: str, clear: bool = False) -> str:
 
 
 async def chrome_read_page(format: str = "text") -> str:
-    """Read the content of the active Chrome tab.
-
-    Extracts visible text content and links from the page. Much faster
-    and more complete than OCR from a screenshot.
-
-    Args:
-        format: Output format ('text' for plain text, 'html' for raw HTML)
-
-    Returns:
-        Page content as text.
-    """
+    """Read the content of the active Chrome tab; faster than OCR."""
     try:
         result = await _send_command("read_page", format=format)
 
@@ -307,18 +237,7 @@ async def chrome_read_page(format: str = "text") -> str:
 
 
 async def chrome_find_elements(selector: str = "", text: str = "", limit: int = 10) -> str:
-    """Find elements on the active Chrome tab matching a selector or text.
-
-    Useful for discovering what is on the page before interacting with it.
-
-    Args:
-        selector: CSS selector to search for
-        text: Visible text to search for
-        limit: Maximum number of results
-
-    Returns:
-        List of matching elements with descriptions.
-    """
+    """Find elements on the active Chrome tab matching a selector or text."""
     try:
         target = {}
         if selector:
@@ -358,14 +277,7 @@ async def chrome_find_elements(selector: str = "", text: str = "", limit: int = 
 
 
 async def chrome_screenshot() -> list:
-    """Take a screenshot of the active Chrome tab.
-
-    Uses Chrome's native captureVisibleTab API for a pixel-perfect
-    screenshot of the user's actual browser view.
-
-    Returns:
-        Rich content with the screenshot image.
-    """
+    """Take a screenshot of the active Chrome tab using captureVisibleTab API."""
     try:
         result = await _send_command("screenshot")
 
@@ -398,11 +310,7 @@ async def chrome_screenshot() -> list:
 
 
 async def chrome_get_tabs() -> str:
-    """List all open Chrome tabs.
-
-    Returns:
-        Formatted list of all open tabs with their IDs, URLs, and titles.
-    """
+    """List all open Chrome tabs."""
     try:
         result = await _send_command("get_tabs")
 
@@ -426,17 +334,7 @@ async def chrome_get_tabs() -> str:
 
 
 async def chrome_execute_js(code: str) -> str:
-    """Execute JavaScript in the active Chrome tab.
-
-    Runs the code in the page's MAIN world (full access to page JS context).
-    Use with caution.
-
-    Args:
-        code: JavaScript code to execute
-
-    Returns:
-        The string result of the execution.
-    """
+    """Execute JavaScript in the active Chrome tab (MAIN world context)."""
     try:
         result = await _send_command("execute_js", code=code)
 
@@ -449,15 +347,7 @@ async def chrome_execute_js(code: str) -> str:
 
 
 async def chrome_fill_form(fields: dict) -> str:
-    """Fill multiple form fields at once in the active Chrome tab.
-
-    Args:
-        fields: Dict mapping CSS selectors to values
-                (e.g., {"#email": "user@example.com", "#password": "secret"})
-
-    Returns:
-        Summary of filled fields.
-    """
+    """Fill multiple form fields at once in the active Chrome tab."""
     try:
         result = await _send_command("fill_form", fields=fields)
 
@@ -472,15 +362,7 @@ async def chrome_fill_form(fields: dict) -> str:
 
 
 async def chrome_scroll(direction: str = "down", amount: int = 3) -> str:
-    """Scroll the active Chrome tab.
-
-    Args:
-        direction: 'up', 'down', 'left', or 'right'
-        amount: Scroll amount (1 = small, 3 = medium, 5 = large)
-
-    Returns:
-        Scroll result summary.
-    """
+    """Scroll the active Chrome tab."""
     try:
         result = await _send_command("scroll", direction=direction, amount=amount)
 

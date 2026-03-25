@@ -33,19 +33,17 @@ PREFS_DIR = settings.DATA_DIR / "memory"
 PREFS_DIR.mkdir(parents=True, exist_ok=True)
 PREFS_FILE = PREFS_DIR / "implicit_preferences.json"
 
-# How quickly old interactions decay (higher = faster decay)
-DECAY_RATE = 0.01  # Per day
+DECAY_RATE = 0.01
 
 
 @dataclass
 class InteractionPattern:
     """A tracked interaction pattern with frequency and recency."""
-    name: str               # Pattern identifier
-    category: str           # "tool", "topic", "time", "detail", "app"
+    name: str
+    category: str
     count: int = 0
     last_seen: float = 0.0
     first_seen: float = 0.0
-    # Per-hour distribution (24 buckets, for time-of-day patterns)
     hourly_counts: list[int] = field(default_factory=lambda: [0] * 24)
 
     def record(self, hour: int = -1):
@@ -102,13 +100,6 @@ class InteractionPattern:
             hourly_counts=hourly[:24],
         )
 
-
-# ============================================================
-# Topic classification keywords
-# ============================================================
-# Maps keywords in user messages to topic categories.
-# Used to track what kinds of tasks the user asks for most.
-
 TOPIC_KEYWORDS: dict[str, list[str]] = {
     "weather": ["weather", "temperature", "forecast", "rain", "sunny", "cloudy"],
     "music": ["music", "song", "play", "spotify", "playlist", "album", "artist"],
@@ -125,24 +116,17 @@ TOPIC_KEYWORDS: dict[str, list[str]] = {
 
 
 class PreferenceTracker:
-    """
-    Tracks implicit user preferences from behavior patterns.
-
-    Records interaction patterns, topic frequencies, and time-of-day
-    habits. Provides summaries for context enrichment and proactive
-    suggestions.
-    """
+    """Tracks implicit user preferences from behavior patterns."""
 
     def __init__(self):
         self._patterns: dict[str, InteractionPattern] = {}
         self._loaded = False
         self._dirty = False
 
-        # Session-level accumulators (not persisted, just for current session)
         self._session_topics: Counter = Counter()
         self._session_tools: Counter = Counter()
-        self._detail_requests = 0      # Times user asked for more detail
-        self._brevity_signals = 0      # Times user seemed satisfied with short answers
+        self._detail_requests = 0
+        self._brevity_signals = 0
 
     def load(self):
         """Load preference data from disk."""
@@ -180,26 +164,16 @@ class PreferenceTracker:
         return self._patterns[name]
 
     def record_request(self, user_message: str, tier: str, tool_calls: list[str] = None):
-        """
-        Record a user interaction for preference learning.
-
-        Args:
-            user_message: What the user said
-            tier: Which model tier was used
-            tool_calls: List of tool names that were called
-        """
+        """Record a user interaction for preference learning."""
         from datetime import datetime
         hour = datetime.now().hour
 
-        # Track time-of-day usage
         time_pattern = self._get_or_create("usage_time", "time")
         time_pattern.record(hour)
 
-        # Track tier usage as a preference signal
         tier_pattern = self._get_or_create(f"tier_{tier}", "tier")
         tier_pattern.record(hour)
 
-        # Track topics from user message
         msg_lower = user_message.lower()
         for topic, keywords in TOPIC_KEYWORDS.items():
             if any(kw in msg_lower for kw in keywords):
@@ -207,14 +181,12 @@ class PreferenceTracker:
                 topic_pattern.record(hour)
                 self._session_topics[topic] += 1
 
-        # Track tool usage
         if tool_calls:
             for tool_name in tool_calls:
                 tool_pattern = self._get_or_create(f"tool_{tool_name}", "tool")
                 tool_pattern.record(hour)
                 self._session_tools[tool_name] += 1
 
-        # Detect detail preference signals
         detail_phrases = ["more detail", "explain more", "tell me more", "elaborate", "full list", "list them all"]
         brevity_phrases = ["thanks", "got it", "ok", "perfect", "that's enough"]
 
@@ -228,7 +200,6 @@ class PreferenceTracker:
             brevity_pref = self._get_or_create("prefers_brevity", "detail")
             brevity_pref.record(hour)
 
-        # Track message length as a verbosity signal
         if len(user_message) > 200:
             verbose_pattern = self._get_or_create("verbose_input", "style")
             verbose_pattern.record(hour)
@@ -238,7 +209,6 @@ class PreferenceTracker:
 
         self._dirty = True
 
-        # Auto-save every 20 interactions
         total_count = sum(p.count for p in self._patterns.values())
         if total_count % 20 == 0:
             self.save()
@@ -289,30 +259,21 @@ class PreferenceTracker:
         return "balanced"
 
     def get_context_string(self) -> str:
-        """
-        Generate a preference context string for system prompt injection.
-
-        Returns a concise summary of learned preferences that helps JARVIS
-        tailor its responses.
-        """
+        """Generate preference context string for system prompt injection."""
         sections = []
 
-        # Top topics
         topics = self.get_top_topics(3)
         if topics:
             topic_list = ", ".join(t[0] for t in topics)
             sections.append(f"Frequent topics: {topic_list}")
 
-        # Active hours
         active = self.get_active_hours()
         if active:
-            # Summarize as ranges
             if len(active) > 3:
                 sections.append(
                     f"Most active hours: {active[0]:02d}:00-{active[-1]:02d}:00"
                 )
 
-        # Detail preference
         detail_pref = self.get_detail_preference()
         if detail_pref != "balanced":
             sections.append(f"Response preference: {detail_pref}")

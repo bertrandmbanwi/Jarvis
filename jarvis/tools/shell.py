@@ -1,7 +1,4 @@
-"""
-JARVIS Shell Command Execution
-Runs shell commands safely on macOS with output capture and timeout.
-"""
+"""JARVIS Shell Command Execution: runs shell commands safely on macOS with timeout."""
 import asyncio
 import logging
 import shlex
@@ -9,52 +6,23 @@ from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.shell")
 
-# Commands that are never allowed (destructive/dangerous)
 BLOCKED_COMMANDS = [
-    "rm -rf /",
-    "rm -rf ~",
-    "rm -rf /*",
-    "mkfs",
-    "dd if=",
-    ":(){:|:&};:",
-    "chmod -R 777 /",
-    "sudo rm",
+    "rm -rf /", "rm -rf ~", "rm -rf /*", "mkfs", "dd if=", ":(){:|:&};:",
+    "chmod -R 777 /", "sudo rm",
 ]
 
-# System power operations are always blocked
 BLOCKED_POWER_PATTERNS = [
-    "shutdown",
-    "reboot",
-    "restart",
-    "halt",
-    "poweroff",
-    "power off",
-    "log out",
-    "logout",
-    "pmset sleepnow",
-    "systemsetup",
-    "fdesetup",
-    "shut down",     # AppleScript phrasing
-    "sleep",         # Caught in context below
-    "osascript",     # Checked separately for power-related AppleScript
+    "shutdown", "reboot", "restart", "halt", "poweroff", "power off",
+    "log out", "logout", "pmset sleepnow", "systemsetup", "fdesetup",
+    "shut down", "sleep", "osascript",
 ]
 
-# AppleScript snippets that target system power (used with osascript)
 _APPLESCRIPT_POWER_PHRASES = [
-    "shut down",
-    "restart",
-    "sleep",
-    "log out",
-    "power off",
+    "shut down", "restart", "sleep", "log out", "power off",
 ]
 
-# Commands that require extra caution (allowed but logged)
 SENSITIVE_PREFIXES = [
-    "rm ",
-    "sudo ",
-    "kill ",
-    "killall ",
-    "diskutil",
+    "rm ", "sudo ", "kill ", "killall ", "diskutil",
 ]
 
 

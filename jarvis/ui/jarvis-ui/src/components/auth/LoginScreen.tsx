@@ -7,12 +7,6 @@ interface LoginScreenProps {
   error: string | null;
 }
 
-/**
- * Full-screen PIN entry for remote JARVIS access.
- *
- * Shows a sleek, dark-themed PIN pad with 6 digit inputs
- * that auto-advances and submits on completion.
- */
 export default function LoginScreen({ onLogin, error }: LoginScreenProps) {
   const PIN_LENGTH = 6;
   const [digits, setDigits] = useState<string[]>(Array(PIN_LENGTH).fill(""));

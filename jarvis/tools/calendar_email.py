@@ -1,4 +1,4 @@
-"""AppleScript-based access to macOS Calendar.app and Mail.app via native apps."""
+"""AppleScript-based access to macOS Calendar.app and Mail.app."""
 import asyncio
 import logging
 from datetime import datetime, timedelta

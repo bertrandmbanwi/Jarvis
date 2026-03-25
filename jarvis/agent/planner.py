@@ -28,10 +28,8 @@ from jarvis.agent.task_tracker import TaskPlan, TaskTracker
 
 logger = logging.getLogger("jarvis.agent.planner")
 
-# Maximum subtasks in a single plan (safety limit)
 MAX_SUBTASKS = 8
 
-# Words that suggest the request has multiple sequential steps
 _SEQUENCE_MARKERS = [
     r"\bthen\b",
     r"\bafter that\b",
@@ -46,7 +44,6 @@ _SEQUENCE_MARKERS = [
     r"\bwhen (?:you're|that's) done\b",
 ]
 
-# Action verbs that indicate distinct tool-requiring steps
 _ACTION_VERBS = [
     "search", "find", "look up", "research",
     "open", "navigate", "browse", "go to",
@@ -59,7 +56,6 @@ _ACTION_VERBS = [
     "schedule", "remind", "add to calendar",
 ]
 
-# The planning prompt sent to Claude to decompose a request
 _PLANNING_SYSTEM_PROMPT = """\
 You are a task planning module for JARVIS, a personal AI assistant.
 
@@ -94,7 +90,6 @@ For complex requests:
 }}
 """.format(max_subtasks=MAX_SUBTASKS)
 
-# Lightweight complexity check prompt (uses fast tier)
 _COMPLEXITY_CHECK_PROMPT = """\
 Decide: does this user request require multiple distinct steps to complete,
 or is it a single action? Consider whether different tools or actions are needed.
@@ -127,14 +122,8 @@ def _count_action_verbs(text: str) -> int:
 
 
 def _has_compound_actions(text: str) -> bool:
-    """
-    Check if the text contains multiple distinct actions joined by conjunctions.
-
-    Looks for patterns like "do X and do Y" or "do X, Y, and Z" where
-    X, Y, Z involve different action types.
-    """
+    """Check for multiple distinct actions joined by conjunctions."""
     text_lower = text.lower()
-    # Split on "and", "then", commas to find independent clauses
     parts = re.split(r'\band\b|\bthen\b|,', text_lower)
     action_parts = 0
     for part in parts:
@@ -149,13 +138,7 @@ def _has_compound_actions(text: str) -> bool:
 
 
 def needs_decomposition_heuristic(text: str) -> Optional[bool]:
-    """
-    Quick heuristic check for whether a request needs decomposition.
-
-    Returns:
-        True if definitely complex, False if definitely simple,
-        None if ambiguous (should ask the LLM).
-    """
+    """Quick heuristic check for whether a request needs decomposition."""
     text_stripped = text.strip()
 
     if len(text_stripped) < 30:
@@ -168,8 +151,6 @@ def needs_decomposition_heuristic(text: str) -> Optional[bool]:
     if verb_count >= 3:
         return True
 
-    # Compound actions with 2 verbs can be either single workflow or multi-step.
-    # Let the LLM decide (e.g., "open X and paste Y" vs "research X and email Y").
     if _has_compound_actions(text_stripped) and verb_count >= 2:
         return None
 
@@ -180,36 +161,15 @@ def needs_decomposition_heuristic(text: str) -> Optional[bool]:
 
 
 class TaskPlanner:
-    """
-    Decomposes complex user requests into ordered subtask plans.
-
-    Works with the TaskTracker to manage plan lifecycle and the
-    AgentExecutor to run individual subtasks.
-    """
+    """Decomposes complex user requests into ordered subtask plans."""
 
     def __init__(self, llm=None):
-        """
-        Args:
-            llm: JarvisLLM instance (shared with brain/executor)
-        """
         self.llm = llm
         self.tracker = TaskTracker()
-        # Callback to get learning context for the planner prompt.
-        # Set by brain.py: () -> str
         self._get_learning_context = None
 
     async def should_decompose(self, user_input: str) -> bool:
-        """
-        Decide whether a request needs task decomposition.
-
-        Uses fast heuristics first, falls back to LLM only if ambiguous.
-
-        Args:
-            user_input: The user's request
-
-        Returns:
-            True if the request should be decomposed into subtasks
-        """
+        """Decide whether a request needs task decomposition."""
         heuristic_result = needs_decomposition_heuristic(user_input)
         if heuristic_result is not None:
             logger.info(
@@ -241,20 +201,7 @@ class TaskPlanner:
         user_input: str,
         conversation_history: Optional[list[dict]] = None,
     ) -> Optional[TaskPlan]:
-        """
-        Decompose a user request into a structured task plan.
-
-        Calls Claude to analyze the request and produce ordered subtasks.
-        Returns None if decomposition fails or is not needed.
-
-        Args:
-            user_input: The user's complex request
-            conversation_history: Recent conversation for context (so the
-                planner knows what JARVIS has already done)
-
-        Returns:
-            TaskPlan with ordered subtasks, or None
-        """
+        """Decompose a user request into a structured task plan."""
         if not self.llm:
             logger.warning("No LLM available for planning.")
             return None
@@ -318,9 +265,7 @@ class TaskPlanner:
             return None
 
     def _parse_plan_response(self, response: str) -> Optional[dict]:
-        """
-        Parse the planner's JSON response, handling markdown code fences and quirks.
-        """
+        """Parse the planner's JSON response, handling markdown code fences."""
         text = response.strip()
 
         if text.startswith("```"):

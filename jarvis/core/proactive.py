@@ -1,22 +1,4 @@
-"""
-JARVIS Proactive Suggestions Engine
-
-A background heartbeat that periodically checks the user's context (calendar,
-email, time of day) and delivers helpful suggestions without being asked.
-
-Examples:
-- "Good morning, sir. You have 3 unread emails and a meeting at 10am."
-- "Heads up, sir. You have a meeting starting in 15 minutes."
-- "You've been working for a while. Want me to check if anything new came in?"
-
-Design principles:
-- Non-intrusive: suggestions are queued and delivered at natural breaks, not
-  interrupting active conversations.
-- Configurable: the user can enable/disable categories and set check intervals.
-- Smart cooldowns: each suggestion type has its own cooldown to prevent spam.
-- Lightweight: context checks use the existing calendar/email tools (AppleScript),
-  which are fast and local.
-"""
+"""Background engine that monitors context and generates proactive suggestions."""
 import asyncio
 import logging
 import time
@@ -37,7 +19,7 @@ class SuggestionCategory(str, Enum):
 
 @dataclass
 class Suggestion:
-    """A single proactive suggestion to deliver to the user."""
+    """A single proactive suggestion."""
     category: SuggestionCategory
     message: str
     priority: int = 0  # Higher = more important
@@ -45,74 +27,38 @@ class Suggestion:
     spoken: bool = False  # Whether this should be spoken aloud
 
 
-# Default check intervals (seconds)
 DEFAULT_INTERVALS = {
-    SuggestionCategory.CALENDAR: 300,    # Every 5 minutes
-    SuggestionCategory.EMAIL: 600,       # Every 10 minutes
-    SuggestionCategory.GREETING: 3600,   # Once per hour (morning/afternoon)
-    SuggestionCategory.REMINDER: 900,    # Every 15 minutes
+    SuggestionCategory.CALENDAR: 300,
+    SuggestionCategory.EMAIL: 600,
+    SuggestionCategory.GREETING: 3600,
+    SuggestionCategory.REMINDER: 900,
 }
 
-# Cooldown periods: minimum time between suggestions of the same type
 COOLDOWN_PERIODS = {
-    SuggestionCategory.CALENDAR: 600,    # 10 min between calendar alerts
-    SuggestionCategory.EMAIL: 1800,      # 30 min between email notifications
-    SuggestionCategory.GREETING: 14400,  # 4 hours between greetings
-    SuggestionCategory.REMINDER: 1800,   # 30 min between reminders
+    SuggestionCategory.CALENDAR: 600,
+    SuggestionCategory.EMAIL: 1800,
+    SuggestionCategory.GREETING: 14400,
+    SuggestionCategory.REMINDER: 1800,
 }
 
-# Meeting alert thresholds (minutes before meeting to alert)
 MEETING_ALERT_MINUTES = [15, 5]
 
 
 class ProactiveEngine:
-    """
-    Background engine that monitors context and generates suggestions.
-
-    Runs an async heartbeat loop that periodically checks calendar events,
-    unread emails, and time-of-day context. When something noteworthy is
-    found, it queues a suggestion for delivery.
-
-    The engine is designed to be non-intrusive:
-    - It pauses during active conversations (no interruptions).
-    - Each suggestion type has a cooldown to prevent spam.
-    - Suggestions are delivered via a callback (WebSocket broadcast + TTS).
-    """
+    """Background engine that monitors context and generates suggestions."""
 
     def __init__(self):
         self._enabled = True
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
-        # Category toggles (user can disable specific types)
-        self._category_enabled: dict[SuggestionCategory, bool] = {
-            cat: True for cat in SuggestionCategory
-        }
-
-        # Check intervals per category
+        self._category_enabled: dict[SuggestionCategory, bool] = {cat: True for cat in SuggestionCategory}
         self._intervals: dict[SuggestionCategory, int] = dict(DEFAULT_INTERVALS)
-
-        # Last check timestamps per category
-        self._last_check: dict[SuggestionCategory, float] = {
-            cat: 0.0 for cat in SuggestionCategory
-        }
-
-        # Last suggestion timestamps per category (for cooldowns)
-        self._last_suggestion: dict[SuggestionCategory, float] = {
-            cat: 0.0 for cat in SuggestionCategory
-        }
-
-        # Track already-alerted events to prevent duplicates
+        self._last_check: dict[SuggestionCategory, float] = {cat: 0.0 for cat in SuggestionCategory}
+        self._last_suggestion: dict[SuggestionCategory, float] = {cat: 0.0 for cat in SuggestionCategory}
         self._alerted_events: set[str] = set()
-
-        # Track if morning/afternoon greeting was sent today
-        self._greeting_sent_today: str = ""  # "morning" or "afternoon"
-
-        # Callback for delivering suggestions.
-        # Set by server.py: async def(suggestion: Suggestion) -> None
+        self._greeting_sent_today: str = ""
         self._on_suggestion: Optional[Callable] = None
-
-        # Flag: pause proactive checks during active conversation
         self._conversation_active = False
         self._last_interaction: float = 0.0
 
@@ -133,13 +79,7 @@ class ProactiveEngine:
         logger.info("Proactive engine stopped.")
 
     def mark_interaction(self):
-        """
-        Mark that the user just interacted with JARVIS.
-
-        This resets the conversation-active timer. Proactive suggestions
-        are suppressed for a short window after each interaction to avoid
-        interrupting the flow.
-        """
+        """Mark user interaction to suppress suggestions during active conversation."""
         self._last_interaction = time.time()
         self._conversation_active = True
 
@@ -176,7 +116,7 @@ class ProactiveEngine:
         }
 
     async def _heartbeat_loop(self):
-        """Main background loop that runs checks every 60 seconds."""
+        """Main background loop running checks every 60 seconds."""
         await asyncio.sleep(30)
 
         while self._running:
@@ -195,6 +135,7 @@ class ProactiveEngine:
 
     async def _run_checks(self):
         """Run all due context checks."""
+
         now = time.time()
 
         for category in SuggestionCategory:
@@ -211,7 +152,6 @@ class ProactiveEngine:
                 continue
 
             self._last_check[category] = now
-
             try:
                 if category == SuggestionCategory.CALENDAR:
                     await self._check_calendar()
@@ -247,23 +187,16 @@ class ProactiveEngine:
             title = parts[0]
             time_str = parts[1] if len(parts) > 1 else ""
 
-            # Skip all-day events for "starting soon" alerts
             if "All Day" in time_str:
                 continue
 
-            # Create a unique key for this event to prevent duplicate alerts
             event_key = f"{title}_{time_str}"
-
             if event_key in self._alerted_events:
                 continue
 
-            # Try to parse the start time and check if it's within alert window
-            # AppleScript returns dates like "Monday, March 24, 2026 at 2:00:00 PM"
             try:
                 from datetime import datetime
-                # Extract just the start time portion (before " - ")
                 start_str = time_str.split(" - ")[0].strip()
-                # Try multiple date formats
                 for fmt in [
                     "%A, %B %d, %Y at %I:%M:%S %p",
                     "%m/%d/%Y %I:%M:%S %p",
@@ -403,8 +336,7 @@ class ProactiveEngine:
                 except (ValueError, IndexError):
                     pass
         except asyncio.TimeoutError:
-            logger.debug("Email check timed out during morning briefing (Mail app not responding).")
-            # Do NOT claim inbox is clean if we could not actually check
+            logger.debug("Email check timed out during morning briefing.")
         except Exception:
             pass
 
@@ -414,7 +346,8 @@ class ProactiveEngine:
         return " ".join(parts)
 
     async def _deliver(self, suggestion: Suggestion):
-        """Deliver a suggestion via the registered callback."""
+        """Deliver a suggestion via registered callback."""
+
         self._last_suggestion[suggestion.category] = time.time()
 
         logger.info(
@@ -430,6 +363,6 @@ class ProactiveEngine:
                 logger.debug("Suggestion delivery failed: %s", e)
 
     def cleanup_old_alerts(self):
-        """Remove stale event alert keys to prevent unbounded growth."""
+        """Remove stale event alert keys."""
         if len(self._alerted_events) > 200:
             self._alerted_events.clear()

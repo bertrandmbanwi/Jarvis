@@ -132,25 +132,15 @@ const STATES: Record<OrbState, StateConfig> = {
   },
 };
 
-// ================================================================
-//  CONSTANTS
-// ================================================================
 const PARTICLE_COUNT = 2400;
 const DUST_COUNT = 180;
 const ARC_COUNT = 8;
 const ARC_PTS = 40;
 const RING_COUNT = 4;
 
-// Three-tier particle shell system
-// Core (0), Mid-layer (1), Outer (2)
-const SHELL_COUNTS = [800, 1200, 400];   // particles per shell
-const SHELL_SPLIT = [800, 2000, 2400];   // cumulative counts
+const SHELL_COUNTS = [800, 1200, 400];
+const SHELL_SPLIT = [800, 2000, 2400];
 
-// ================================================================
-//  SHADERS
-// ================================================================
-
-// --- Main particle vertex ---
 const VERT_PARTICLES = /* glsl */ `
   attribute float aSize;
   attribute float aBright;
@@ -390,9 +380,6 @@ const FRAG_ARC = /* glsl */ `
   }
 `;
 
-// ================================================================
-//  HELPERS
-// ================================================================
 function lerpN(a: number, b: number, t: number): number { return a + (b - a) * t; }
 function lerpV3(a: [number,number,number], b: [number,number,number], t: number): [number,number,number] {
   return [lerpN(a[0],b[0],t), lerpN(a[1],b[1],t), lerpN(a[2],b[2],t)];
@@ -443,9 +430,6 @@ function slerp(a: number[], b: number[], t: number): number[] {
   return [a[0]*sa+b[0]*sb, a[1]*sa+b[1]*sb, a[2]*sa+b[2]*sb];
 }
 
-// ================================================================
-//  COMPONENT
-// ================================================================
 export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
   state,
   transitionIn = 1,
@@ -461,13 +445,9 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
   const tgtRef = useRef<StateConfig>({ ...STATES[state] });
   const ampRef = useRef(0);
 
-  // Update targets on prop changes
   useEffect(() => { tgtRef.current = { ...STATES[state] }; }, [state]);
   useEffect(() => { ampRef.current = audioAmplitude; }, [audioAmplitude]);
 
-  // ================================================================
-  //  Scene setup (runs once)
-  // ================================================================
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
@@ -487,9 +467,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     camera.position.set(0, 0, 3.5);
     camera.lookAt(0, 0, 0);
 
-    // ================================================================
     //  1. PARTICLE POINT CLOUD
-    // ================================================================
     const pos = new Float32Array(PARTICLE_COUNT * 3);
     const sizes = new Float32Array(PARTICLE_COUNT);
     const brights = new Float32Array(PARTICLE_COUNT);
@@ -581,9 +559,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     });
     scene.add(new THREE.Points(pGeom, pMat));
 
-    // ================================================================
     //  2. NUCLEUS GLOW (billboard quad with layered radial shader)
-    // ================================================================
     const glowMat = new THREE.ShaderMaterial({
       vertexShader: VERT_GLOW,
       fragmentShader: FRAG_GLOW,
@@ -611,9 +587,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     glow2.renderOrder = -3;
     scene.add(glow2);
 
-    // ================================================================
     //  3. AMBIENT DUST MOTES
-    // ================================================================
     const dPos = new Float32Array(DUST_COUNT * 3);
     const dSizes = new Float32Array(DUST_COUNT);
     const dPhases = new Float32Array(DUST_COUNT);
@@ -647,9 +621,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     });
     scene.add(new THREE.Points(dGeom, dMat));
 
-    // ================================================================
     //  4. HOLOGRAPHIC RINGS
-    // ================================================================
     const ringCfg = [
       { r: 0.52, tiltX: 0.25,  tiltZ: 0.0,   speed:  0.35, segs: 128 },
       { r: 0.42, tiltX: -0.18, tiltZ: 0.12,  speed: -0.25, segs: 96 },
@@ -682,9 +654,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       rings.push({ mesh: ring, speed: rc.speed });
     }
 
-    // ================================================================
     //  5. ENERGY ARC TRAILS
-    // ================================================================
     interface ArcData {
       geom: THREE.BufferGeometry;
       mat: THREE.ShaderMaterial;
@@ -728,9 +698,6 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       });
     }
 
-    // ================================================================
-    //  RESIZE
-    // ================================================================
     const onResize = () => {
       if (!mount) return;
       const w = mount.clientWidth;
@@ -742,9 +709,6 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     onResize();
     window.addEventListener("resize", onResize);
 
-    // ================================================================
-    //  ANIMATION LOOP
-    // ================================================================
     clockRef.current.start();
 
     const animate = () => {
@@ -876,9 +840,6 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
 
     frameRef.current = requestAnimationFrame(animate);
 
-    // ================================================================
-    //  CLEANUP
-    // ================================================================
     return () => {
       cancelAnimationFrame(frameRef.current);
       window.removeEventListener("resize", onResize);

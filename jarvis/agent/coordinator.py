@@ -32,7 +32,7 @@ logger = logging.getLogger("jarvis.agent.coordinator")
 
 
 class AgentType(str, Enum):
-    """Specialized agent profiles available for task routing."""
+    """Specialized agent profiles for task routing."""
     RESEARCHER = "researcher"
     CODER = "coder"
     BROWSER = "browser"
@@ -50,7 +50,6 @@ class AgentProfile:
     system_prompt: str
     tool_names: list[str]
     description: str = ""
-    # Runtime stats
     total_tasks: int = 0
     successful_tasks: int = 0
     total_duration_s: float = 0.0
@@ -82,12 +81,12 @@ class AgentProfile:
 
 @dataclass
 class AgentTask:
-    """A task assigned to a specific agent, with execution tracking."""
+    """Task assigned to a specific agent."""
     subtask_id: str
     agent_type: AgentType
     description: str
     depends_on: list[str] = field(default_factory=list)
-    status: str = "pending"  # pending, running, completed, failed
+    status: str = "pending"
     result: str = ""
     error: str = ""
     started_at: float = 0.0
@@ -252,7 +251,6 @@ _AGENT_TOOLS: dict[AgentType, list[str]] = {
         "fetch_page_text",
         "search_web", "search_and_read",
     ],
-    # Generalist gets ALL tools (populated at runtime)
     AgentType.GENERALIST: [],
 }
 
@@ -318,15 +316,7 @@ _ROUTING_KEYWORDS: dict[AgentType, list[str]] = {
 
 
 def classify_subtask(description: str) -> AgentType:
-    """
-    Determine the best agent type for a subtask using keyword scoring.
-
-    Args:
-        description: The subtask description text
-
-    Returns:
-        The best-matching AgentType
-    """
+    """Determine best agent type for a subtask using keyword scoring."""
     desc_lower = description.lower()
     scores: dict[AgentType, int] = {at: 0 for at in AgentType}
 
@@ -359,16 +349,7 @@ def classify_subtasks_batch(subtask_descriptions: list[str]) -> list[AgentType]:
 def find_parallel_groups(
     subtasks: list[dict],
 ) -> list[list[int]]:
-    """
-    Identify groups of subtasks that can run in parallel based on dependencies.
-
-    Args:
-        subtasks: List of subtask dicts with 'id', 'depends_on' fields
-
-    Returns:
-        List of groups, where each group is a list of subtask indices
-        that can execute in parallel. Groups are ordered sequentially.
-    """
+    """Identify groups of subtasks that can run in parallel based on dependencies."""
     if not subtasks:
         return []
 
@@ -384,7 +365,6 @@ def find_parallel_groups(
     while remaining:
         ready = []
         still_waiting = []
-
         for idx in remaining:
             st = subtasks[idx]
             deps = st.get("depends_on", [])
@@ -392,7 +372,6 @@ def find_parallel_groups(
                 ready.append(idx)
             else:
                 still_waiting.append(idx)
-
         if not ready:
             logger.warning(
                 "Dependency deadlock detected for %d subtask(s). "
@@ -415,18 +394,7 @@ def find_parallel_groups(
 
 
 class AgentCoordinator:
-    """
-    Coordinates multiple specialized agents for complex task execution.
-
-    Enhances the existing planner/executor flow by:
-    1. Assigning each subtask to the best-fit agent profile
-    2. Providing agent-specific system prompts and tool subsets
-    3. Running independent subtasks in parallel when possible
-    4. Tracking per-agent performance metrics
-
-    The coordinator does NOT replace the executor. It wraps the executor
-    with agent-aware routing and parallel execution capabilities.
-    """
+    """Coordinates multiple specialized agents for complex task execution."""
 
     def __init__(self):
         self.profiles = _build_profiles()
@@ -508,18 +476,7 @@ class AgentCoordinator:
         subtasks: list,
         execute_fn,
     ) -> list[tuple[int, str, Optional[str]]]:
-        """
-        Execute a group of subtasks in parallel.
-
-        Args:
-            group_indices: Indices of subtasks to run concurrently
-            subtasks: The full subtask list (to index into)
-            execute_fn: Async function(subtask, agent_type) -> result_str
-
-        Returns:
-            List of (index, result_or_empty, error_or_none) tuples
-        """
-        # Cap parallelism
+        """Execute a group of subtasks in parallel."""
         sem = asyncio.Semaphore(self.max_parallel)
 
         async def run_one(idx: int):
@@ -560,7 +517,6 @@ class AgentCoordinator:
                         self._active_tasks.remove(task)
                     self._execution_history.append(task)
 
-        # Run all tasks in the group concurrently
         results = await asyncio.gather(
             *[run_one(idx) for idx in group_indices],
             return_exceptions=False,

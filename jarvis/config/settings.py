@@ -1,9 +1,4 @@
-"""
-JARVIS Configuration
-All settings in one place. Adjust these to match your hardware and preferences.
-
-Loads .env file from JARVIS_HOME if present. Environment variables always override defaults.
-"""
+"""JARVIS configuration with environment variable overrides."""
 import os
 from pathlib import Path
 

@@ -1,7 +1,4 @@
-"""
-JARVIS macOS Control Tools
-AppleScript-based automation for controlling Mac apps and system functions.
-"""
+"""JARVIS macOS Control Tools: AppleScript-based automation for Mac apps and system."""
 import asyncio
 import logging
 import subprocess
@@ -10,23 +7,12 @@ from typing import Optional
 logger = logging.getLogger("jarvis.tools.mac_control")
 
 
-# AppleScript phrases that would affect system power state, always blocked
 _BLOCKED_APPLESCRIPT_PHRASES = [
-    "shut down",
-    "restart",
-    "log out",
-    "sleep",
-    "power off",
+    "shut down", "restart", "log out", "sleep", "power off",
 ]
 
-# Apps that should never be quit (quitting Finder crashes desktop, System Events kills automation)
 _PROTECTED_APPS = [
-    "finder",
-    "system events",
-    "loginwindow",
-    "dock",
-    "systempolicyd",
-    "windowserver",
+    "finder", "system events", "loginwindow", "dock", "systempolicyd", "windowserver",
 ]
 
 
@@ -34,7 +20,6 @@ def _is_applescript_safe(script: str) -> tuple[bool, str]:
     """Check if an AppleScript is safe to execute."""
     script_lower = script.lower()
 
-    # Block system power commands
     for phrase in _BLOCKED_APPLESCRIPT_PHRASES:
         if phrase in script_lower:
             return False, (
@@ -43,12 +28,9 @@ def _is_applescript_safe(script: str) -> tuple[bool, str]:
                 "To shut down JARVIS itself, say 'quit JARVIS' or 'exit JARVIS'."
             )
 
-    # Block quitting protected system processes
     for app in _PROTECTED_APPS:
         if app in script_lower and "quit" in script_lower:
-            return False, (
-                f"Blocked: cannot quit protected system process '{app}'."
-            )
+            return False, f"Blocked: cannot quit protected system process '{app}'."
 
     return True, "OK"
 

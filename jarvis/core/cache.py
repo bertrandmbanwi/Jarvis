@@ -1,23 +1,4 @@
-"""
-JARVIS Result Cache (Phase 6.2: Performance Tuning)
-
-TTL-based in-memory cache for tool results and LLM responses.
-Prevents redundant API calls and tool executions for data that
-changes infrequently (calendar events, unread counts, system info).
-
-Design principles:
-- Per-tool TTL: some data is stale after 30s (battery), some after 5min (calendar)
-- Key generation: tool_name + sorted(args) -> deterministic cache key
-- Size-bounded: evicts oldest entries when max_size is reached (LRU-style)
-- Thread-safe: uses asyncio lock for concurrent access
-- Cache bypass: callers can force-refresh with skip_cache=True
-- Metrics: tracks hit/miss rates for tuning TTLs
-
-NOT cached by default:
-- Tools with side effects (send_email, run_command, write_file, etc.)
-- Tools that return screenshots or rich content (browser_screenshot, etc.)
-- Tools where staleness would be confusing (search results, web fetches)
-"""
+"""TTL-based LRU cache for tool results with per-tool expiration and metrics."""
 import asyncio
 import hashlib
 import json
@@ -49,29 +30,19 @@ class CacheEntry:
         return time.time() - self.created_at
 
 
-# Per-tool TTL configuration (seconds).
-# Tools not listed here are NOT cached.
-# Shorter TTLs for frequently changing data, longer for stable data.
 TOOL_CACHE_TTLS: dict[str, float] = {
-    # System info (changes slowly)
     "get_battery_status": 30.0,
     "get_disk_usage": 60.0,
     "get_cpu_usage": 15.0,
     "get_system_info": 120.0,
     "get_volume": 10.0,
     "get_brightness": 10.0,
-
-    # Calendar and email (moderate refresh)
-    "get_upcoming_events": 120.0,      # 2 minutes
-    "list_calendars": 300.0,           # 5 minutes
-    "get_unread_email_count": 60.0,    # 1 minute
-    "read_inbox": 60.0,               # 1 minute
-
-    # App state
+    "get_upcoming_events": 120.0,
+    "list_calendars": 300.0,
+    "get_unread_email_count": 60.0,
+    "read_inbox": 60.0,
     "list_running_apps": 10.0,
     "get_active_window": 5.0,
-
-    # JARVIS internal state (changes rarely during a session)
     "get_plan_status": 5.0,
     "get_plan_history": 30.0,
     "get_learning_insights": 60.0,
@@ -80,16 +51,12 @@ TOOL_CACHE_TTLS: dict[str, float] = {
     "get_agent_status": 15.0,
     "get_active_agents": 5.0,
     "get_system_health": 15.0,
-    "get_user_profile": 300.0,         # 5 minutes
+    "get_user_profile": 300.0,
     "get_user_preference": 300.0,
-
-    # Chrome extension state
     "chrome_extension_status": 30.0,
     "chrome_get_tabs": 10.0,
 }
 
-# Tools that should NEVER be cached (side effects, mutations, unique results).
-# This is a safety list; tools not in TOOL_CACHE_TTLS are already uncached.
 UNCACHEABLE_TOOLS: set[str] = {
     "run_command",
     "run_terminal_command_smart",
@@ -140,18 +107,14 @@ UNCACHEABLE_TOOLS: set[str] = {
 
 def _make_cache_key(tool_name: str, tool_input: dict) -> str:
     """Generate deterministic cache key from tool name and arguments."""
+
     sorted_args = json.dumps(tool_input, sort_keys=True, default=str)
     raw = f"{tool_name}:{sorted_args}"
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
 class ResultCache:
-    """
-    TTL-based LRU cache for tool results.
-
-    Thread-safe via asyncio.Lock. Bounded by max_size with LRU eviction.
-    Each tool has its own TTL based on how quickly its data goes stale.
-    """
+    """TTL-based LRU cache for tool results with asyncio.Lock and per-tool TTLs."""
 
     def __init__(self, max_size: int = 200):
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
@@ -235,13 +198,7 @@ class ResultCache:
             )
 
     async def invalidate(self, tool_name: str = None):
-        """
-        Invalidate cache entries.
-
-        Args:
-            tool_name: If provided, only invalidate entries for this tool.
-                       If None, clear the entire cache.
-        """
+        """Invalidate cache entries for a tool or all entries."""
         async with self._lock:
             if tool_name is None:
                 count = len(self._cache)
@@ -261,7 +218,7 @@ class ResultCache:
                     )
 
     async def cleanup_expired(self):
-        """Remove all expired entries. Called periodically."""
+        """Remove all expired entries."""
         async with self._lock:
             expired_keys = [
                 k for k, v in self._cache.items() if v.is_expired
@@ -301,19 +258,11 @@ class ResultCache:
         }
 
     def record_bypass(self):
-        """Record that a cache lookup was bypassed (force-refresh)."""
+        """Record that a cache lookup was bypassed."""
         self._bypasses += 1
 
 
-# Global cache instance (shared across the application)
 tool_cache = ResultCache(max_size=200)
-
-
-# ================================================================
-# Invalidation helpers
-# ================================================================
-# When certain tools execute, they invalidate related cache entries.
-# For example, sending an email should invalidate unread_email_count.
 
 INVALIDATION_MAP: dict[str, list[str]] = {
     "send_email": ["get_unread_email_count", "read_inbox"],
