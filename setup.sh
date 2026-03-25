@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # JARVIS Setup Script for macOS (Apple Silicon M1 Pro)
-# Tailored to Becs' machine: Homebrew, Python 3.11, Ollama
+# Tailored to my machine: Homebrew, Python 3.11, Ollama
 # already installed. Only installs what is missing.
 #
 # Usage: chmod +x setup.sh && ./setup.sh
