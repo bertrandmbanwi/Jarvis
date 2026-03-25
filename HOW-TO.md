@@ -18,7 +18,7 @@ Optional (recommended):
 | Tool | Purpose | Install |
 |------|---------|---------|
 | cloudflared | Remote/mobile access via HTTPS tunnel | `brew install cloudflared` |
-| Claude Code CLI | Delegate coding tasks to Claude | `npm install -g @anthropic-ai/claude-code` |
+| Claude Code CLI | Delegate coding tasks via CLI | `npm install -g @anthropic-ai/claude-code` |
 
 ## Quick Start
 
@@ -44,18 +44,18 @@ JARVIS will be available at **http://localhost:3000** in your browser.
 
 ## Environment Variables (.env)
 
-Create a `.env` file in the project root. Only `ANTHROPIC_API_KEY` is required if you want Claude as the primary brain. Without it, JARVIS falls back to Ollama (local, free, slower).
+Create a `.env` file in the project root. `ANTHROPIC_API_KEY` is required for the cloud LLM backend. Without it, JARVIS falls back to Ollama (local, free, slower).
 
 ```bash
-# Required for Claude-powered intelligence
+# Required for cloud LLM intelligence
 ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 
-# Optional: override Claude model tiers
+# Optional: override LLM model tiers
 CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001
 CLAUDE_BRAIN_MODEL=claude-sonnet-4-6
 CLAUDE_DEEP_MODEL=claude-opus-4-6
 
-# Optional: prefer local Ollama instead of Claude
+# Optional: prefer local Ollama instead of cloud API
 PREFER_CLAUDE=true
 
 # Optional: TTS configuration
@@ -142,7 +142,7 @@ Jarvis/
     core/
       server.py               # FastAPI + WebSocket server
       brain.py                # Conversation engine, tool dispatch
-      llm.py                  # Claude API + Ollama backend abstraction
+      llm.py                  # LLM API + Ollama backend abstraction
       auth.py                 # PIN-based mobile authentication
       cache.py                # Response caching layer
       cost_tracker.py         # Per-request cost logging
@@ -155,7 +155,7 @@ Jarvis/
       planner.py              # Task decomposition (plan-and-execute)
       executor.py             # Subtask execution with tool access
       task_tracker.py         # Persistent plan state
-      tools_schema.py         # Tool definitions for Claude tool-use
+      tools_schema.py         # Tool definitions for LLM tool-use
       learning.py             # Pattern learning from past plans
     memory/
       store.py                # ChromaDB vector memory
@@ -173,7 +173,7 @@ Jarvis/
       calendar_email.py       # Calendar and email via Chrome/Gmail
       chrome_extension.py     # Chrome extension bridge
       chrome_sync.py          # Chrome cookie sync
-      claude_code.py          # Claude Code CLI delegation
+      claude_code.py          # Coding CLI delegation
     voice/
       listener.py             # Microphone capture + faster-whisper STT
       speaker.py              # Kokoro/Edge TTS with chunked streaming
@@ -204,18 +204,18 @@ JARVIS has 86+ tools organized into these categories:
 | Browser Automation | Playwright-driven: fill forms, click buttons, navigate sites |
 | Calendar/Email | Read Gmail inbox via Chrome, calendar events |
 | Weather | Current conditions and forecasts |
-| Claude Code | Delegate coding tasks, scaffold projects, run smart commands |
+| Coding CLI | Delegate coding tasks, scaffold projects, run smart commands |
 
 ## Intelligence Tiers
 
 JARVIS uses a tiered model system that routes requests to the appropriate level of intelligence:
 
-| Tier | Model | Use Case | Cost |
-|------|-------|----------|------|
-| Fast | Claude Haiku 4.5 | Quick lookups, simple responses | Lowest |
-| Brain | Claude Sonnet 4.6 | General conversation, tool use | Medium |
-| Deep | Claude Opus 4.6 | Complex reasoning, multi-step plans | Highest |
-| Local | Ollama (llama3.1:8b) | Offline fallback, no API needed | Free |
+| Tier | Purpose | Use Case | Cost |
+|------|---------|----------|------|
+| Fast | Lightweight model | Quick lookups, simple responses | Lowest |
+| Brain | Mid-tier model | General conversation, tool use | Medium |
+| Deep | Reasoning model | Complex reasoning, multi-step plans | Highest |
+| Local | Ollama (offline) | Offline fallback, no API needed | Free |
 
 The multi-agent planner automatically escalates complex requests to higher tiers and decomposes them into subtasks.
 
@@ -246,7 +246,7 @@ Verify PortAudio is installed (`brew install portaudio`). Grant microphone permi
 Install cloudflared (`brew install cloudflared`). The tunnel URL is printed in the console when JARVIS starts.
 
 **High API costs:**
-Adjust `COST_DAILY_ALERT` in `.env`. Use `PREFER_CLAUDE=false` to default to local Ollama. The System tab in the UI shows real-time cost tracking.
+Adjust `COST_DAILY_ALERT` in `.env`. Set `PREFER_CLAUDE=false` to default to local Ollama. The System tab in the UI shows real-time cost tracking.
 
 **Port conflicts:**
 JARVIS uses ports 3000 (UI) and 8741 (API). If something else is using those ports, JARVIS will attempt to kill orphaned processes on startup. You can override with `API_PORT` and `UI_PORT` in `.env`.
