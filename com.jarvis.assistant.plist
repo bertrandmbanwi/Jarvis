@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- JARVIS Auto-Start Service -->
+    <!-- Install: cp com.jarvis.assistant.plist ~/Library/LaunchAgents/ -->
+    <!-- Load:    launchctl load ~/Library/LaunchAgents/com.jarvis.assistant.plist -->
+    <!-- Unload:  launchctl unload ~/Library/LaunchAgents/com.jarvis.assistant.plist -->
+    <!-- Status:  launchctl list | grep jarvis -->
+
+    <key>Label</key>
+    <string>com.jarvis.assistant</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <!-- UPDATE THIS PATH to match your JARVIS install location -->
+        <string>cd ~/Jarvis && ./start.sh full</string>
+    </array>
+
+    <!-- Start automatically when the user logs in -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart if JARVIS crashes (wait 10s before restart) -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Log stdout and stderr for debugging -->
+    <key>StandardOutPath</key>
+    <string>/tmp/jarvis-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/jarvis-stderr.log</string>
+
+    <!-- Environment variables (API key loaded from .env by start.sh) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/becs</string>
+    </dict>
+
+    <!-- Limit resource usage -->
+    <key>ProcessType</key>
+    <string>Standard</string>
+</dict>
+</plist>

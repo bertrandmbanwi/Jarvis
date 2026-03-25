@@ -1,0 +1,623 @@
+@import "tailwindcss";
+@config "../../tailwind.config.ts";
+
+/* ============================================================
+   JARVIS Design System: Premium Tokens
+   Three-layer architecture: Primitive > Semantic > Component
+   ============================================================ */
+
+:root {
+  /* ---- Primitive Tokens ---- */
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #00d4ff;
+  --color-cyan-600: #0099cc;
+  --color-cyan-700: #007aa3;
+  --color-blue-500: #0066ff;
+  --color-blue-900: #001a4d;
+  --color-gold-300: #ffe18c;
+  --color-gold-500: #ccaa44;
+  --color-green-400: #00ff88;
+  --color-amber-400: #ffaa00;
+  --color-red-400: #ff4444;
+  --color-surface-base: #000408;
+  --color-surface-elevated: rgba(0, 10, 25, 0.95);
+  --color-surface-overlay: rgba(0, 20, 40, 0.85);
+  --color-white-alpha-3: rgba(255, 255, 255, 0.03);
+  --color-white-alpha-5: rgba(255, 255, 255, 0.05);
+  --color-white-alpha-6: rgba(255, 255, 255, 0.06);
+  --color-white-alpha-8: rgba(255, 255, 255, 0.08);
+  --color-white-alpha-10: rgba(255, 255, 255, 0.10);
+  --color-white-alpha-12: rgba(255, 255, 255, 0.12);
+
+  /* ---- Semantic Tokens ---- */
+  --jarvis-cyan: var(--color-cyan-500);
+  --jarvis-cyan-dim: var(--color-cyan-600);
+  --jarvis-blue: var(--color-blue-500);
+  --jarvis-blue-dark: var(--color-blue-900);
+  --jarvis-glow: #00e5ff;
+  --jarvis-panel: var(--color-surface-overlay);
+  --jarvis-panel-border: rgba(0, 212, 255, 0.12);
+  --jarvis-surface: var(--color-surface-elevated);
+  --jarvis-text: #e0f0ff;
+  --jarvis-text-dim: #5588aa;
+  --jarvis-gold: var(--color-gold-300);
+
+  /* ---- Motion Tokens ---- */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-smooth: 300ms;
+  --duration-slow: 500ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.55, 0.085, 0.68, 0.53);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ---- Spacing Scale (4px base) ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---- Border Radius ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* ---- Elevation/Shadow Scale ---- */
+  --shadow-glow-sm: 0 0 8px rgba(0, 212, 255, 0.15);
+  --shadow-glow-md: 0 0 16px rgba(0, 212, 255, 0.2), 0 0 4px rgba(0, 212, 255, 0.1);
+  --shadow-glow-lg: 0 0 30px rgba(0, 212, 255, 0.25), 0 0 8px rgba(0, 212, 255, 0.15);
+  --shadow-glow-gold: 0 0 20px rgba(255, 225, 140, 0.2), 0 0 6px rgba(255, 225, 140, 0.1);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+  --shadow-panel: 0 2px 12px rgba(0, 0, 0, 0.3), inset 0 0.5px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ============================================================
+   Base Resets
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-surface-base);
+  color: var(--jarvis-text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   Scrollbar: Thin, elegant, non-intrusive
+   ============================================================ */
+
+.jarvis-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.jarvis-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.jarvis-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.15);
+  border-radius: var(--radius-full);
+  transition: background var(--duration-base) ease;
+}
+
+.jarvis-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.35);
+}
+
+/* Firefox scrollbar */
+.jarvis-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.15) transparent;
+}
+
+/* ============================================================
+   Glassmorphism Panel System
+   ============================================================ */
+
+.jarvis-panel {
+  background: var(--jarvis-panel);
+  border: 1px solid var(--jarvis-panel-border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow: var(--shadow-panel);
+}
+
+.jarvis-glass {
+  background: rgba(0, 15, 35, 0.6);
+  border: 1px solid rgba(0, 212, 255, 0.08);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow: var(--shadow-glass);
+}
+
+.jarvis-glass-subtle {
+  background: rgba(0, 12, 28, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+/* ============================================================
+   Text Effects
+   ============================================================ */
+
+.jarvis-glow {
+  text-shadow:
+    0 0 10px rgba(0, 212, 255, 0.5),
+    0 0 25px rgba(0, 212, 255, 0.2),
+    0 0 50px rgba(0, 212, 255, 0.08);
+}
+
+.jarvis-glow-subtle {
+  text-shadow:
+    0 0 6px rgba(0, 212, 255, 0.3),
+    0 0 14px rgba(0, 212, 255, 0.1);
+}
+
+/* ============================================================
+   Input System: Refined glassmorphism with focus feedback
+   ============================================================ */
+
+.jarvis-input {
+  background: rgba(0, 12, 28, 0.55);
+  border: 1px solid rgba(0, 212, 255, 0.1);
+  border-radius: var(--radius-lg);
+  color: var(--jarvis-text);
+  padding: 12px 18px;
+  font-size: 14px;
+  outline: none;
+  transition:
+    border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-smooth) var(--ease-out),
+    background var(--duration-base) var(--ease-out);
+  width: 100%;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.jarvis-input:focus {
+  border-color: rgba(0, 212, 255, 0.35);
+  box-shadow:
+    0 0 0 3px rgba(0, 212, 255, 0.06),
+    0 0 20px rgba(0, 212, 255, 0.1),
+    inset 0 0 12px rgba(0, 212, 255, 0.03);
+  background: rgba(0, 14, 32, 0.65);
+}
+
+.jarvis-input::placeholder {
+  color: var(--jarvis-text-dim);
+  opacity: 0.5;
+}
+
+.jarvis-input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   Status Indicator Dots
+   ============================================================ */
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  display: inline-block;
+  flex-shrink: 0;
+  transition: all var(--duration-base) ease;
+}
+
+.status-dot.connected {
+  background: var(--color-green-400);
+  box-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+}
+
+.status-dot.connecting {
+  background: var(--color-amber-400);
+  box-shadow: 0 0 8px rgba(255, 170, 0, 0.5);
+  animation: statusPulse 1.5s ease-in-out infinite;
+}
+
+.status-dot.disconnected {
+  background: #445566;
+  box-shadow: 0 0 4px rgba(68, 85, 102, 0.3);
+}
+
+.status-dot.error {
+  background: var(--color-red-400);
+  box-shadow: 0 0 8px rgba(255, 68, 68, 0.5);
+  animation: statusPulse 1s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* ============================================================
+   Typing Indicator
+   ============================================================ */
+
+.typing-dots span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--jarvis-cyan);
+  margin: 0 2px;
+  animation: typingBounce 1.4s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(2) { animation-delay: 0.16s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.25; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ============================================================
+   Animations: Premium motion system
+   ============================================================ */
+
+/* Fade in up (messages, cards) */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeInUp 0.25s var(--ease-out) forwards;
+}
+
+/* Scale fade (modals, overlays) */
+@keyframes scaleFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scale-fade-in {
+  animation: scaleFadeIn 0.3s var(--ease-spring) forwards;
+}
+
+/* Shimmer loading effect */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 212, 255, 0.03) 25%,
+    rgba(0, 212, 255, 0.08) 50%,
+    rgba(0, 212, 255, 0.03) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Breathing glow for mic/speaking */
+@keyframes breatheGlow {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.15), 0 0 4px rgba(0, 212, 255, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(0, 212, 255, 0.3), 0 0 8px rgba(0, 212, 255, 0.2);
+  }
+}
+
+.animate-breathe {
+  animation: breatheGlow 2.5s ease-in-out infinite;
+}
+
+/* Subtle float for orb area elements */
+@keyframes subtleFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+.animate-float {
+  animation: subtleFloat 4s ease-in-out infinite;
+}
+
+/* Ring pulse for mic recording */
+@keyframes ringPulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.mic-ring-pulse::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  border: 2px solid currentColor;
+  animation: ringPulse 1.5s ease-out infinite;
+}
+
+/* ============================================================
+   Button System: Consistent interactive states
+   ============================================================ */
+
+.jarvis-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  transition:
+    all var(--duration-base) var(--ease-out);
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.jarvis-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.jarvis-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.jarvis-btn-primary {
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  color: var(--jarvis-cyan);
+}
+
+.jarvis-btn-primary:hover:not(:disabled) {
+  background: rgba(0, 212, 255, 0.18);
+  border-color: rgba(0, 212, 255, 0.35);
+  box-shadow: var(--shadow-glow-sm);
+}
+
+.jarvis-btn-ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--jarvis-text-dim);
+}
+
+.jarvis-btn-ghost:hover:not(:disabled) {
+  background: var(--color-white-alpha-5);
+  color: var(--jarvis-cyan);
+}
+
+/* ============================================================
+   Message Bubble System
+   ============================================================ */
+
+.message-bubble {
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  transition: background var(--duration-base) ease;
+  position: relative;
+}
+
+.message-bubble-user {
+  background: rgba(0, 212, 255, 0.06);
+  border: 1px solid rgba(0, 212, 255, 0.08);
+}
+
+.message-bubble-assistant {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.message-bubble-user:hover,
+.message-bubble-assistant:hover {
+  background: rgba(0, 212, 255, 0.08);
+}
+
+/* ============================================================
+   Badge / Chip System
+   ============================================================ */
+
+.jarvis-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 212, 255, 0.06);
+  border: 1px solid rgba(0, 212, 255, 0.1);
+  color: rgba(0, 153, 204, 0.7);
+  letter-spacing: 0.03em;
+}
+
+.jarvis-badge-gold {
+  background: rgba(255, 225, 140, 0.06);
+  border-color: rgba(255, 225, 140, 0.1);
+  color: rgba(204, 170, 68, 0.8);
+}
+
+/* ============================================================
+   Card System for Dashboard
+   ============================================================ */
+
+.jarvis-card {
+  background: rgba(0, 15, 35, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.06);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition:
+    border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-smooth) var(--ease-out);
+}
+
+.jarvis-card:hover {
+  border-color: rgba(0, 212, 255, 0.12);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.jarvis-card-header {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: rgba(85, 136, 170, 0.55);
+  margin-bottom: 16px;
+}
+
+/* ============================================================
+   Separator / Divider
+   ============================================================ */
+
+.jarvis-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 212, 255, 0.1) 20%,
+    rgba(0, 212, 255, 0.1) 80%,
+    transparent 100%
+  );
+}
+
+/* ============================================================
+   Mobile / iPhone Safari Specific
+   ============================================================ */
+
+/* Dynamic viewport height for iOS Safari address bar */
+@supports (height: 100dvh) {
+  html, body {
+    height: 100dvh;
+  }
+}
+
+/* Safe area insets for notched iPhones */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+/* Prevent text size adjustment on rotation */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Prevent pull-to-refresh on iOS */
+body {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Disable tap highlight on iOS */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Mobile-specific input adjustments */
+@media (max-width: 640px) {
+  .jarvis-input {
+    padding: 10px 14px;
+    font-size: 16px; /* Prevents iOS auto-zoom on focus */
+  }
+}
+
+/* Landscape on small devices */
+@media (max-height: 480px) and (orientation: landscape) {
+  .jarvis-input {
+    padding: 8px 12px;
+  }
+}
+
+/* ============================================================
+   Phase 6.4: UI Enhancement Animations
+   ============================================================ */
+
+/* Checkmark draw animation for plan subtask completion */
+@keyframes draw-check {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.animate-draw-check {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: draw-check 0.4s ease-out 0.1s forwards;
+}
+
+/* Toast progress bar countdown */
+@keyframes toast-progress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+/* Subtle slide-up entrance for plan progress panel */
+@keyframes slide-up-fade {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

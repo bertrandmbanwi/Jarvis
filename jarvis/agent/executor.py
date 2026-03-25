@@ -1,0 +1,316 @@
+"""
+JARVIS Agent Executor (v2.1: Agentic Loop + Task Decomposition)
+
+Replaces the regex-based intent matching with Claude's native tool_use.
+Claude decides which tools to call, when to call them, and when to stop.
+This enables multi-step task completion, error recovery, and natural follow-ups.
+
+v2.1 adds task decomposition: complex requests can be broken into subtasks
+by the TaskPlanner, then each subtask is executed through the agentic loop
+with accumulated context from previous steps.
+
+Architecture:
+    User says something
+    -> TaskPlanner checks complexity (heuristic + optional LLM check)
+    -> If complex: decompose into subtask plan
+       -> Execute each subtask via the agentic loop, passing prior results as context
+       -> Track progress, handle failures, produce final summary
+    -> If simple: run single agentic loop as before
+    -> Claude decides which tool(s) to call (or just responds conversationally)
+    -> Tool executes, result feeds back to Claude
+    -> Claude decides: done? Or call another tool?
+    -> Loop until task is complete
+"""
+import asyncio
+import logging
+import time
+from typing import Optional
+
+from jarvis.config import settings
+from jarvis.core.llm import JarvisLLM
+from jarvis.agent.tools_schema import TOOL_SCHEMAS, TOOL_REGISTRY
+from jarvis.core.hardening import (
+    get_tool_timeout, execute_with_timeout, validate_tool_args,
+    check_dangerous_command, classify_error, user_friendly_error,
+    get_tool_circuit, ErrorCategory,
+)
+from jarvis.core.cache import tool_cache, invalidate_on_mutation
+from jarvis.core.perf import perf_tracker
+
+logger = logging.getLogger("jarvis.agent")
+
+
+class AgentExecutor:
+    """
+    Executes user requests using Claude's native tool_use agentic loop.
+
+    Claude receives the user's request along with all available tool schemas.
+    It autonomously decides which tools to call, processes results, chains
+    multi-step actions, and produces a final conversational response.
+
+    No regex matching. No intent patterns. Claude drives the entire flow.
+    """
+
+    def __init__(self, llm: Optional[JarvisLLM] = None):
+        self.llm = llm or JarvisLLM()
+        # Callback for recording tool execution outcomes (set by brain.py).
+        # Signature: (tool_name: str, success: bool, duration_s: float, error: str) -> None
+        self._on_tool_executed = None
+
+    async def execute(
+        self,
+        user_input: str,
+        conversation_history: Optional[list[dict]] = None,
+        tier: str = "brain",
+    ) -> str:
+        """
+        Process a user request using Claude's agentic tool-use loop.
+
+        Claude receives the full set of available tools and decides:
+        - Which tools to call (if any)
+        - What arguments to pass
+        - Whether to chain multiple tool calls
+        - When to stop and produce a final response
+
+        Args:
+            user_input: What the user said
+            conversation_history: Prior conversation turns
+            tier: Model tier to use ("brain" for most tasks, "deep" for complex)
+
+        Returns:
+            Final response text from Claude
+        """
+        logger.info("Agent executing (tier=%s): '%s'", tier, user_input[:100])
+
+        response_text, tool_calls = await self.llm.chat_with_tools(
+            user_message=user_input,
+            tools=TOOL_SCHEMAS,
+            tool_executor=self._execute_tool,
+            conversation_history=conversation_history,
+            tier=tier,
+            max_iterations=10,
+        )
+
+        if tool_calls:
+            logger.info(
+                "Agent completed with %d tool call(s): %s",
+                len(tool_calls),
+                [tc["name"] for tc in tool_calls],
+            )
+
+        return response_text
+
+    async def execute_stream(
+        self,
+        user_input: str,
+        conversation_history: Optional[list[dict]] = None,
+        tier: str = "brain",
+    ):
+        """
+        Like execute(), but streams the final response token by token.
+
+        Tool-use iterations run non-streaming. The final text response is
+        streamed to give the user real-time feedback.
+
+        Yields:
+            Individual tokens/chunks of the final response
+        """
+        logger.info("Agent executing (streaming, tier=%s): '%s'", tier, user_input[:100])
+
+        async for token in self.llm.chat_with_tools_stream(
+            user_message=user_input,
+            tools=TOOL_SCHEMAS,
+            tool_executor=self._execute_tool,
+            conversation_history=conversation_history,
+            tier=tier,
+            max_iterations=10,
+        ):
+            yield token
+
+    async def execute_subtask(
+        self,
+        subtask_description: str,
+        prior_context: str = "",
+        conversation_history: Optional[list[dict]] = None,
+        tier: str = "brain",
+    ) -> str:
+        """
+        Execute a single subtask from a decomposed plan with accumulated context.
+
+        Args:
+            subtask_description: What this subtask should accomplish
+            prior_context: Results from completed prior subtasks
+            conversation_history: Prior conversation turns
+            tier: Model tier to use
+
+        Returns:
+            Result text from this subtask
+        """
+        if prior_context:
+            prompt = (
+                f"You are executing one step of a multi-step plan. "
+                f"Here are the results from previous steps:\n\n"
+                f"{prior_context}\n\n"
+                f"Now execute this step:\n{subtask_description}\n\n"
+                f"Focus on completing THIS step. Use the results from "
+                f"previous steps as needed. Be concise in your response."
+            )
+        else:
+            prompt = subtask_description
+
+        logger.info("Subtask executing (tier=%s): '%s'", tier, subtask_description[:100])
+
+        response_text, tool_calls = await self.llm.chat_with_tools(
+            user_message=prompt,
+            tools=TOOL_SCHEMAS,
+            tool_executor=self._execute_tool,
+            conversation_history=conversation_history,
+            tier=tier,
+            max_iterations=10,
+        )
+
+        if tool_calls:
+            logger.info(
+                "Subtask completed with %d tool call(s): %s",
+                len(tool_calls),
+                [tc["name"] for tc in tool_calls],
+            )
+
+        return response_text
+
+    async def _execute_tool(self, tool_name: str, tool_input: dict):
+        """
+        Execute a tool by name with the given input dict.
+
+        This is the callback passed to llm.chat_with_tools(). Includes hardening
+        (validation, timeout, circuit breaker) and performance tuning (caching).
+
+        Args:
+            tool_name: Name of the tool to execute
+            tool_input: Dict of arguments from Claude
+
+        Returns:
+            Tool result as a string, OR a list of content blocks for rich results
+            (e.g. images). Each item should be a dict like:
+              {"type": "text", "text": "..."}
+              {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}
+        """
+        if tool_name not in TOOL_REGISTRY:
+            return f"Unknown tool: {tool_name}. Available tools: {', '.join(TOOL_REGISTRY.keys())}"
+
+        circuit = get_tool_circuit(tool_name)
+        if not circuit.allow_request():
+            return (
+                f"Tool '{tool_name}' is temporarily disabled due to repeated failures. "
+                f"It will be retried automatically in about {int(circuit.recovery_timeout_s)}s."
+            )
+
+        tool_input = validate_tool_args(tool_name, tool_input)
+
+        cached_result = await tool_cache.get(tool_name, tool_input)
+        if cached_result is not None:
+            logger.info("Tool %s served from cache.", tool_name)
+            perf_tracker.record(f"tool.{tool_name}.cache_hit", 0.0)
+            return cached_result
+
+        if tool_name in ("run_command", "run_terminal_command_smart"):
+            cmd = tool_input.get("command", "")
+            warning = check_dangerous_command(cmd)
+            if warning:
+                logger.warning("Dangerous command detected for %s: %s", tool_name, warning)
+
+        tool_fn = TOOL_REGISTRY[tool_name]
+        timeout_s = get_tool_timeout(tool_name)
+        start_time = time.time()
+
+        try:
+            if asyncio.iscoroutinefunction(tool_fn):
+                result = await execute_with_timeout(
+                    tool_fn(**tool_input),
+                    timeout_s=timeout_s,
+                    tool_name=tool_name,
+                )
+            else:
+                result = tool_fn(**tool_input)
+
+            duration = time.time() - start_time
+            self._notify_tool_executed(tool_name, True, duration)
+            perf_tracker.record(f"tool.{tool_name}", duration)
+            circuit.record_success()
+
+            if isinstance(result, list):
+                return result
+            result_str = str(result)
+            await tool_cache.put(tool_name, tool_input, result_str)
+
+            await invalidate_on_mutation(tool_name)
+
+            return result_str
+        except TypeError as e:
+            logger.warning(
+                "Tool %s argument mismatch: %s. Input was: %s. Trying positional args.",
+                tool_name, e, tool_input,
+            )
+            try:
+                args = list(tool_input.values())
+                if asyncio.iscoroutinefunction(tool_fn):
+                    result = await execute_with_timeout(
+                        tool_fn(*args),
+                        timeout_s=timeout_s,
+                        tool_name=tool_name,
+                    )
+                else:
+                    result = tool_fn(*args)
+
+                duration = time.time() - start_time
+                self._notify_tool_executed(tool_name, True, duration)
+                perf_tracker.record(f"tool.{tool_name}", duration)
+                circuit.record_success()
+
+                if isinstance(result, list):
+                    return result
+                result_str = str(result)
+                await tool_cache.put(tool_name, tool_input, result_str)
+                await invalidate_on_mutation(tool_name)
+                return result_str
+            except Exception as e2:
+                logger.error("Tool %s positional fallback also failed: %s", tool_name, e2)
+                duration = time.time() - start_time
+                self._notify_tool_executed(tool_name, False, duration, str(e2))
+                perf_tracker.record(f"tool.{tool_name}.error", duration)
+                circuit.record_failure()
+                category = classify_error(e2)
+                return user_friendly_error(category, context=f"running {tool_name}")
+        except asyncio.TimeoutError:
+            duration = time.time() - start_time
+            error_msg = f"Timed out after {timeout_s:.0f}s"
+            self._notify_tool_executed(tool_name, False, duration, error_msg)
+            perf_tracker.record(f"tool.{tool_name}.timeout", duration)
+            circuit.record_failure()
+            return (
+                f"Tool '{tool_name}' timed out after {timeout_s:.0f} seconds. "
+                f"The operation may still be running in the background. "
+                f"Try again or break the task into smaller steps."
+            )
+        except Exception as e:
+            logger.error("Tool execution error (%s): %s", tool_name, e)
+            duration = time.time() - start_time
+            self._notify_tool_executed(tool_name, False, duration, str(e))
+            perf_tracker.record(f"tool.{tool_name}.error", duration)
+            circuit.record_failure()
+            category = classify_error(e)
+            return user_friendly_error(category, context=f"running {tool_name}")
+
+    def _notify_tool_executed(
+        self,
+        tool_name: str,
+        success: bool,
+        duration_s: float,
+        error: str = "",
+    ):
+        """Notify learning loop about tool execution."""
+        if self._on_tool_executed:
+            try:
+                self._on_tool_executed(tool_name, success, duration_s, error)
+            except Exception:
+                pass

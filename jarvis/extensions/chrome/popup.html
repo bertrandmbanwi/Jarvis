@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      padding: 16px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #00d4ff;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.connected { background: #22c55e; }
+    .status-dot.disconnected { background: #ef4444; }
+    .status-dot.connecting { background: #f59e0b; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .status-text {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 16px;
+    }
+
+    .server-url {
+      font-size: 11px;
+      color: #555;
+      font-family: monospace;
+    }
+
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    button {
+      background: #1a1a2e;
+      color: #00d4ff;
+      border: 1px solid #00d4ff33;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+    }
+
+    button:hover {
+      background: #00d4ff15;
+      border-color: #00d4ff88;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    button.danger {
+      color: #ef4444;
+      border-color: #ef444433;
+    }
+
+    button.danger:hover {
+      background: #ef444415;
+      border-color: #ef444488;
+    }
+
+    .version {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 10px;
+      color: #444;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="status-dot disconnected" id="statusDot"></div>
+    <h1>JARVIS</h1>
+  </div>
+
+  <div class="status-text" id="statusText">Checking connection...</div>
+  <div class="server-url" id="serverUrl"></div>
+
+  <div class="actions">
+    <button id="btnConnect">Connect to JARVIS</button>
+    <button id="btnDisconnect" class="danger" style="display: none;">Disconnect</button>
+    <button id="btnSendPage" disabled>Send this page to JARVIS</button>
+  </div>
+
+  <div class="version" id="version"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,831 @@
+"""
+JARVIS Brain: Central orchestration service (v2.1, Agentic + Task Decomposition).
+
+Routes user input to agentic executor or direct chat. Claude's native tool_use decides
+when tools are needed. Task decomposition breaks complex requests into subtask chains
+with progress broadcast to UI clients.
+
+Tier selection: fast (Haiku) for chat, brain (Sonnet) for default, deep (Opus) for
+complex reasoning.
+"""
+import json
+import logging
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+from jarvis.config import settings
+from jarvis.core.llm import JarvisLLM
+from jarvis.memory.store import MemoryStore
+from jarvis.agent.executor import AgentExecutor
+from jarvis.agent.planner import TaskPlanner
+from jarvis.agent.task_tracker import SubtaskStatus
+from jarvis.agent.tools_schema import (
+    set_active_planner, set_active_learning, set_active_proactive,
+    set_active_coordinator, set_active_memory, TOOL_SCHEMAS, get_tool_names,
+)
+from jarvis.agent.learning import LearningLoop
+from jarvis.agent.coordinator import AgentCoordinator, AgentType
+from jarvis.core.proactive import ProactiveEngine
+from jarvis.core.hardening import sanitize_user_input
+from jarvis.core.perf import perf_tracker, estimate_tokens, estimate_request_cost
+
+CONVERSATION_FILE = settings.DATA_DIR / "conversation_history.json"
+MAX_CONVERSATION_TURNS = 100
+
+logger = logging.getLogger("jarvis.brain")
+
+# Phrases indicating complex reasoning (route to deep tier / Opus).
+# Only multi-word phrases to avoid false triggers on casual requests.
+DEEP_KEYWORDS = [
+    "analyze in detail",
+    "compare and contrast",
+    "evaluate the pros and cons",
+    "explain in detail",
+    "write code for",
+    "architect a solution",
+    "debug this",
+    "troubleshoot this",
+    "step by step",
+    "think through",
+    "deep analysis",
+    "detailed breakdown",
+]
+
+# Patterns for purely conversational messages (go to fast tier / Haiku).
+_CHAT_ONLY_PATTERNS = [
+    r"^(?:hi|hello|hey|good (?:morning|afternoon|evening|night))[\s!.,]*$",
+    r"^(?:thanks?|thank you|thx|cheers)[\s!.,]*$",
+    r"^(?:bye|goodbye|see you(?: later| soon| around| tomorrow)?|later|good night|that's it|that's all|i'm done|we're done)[\s!.,]*$",
+    r"^(?:that's it for now|that's all for now|nothing else|no more questions)[\s!.,]*$",
+    r"^(?:ok|okay|alright|sure|got it|cool|nice|great|awesome|perfect|right)[\s!.,]*$",
+    r"^(?:how are you|what's up|you good)[\s!?,]*$",
+    r"^(?:who are you|what are you|what is your name|what's your name)[\s!?,]*$",
+    r"^(?:tell me a joke|say something funny|make me laugh)[\s!?,]*$",
+    r"^(?:have a good (?:one|day|night|evening)|take care|talk later|peace)[\s!.,]*$",
+    r"^(?:you're welcome|no problem|no worries|all good|it's fine)[\s!.,]*$",
+    r"^(?:yes|no|yeah|yep|nope|nah)[\s!.,]*$",
+]
+
+
+def _is_single_chat(text: str) -> bool:
+    """Check if a single clause/sentence is purely conversational."""
+    text_clean = text.strip().lower()
+    if not text_clean:
+        return True  # Empty fragments are not actionable
+    for pattern in _CHAT_ONLY_PATTERNS:
+        if re.match(pattern, text_clean, re.IGNORECASE):
+            return True
+    return False
+
+
+def _is_chat_only(text: str) -> bool:
+    """
+    Check if a message is purely conversational (no tool use needed).
+
+    Handles compound messages like "Okay, thank you. That's it for now."
+    by splitting on sentence boundaries and checking each part.
+    If ALL parts are conversational, the whole message is chat-only.
+    """
+    text_clean = text.strip().lower()
+
+    # Quick check: try matching the entire message first
+    if _is_single_chat(text_clean):
+        return True
+
+    # Split on sentence boundaries (periods, exclamation, question marks, semicolons)
+    # then further split each fragment on commas to handle "okay, thank you" style phrases
+    sentence_parts = re.split(r'[.!?;]+', text_clean)
+    sentence_parts = [s.strip() for s in sentence_parts if s.strip()]
+
+    if not sentence_parts:
+        return False
+
+    # For each sentence fragment, try it whole first, then split on commas
+    for part in sentence_parts:
+        if _is_single_chat(part):
+            continue
+        # Try splitting on commas (handles "okay, thank you" or "thanks, bye")
+        sub_parts = [sp.strip() for sp in part.split(",") if sp.strip()]
+        if not all(_is_single_chat(sp) for sp in sub_parts):
+            return False
+
+    return True
+
+
+# Patterns that indicate the user wants to shut down JARVIS itself (not the computer).
+# These are intercepted before reaching the agent to prevent system shutdown.
+_JARVIS_SHUTDOWN_PATTERNS = [
+    # "shut down jarvis/javies/javis" (forgiving Whisper misspellings)
+    r"\b(?:shut\s*down|shutdown|power\s*off|turn\s*off)\s*(?:jarvis|javies?|javis|yourself|the\s*system|the\s*assistant)\b",
+    r"\b(?:jarvis|javies?|javis|system)\s*(?:shut\s*down|shutdown|power\s*off|turn\s*off)\b",
+    r"\b(?:exit|quit|stop|terminate|kill)\s*(?:jarvis|javies?|javis|yourself|the\s*system|the\s*assistant)\b",
+    r"\b(?:go\s*(?:to\s*)?(?:sleep|offline)|power\s*down)\b",
+    # Bare shutdown/poweroff when context is clearly about JARVIS
+    r"^(?:shut\s*down|shutdown|power\s*off|turn\s*off)[\s!.,]*$",
+    # "quit now" / "shut down now" (bare commands with urgency)
+    r"\b(?:shut\s*down|quit|exit)\s*now\b",
+]
+
+
+def _is_jarvis_shutdown(text: str) -> bool:
+    """Check if the user wants to shut down JARVIS (not the computer)."""
+    text_clean = text.strip().lower()
+    for pattern in _JARVIS_SHUTDOWN_PATTERNS:
+        if re.search(pattern, text_clean):
+            return True
+    return False
+
+
+def _select_tier(text: str) -> str:
+    """Select model tier based on complexity and cost awareness.
+
+    Requires 2 complexity signals for deep tier upgrade (Opus is 3-5x more expensive).
+    Returns "fast", "brain", or "deep".
+    """
+    text_lower = text.lower().strip()
+
+    if _is_chat_only(text):
+        return "fast"
+
+    deep_signals = 0
+    matched_keywords = []
+    for keyword in DEEP_KEYWORDS:
+        if keyword in text_lower:
+            deep_signals += 1
+            matched_keywords.append(keyword)
+
+    token_estimate = estimate_tokens(text)
+    if token_estimate > 200:
+        deep_signals += 1
+    if text.count("\n") > 5:
+        deep_signals += 1
+
+    if deep_signals >= 2:
+        est_cost_deep = estimate_request_cost(token_estimate + 2000, 2000, "deep")
+        est_cost_brain = estimate_request_cost(token_estimate + 2000, 2000, "brain")
+        cost_premium = est_cost_deep - est_cost_brain
+
+        if cost_premium > 0.10:
+            if deep_signals >= 3:
+                logger.info(
+                    "Tier routing: deep (signals: %d, keywords: %s, premium: $%.3f)",
+                    deep_signals, matched_keywords, cost_premium,
+                )
+                return "deep"
+            else:
+                perf_tracker.record_tier_downgrade("deep", "brain", "cost_premium_high")
+                logger.info(
+                    "Tier routing: brain (downgraded, premium $%.3f too high)",
+                    cost_premium,
+                )
+                return "brain"
+
+        logger.info(
+            "Tier routing: deep (signals: %d, keywords: %s)",
+            deep_signals, matched_keywords,
+        )
+        return "deep"
+
+    return "brain"
+
+
+@dataclass
+class ConversationTurn:
+    """A conversation turn with metadata."""
+    role: str
+    content: str
+    timestamp: float = field(default_factory=time.time)
+    tier_used: str = ""
+    tool_calls: list = field(default_factory=list)
+
+
+class JarvisBrain:
+    """Central orchestrator for LLM, memory, agent, and response generation.
+
+    Pure chat goes to fast tier. Everything else to agent executor where Claude
+    decides tool use. No regex-based routing.
+    """
+
+    def __init__(self):
+        self.llm = JarvisLLM()
+        self.memory = MemoryStore()
+        self.agent = AgentExecutor()
+        self.planner = TaskPlanner()
+        self.learning = LearningLoop()
+        self.coordinator = AgentCoordinator()
+        self.proactive = ProactiveEngine()
+        self.conversation: list[ConversationTurn] = []
+        self._initialized = False
+        self._shutdown_requested = False
+        self._conversation_file = CONVERSATION_FILE
+        # Callback for broadcasting plan progress to WebSocket clients.
+        # Set by server.py: async def(plan_event: dict) -> None
+        self._on_plan_progress = None
+
+    async def initialize(self) -> bool:
+        """Initialize and check all dependencies."""
+        logger.info("Initializing JARVIS brain...")
+
+        llm_ok = await self.llm.check_health()
+        if not llm_ok:
+            logger.error(
+                "No LLM backend available. "
+                "Set ANTHROPIC_API_KEY in .env or start Ollama."
+            )
+            return False
+
+        logger.info("LLM active backend: %s", self.llm.active_backend)
+        self.memory.initialize()
+
+        self.agent.llm = self.llm
+        self.planner.llm = self.llm
+        self.agent._on_tool_executed = self.learning.record_tool_call
+
+        set_active_planner(self.planner)
+        set_active_learning(self.learning)
+        set_active_proactive(self.proactive)
+
+        set_active_memory(self.memory)
+
+        self.coordinator.initialize(get_tool_names())
+        set_active_coordinator(self.coordinator)
+
+        self.planner._get_learning_context = self.learning.get_planner_context
+
+        self.learning.initialize()
+        self.learning.backfill_from_plan_files()
+
+        self._load_conversation()
+        self.proactive.start()
+
+        self._initialized = True
+        logger.info(
+            "JARVIS brain initialized (backend: %s, model: %s, restored %d turns).",
+            self.llm.active_backend,
+            self.llm.get_active_model(),
+            len(self.conversation),
+        )
+        return True
+
+    async def process(self, user_input: str) -> str:
+        """Process user message and return response.
+
+        Routes trivial greetings to fast tier chat. Everything else to agent
+        executor where Claude decides tool use.
+        """
+        if not self._initialized:
+            return "I am not fully initialized yet. Please wait a moment."
+
+        user_input = sanitize_user_input(user_input)
+        if not user_input:
+            return "I didn't catch that. Could you say something?"
+
+        start_time = time.time()
+        logger.info("Processing: '%s'", user_input[:100])
+
+        self.proactive.mark_interaction()
+
+        if _is_jarvis_shutdown(user_input):
+            logger.info("JARVIS shutdown requested by user.")
+            self._shutdown_requested = True
+            return "Shutting down JARVIS. All systems offline. Goodbye, sir."
+
+        self.conversation.append(ConversationTurn(role="user", content=user_input))
+
+        if len(self.conversation) > MAX_CONVERSATION_TURNS:
+            self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
+
+        history = [
+            {"role": turn.role, "content": turn.content}
+            for turn in self.conversation[-20:]
+        ][:-1]
+
+        tier = _select_tier(user_input)
+
+        if tier == "fast" and _is_chat_only(user_input):
+            logger.info("Routing to CHAT mode [tier: fast].")
+
+            enriched_context = self.memory.get_enriched_context(user_input, top_k=3)
+            if enriched_context:
+                enriched_input = f"{enriched_context}\n\nUser: {user_input}"
+            else:
+                enriched_input = user_input
+
+            response = await self.llm.chat(enriched_input, history, tier="fast")
+        else:
+            should_plan = await self.planner.should_decompose(user_input)
+
+            if should_plan:
+                logger.info("Routing to PLAN+EXECUTE mode [tier: %s].", tier)
+                response = await self._execute_plan(user_input, history, tier)
+            else:
+                logger.info("Routing to AGENT mode [tier: %s].", tier)
+                response = await self.agent.execute(user_input, history, tier=tier)
+
+        self.conversation.append(
+            ConversationTurn(role="assistant", content=response, tier_used=tier)
+        )
+
+        self.memory.add(
+            text=f"User: {user_input}\nJARVIS: {response}",
+            metadata={
+                "type": "agent" if tier != "fast" else "conversation",
+                "tier": tier,
+                "timestamp": time.time(),
+            },
+        )
+
+        self.memory.process_exchange(
+            user_message=user_input,
+            assistant_response=response,
+            tier=tier,
+        )
+
+        self._save_conversation()
+
+        elapsed = time.time() - start_time
+
+        # Record performance metrics
+        perf_tracker.record_request(elapsed, tier)
+        perf_tracker.record(f"request.{tier}", elapsed)
+
+        logger.info(
+            "Response generated in %.2fs [tier: %s]: '%s'",
+            elapsed, tier, response[:100],
+        )
+
+        return response
+
+    async def process_stream(self, user_input: str):
+        """Stream response token by token. Pure chat only; agent mode returns complete."""
+        if not self._initialized:
+            yield "I am not fully initialized yet."
+            return
+
+        user_input = sanitize_user_input(user_input)
+        if not user_input:
+            yield "I didn't catch that. Could you say something?"
+            return
+
+        self.proactive.mark_interaction()
+
+        tier = _select_tier(user_input)
+
+        if tier == "fast" and _is_chat_only(user_input):
+            self.conversation.append(ConversationTurn(role="user", content=user_input))
+
+            if len(self.conversation) > MAX_CONVERSATION_TURNS:
+                self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
+
+            history = [
+                {"role": turn.role, "content": turn.content}
+                for turn in self.conversation[-20:]
+            ][:-1]
+
+            full_response = []
+            async for token in self.llm.chat_stream(user_input, history, tier="fast"):
+                full_response.append(token)
+                yield token
+
+            complete = "".join(full_response)
+            self.conversation.append(
+                ConversationTurn(role="assistant", content=complete, tier_used="fast")
+            )
+            self.memory.add(
+                text=f"User: {user_input}\nJARVIS: {complete}",
+                metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
+            )
+            self._save_conversation()
+        else:
+            self.conversation.append(ConversationTurn(role="user", content=user_input))
+
+            if len(self.conversation) > MAX_CONVERSATION_TURNS:
+                self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
+
+            history = [
+                {"role": turn.role, "content": turn.content}
+                for turn in self.conversation[-20:]
+            ][:-1]
+
+            should_plan = await self.planner.should_decompose(user_input)
+
+            if should_plan:
+                logger.info("Routing to PLAN+EXECUTE mode (streaming) [tier: %s].", tier)
+                complete = await self._execute_plan(user_input, history, tier)
+                yield complete
+            else:
+                logger.info("Routing to AGENT mode (streaming) [tier: %s].", tier)
+                full_response = []
+                async for token in self.agent.execute_stream(user_input, history, tier=tier):
+                    full_response.append(token)
+                    yield token
+                complete = "".join(full_response)
+
+            self.conversation.append(
+                ConversationTurn(role="assistant", content=complete, tier_used=tier)
+            )
+            self.memory.add(
+                text=f"User: {user_input}\nJARVIS: {complete}",
+                metadata={"type": "agent", "tier": tier, "timestamp": time.time()},
+            )
+            self._save_conversation()
+
+    async def _execute_plan(
+        self,
+        user_input: str,
+        history: list[dict],
+        tier: str,
+    ) -> str:
+        """Execute a complex request by decomposing into subtasks.
+
+        Routes to specialized agents, identifies parallel-safe groups, executes
+        sequentially or in parallel, and synthesizes results.
+        """
+        plan = await self.planner.create_plan(user_input, conversation_history=history)
+
+        if not plan:
+            logger.info("Planning failed; falling back to direct agent execution.")
+            return await self.agent.execute(user_input, history, tier=tier)
+
+        subtask_dicts = [s.to_dict() for s in plan.subtasks]
+        self.coordinator.route_subtasks(subtask_dicts)
+
+        agent_assignments = {}
+        for sd, subtask in zip(subtask_dicts, plan.subtasks):
+            agent_type = sd.get("agent_type", "generalist")
+            agent_assignments[subtask.id] = agent_type
+
+        parallel_groups = self.coordinator.get_parallel_groups(subtask_dicts)
+
+        has_parallel = any(len(g) > 1 for g in parallel_groups)
+        if has_parallel:
+            logger.info(
+                "Multi-agent plan: %d groups (%d parallel). Agents: %s",
+                len(parallel_groups),
+                sum(1 for g in parallel_groups if len(g) > 1),
+                {sid: at for sid, at in agent_assignments.items()},
+            )
+
+        # Broadcast plan creation with agent assignments
+        await self._broadcast_plan_event({
+            "event": "plan_created",
+            "plan_id": plan.plan_id,
+            "goal": plan.goal_summary,
+            "subtasks": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "status": s.status.value,
+                    "agent_type": agent_assignments.get(s.id, "generalist"),
+                }
+                for s in plan.subtasks
+            ],
+            "parallel_groups": [[plan.subtasks[i].id for i in g] for g in parallel_groups],
+        })
+
+        logger.info(
+            "Executing plan '%s' with %d subtasks across %d group(s).",
+            plan.goal_summary, plan.total, len(parallel_groups),
+        )
+
+        max_retries = 1
+
+        for group_idx, group in enumerate(parallel_groups):
+            if len(group) == 1:
+                idx = group[0]
+                subtask = plan.subtasks[idx]
+                await self._execute_single_subtask(
+                    plan, subtask, history, tier,
+                    agent_assignments.get(subtask.id, "generalist"),
+                    max_retries,
+                )
+            else:
+                logger.info(
+                    "Executing parallel group %d/%d: %d subtasks",
+                    group_idx + 1, len(parallel_groups), len(group),
+                )
+
+                for idx in group:
+                    subtask = plan.subtasks[idx]
+                    self.planner.tracker.start_subtask(subtask.id)
+                    await self._broadcast_plan_event({
+                        "event": "subtask_started",
+                        "plan_id": plan.plan_id,
+                        "subtask_id": subtask.id,
+                        "title": subtask.title,
+                        "agent_type": agent_assignments.get(subtask.id, "generalist"),
+                        "parallel": True,
+                        "progress": plan.progress_pct,
+                    })
+
+                async def _execute_fn(st_dict, agent_type):
+                    st_id = st_dict.get("id", "")
+                    st_obj = next(
+                        (s for s in plan.subtasks if s.id == st_id), None
+                    )
+                    if not st_obj:
+                        return "Subtask not found."
+
+                    prior_context = plan.context_for_subtask(st_id)
+                    profile = self.coordinator.get_profile(agent_type)
+
+                    return await self.agent.execute_subtask(
+                        subtask_description=(
+                            f"[Agent: {profile.display_name}]\n"
+                            f"{st_obj.description}"
+                        ),
+                        prior_context=prior_context,
+                        conversation_history=history,
+                        tier=tier,
+                    )
+
+                results = await self.coordinator.execute_parallel_group(
+                    group, subtask_dicts, _execute_fn,
+                )
+
+                for idx, result, error in results:
+                    subtask = plan.subtasks[idx]
+                    if error:
+                        self.planner.tracker.fail_subtask(subtask.id, error)
+                        await self._broadcast_plan_event({
+                            "event": "subtask_failed",
+                            "plan_id": plan.plan_id,
+                            "subtask_id": subtask.id,
+                            "title": subtask.title,
+                            "error": error,
+                            "progress": plan.progress_pct,
+                        })
+                    else:
+                        self.planner.tracker.complete_subtask(subtask.id, result)
+                        await self._broadcast_plan_event({
+                            "event": "subtask_completed",
+                            "plan_id": plan.plan_id,
+                            "subtask_id": subtask.id,
+                            "title": subtask.title,
+                            "progress": plan.progress_pct,
+                        })
+
+        self.planner.tracker.finalize_plan()
+
+        try:
+            self.learning.record_plan_outcome(plan.to_dict())
+        except Exception as e:
+            logger.debug("Learning loop recording failed (non-critical): %s", e)
+
+        detailed_results = self._build_plan_detail_message(plan)
+        if detailed_results:
+            self.conversation.append(
+                ConversationTurn(
+                    role="assistant",
+                    content=detailed_results,
+                    tier_used="plan_detail",
+                )
+            )
+
+        response = await self._summarize_plan_results(plan, user_input)
+
+        await self._broadcast_plan_event({
+            "event": "plan_completed",
+            "plan_id": plan.plan_id,
+            "goal": plan.goal_summary,
+            "completed": plan.completed_count,
+            "total": plan.total,
+            "failed": plan.failed_count,
+        })
+
+        return response
+
+    async def _execute_single_subtask(
+        self,
+        plan,
+        subtask,
+        history: list[dict],
+        tier: str,
+        agent_type_str: str,
+        max_retries: int = 1,
+    ):
+        """Execute single subtask with dependency checking, retries, and progress broadcast."""
+        if subtask.depends_on:
+            deps_ok = all(
+                any(
+                    s.id == dep_id and s.status == SubtaskStatus.COMPLETED
+                    for s in plan.subtasks
+                )
+                for dep_id in subtask.depends_on
+            )
+            if not deps_ok:
+                self.planner.tracker.skip_subtask(
+                    subtask.id, "Dependency not met"
+                )
+                await self._broadcast_plan_event({
+                    "event": "subtask_skipped",
+                    "plan_id": plan.plan_id,
+                    "subtask_id": subtask.id,
+                    "title": subtask.title,
+                    "reason": "Dependency not met",
+                })
+                return
+
+        self.planner.tracker.start_subtask(subtask.id)
+        await self._broadcast_plan_event({
+            "event": "subtask_started",
+            "plan_id": plan.plan_id,
+            "subtask_id": subtask.id,
+            "title": subtask.title,
+            "agent_type": agent_type_str,
+            "progress": plan.progress_pct,
+        })
+
+        try:
+            agent_type = AgentType(agent_type_str)
+        except ValueError:
+            agent_type = AgentType.GENERALIST
+        profile = self.coordinator.get_profile(agent_type)
+
+        prior_context = plan.context_for_subtask(subtask.id)
+
+        attempt = 0
+        while attempt <= max_retries:
+            try:
+                result = await self.agent.execute_subtask(
+                    subtask_description=(
+                        f"[Agent: {profile.display_name}]\n"
+                        f"{subtask.description}"
+                    ),
+                    prior_context=prior_context,
+                    conversation_history=history,
+                    tier=tier,
+                )
+                self.planner.tracker.complete_subtask(subtask.id, result)
+                self.coordinator._record_agent_stats(agent_type, True, 0.0)
+                await self._broadcast_plan_event({
+                    "event": "subtask_completed",
+                    "plan_id": plan.plan_id,
+                    "subtask_id": subtask.id,
+                    "title": subtask.title,
+                    "progress": plan.progress_pct,
+                })
+                break
+            except Exception as e:
+                attempt += 1
+                if attempt > max_retries:
+                    error_msg = str(e)[:300]
+                    self.planner.tracker.fail_subtask(subtask.id, error_msg)
+                    self.coordinator._record_agent_stats(agent_type, False, 0.0)
+                    await self._broadcast_plan_event({
+                        "event": "subtask_failed",
+                        "plan_id": plan.plan_id,
+                        "subtask_id": subtask.id,
+                        "title": subtask.title,
+                        "error": error_msg,
+                        "progress": plan.progress_pct,
+                    })
+                    logger.warning(
+                        "Subtask '%s' (%s agent) failed after %d attempts: %s",
+                        subtask.title, agent_type_str, attempt, error_msg,
+                    )
+                else:
+                    logger.info(
+                        "Subtask '%s' failed, retrying (attempt %d)...",
+                        subtask.title, attempt + 1,
+                    )
+
+    def _build_plan_detail_message(self, plan) -> str:
+        """Build detailed message from all subtask results for conversation history.
+
+        Allows follow-ups to reference specific outputs without re-executing.
+        """
+        parts = []
+        for s in plan.subtasks:
+            if s.status == SubtaskStatus.COMPLETED and s.result:
+                parts.append(f"[Plan step: {s.title}]\n{s.result[:2000]}")
+
+        if not parts:
+            return ""
+
+        return (
+            f"[Task plan completed: {plan.goal_summary}]\n\n"
+            + "\n\n".join(parts)
+        )
+
+    async def _summarize_plan_results(self, plan, user_input: str) -> str:
+        """Synthesize all subtask results into a natural, conversational response."""
+        results_text = []
+        for s in plan.subtasks:
+            if s.status == SubtaskStatus.COMPLETED and s.result:
+                results_text.append(f"Step '{s.title}': {s.result}")
+            elif s.status == SubtaskStatus.FAILED:
+                results_text.append(f"Step '{s.title}': FAILED - {s.error}")
+            elif s.status == SubtaskStatus.SKIPPED:
+                results_text.append(f"Step '{s.title}': SKIPPED - {s.error}")
+
+        if not results_text:
+            return "I attempted to complete your request but all steps failed. Could you try rephrasing or breaking it down differently?"
+
+        summary_prompt = (
+            f"The user asked: \"{user_input}\"\n\n"
+            f"I completed the following steps:\n\n"
+            + "\n\n".join(results_text) +
+            f"\n\nPlease provide a cohesive, natural response to the user "
+            f"that summarizes what was accomplished. Be conversational, not "
+            f"a dry list. If any steps failed, mention what went wrong and "
+            f"what was still accomplished."
+        )
+
+        try:
+            return await self.llm.chat(
+                summary_prompt,
+                tier="fast",
+                system_prompt_override=(
+                    "You are JARVIS, a personal AI assistant. Summarize the results "
+                    "of a multi-step task you just completed. Be concise, warm, and "
+                    "conversational. Address the user as 'sir'."
+                ),
+            )
+        except Exception as e:
+            logger.warning("Plan summary generation failed: %s", e)
+            # Fallback: just concatenate the results
+            return "\n\n".join(results_text)
+
+    async def _broadcast_plan_event(self, event: dict):
+        """Broadcast plan progress event to connected UI clients via WebSocket."""
+        if self._on_plan_progress:
+            try:
+                await self._on_plan_progress(event)
+            except Exception as e:
+                logger.debug("Plan progress broadcast failed: %s", e)
+
+    def _save_conversation(self):
+        """Persist conversation history to disk. Failures are logged but non-critical."""
+        try:
+            turns = [
+                {
+                    "role": turn.role,
+                    "content": turn.content,
+                    "timestamp": turn.timestamp,
+                    "tier_used": turn.tier_used,
+                }
+                for turn in self.conversation[-MAX_CONVERSATION_TURNS:]
+            ]
+            self._conversation_file.write_text(
+                json.dumps(turns, indent=2), encoding="utf-8"
+            )
+        except Exception as e:
+            logger.debug("Conversation save failed (non-critical): %s", e)
+
+    def _load_conversation(self):
+        """Restore conversation from previous session. Starts fresh if file missing/corrupt."""
+        if not self._conversation_file.exists():
+            return
+
+        try:
+            data = json.loads(self._conversation_file.read_text(encoding="utf-8"))
+            for entry in data:
+                self.conversation.append(
+                    ConversationTurn(
+                        role=entry["role"],
+                        content=entry["content"],
+                        timestamp=entry.get("timestamp", 0.0),
+                        tier_used=entry.get("tier_used", ""),
+                    )
+                )
+            logger.info("Restored %d conversation turns from disk.", len(self.conversation))
+        except Exception as e:
+            logger.warning("Could not load conversation history: %s. Starting fresh.", e)
+            self.conversation.clear()
+
+    def get_conversation_summary(self) -> str:
+        """Get a brief summary of the current conversation."""
+        if not self.conversation:
+            return "No conversation yet."
+        count = len(self.conversation)
+        last = self.conversation[-1]
+        return f"{count} messages. Last: [{last.role}] {last.content[:80]}..."
+
+    def clear_conversation(self):
+        """Clear the current conversation (memory persists)."""
+        self.conversation.clear()
+        # Remove the persisted file too
+        try:
+            if self._conversation_file.exists():
+                self._conversation_file.unlink()
+        except Exception:
+            pass
+        logger.info("Conversation cleared.")
+
+    async def shutdown(self):
+        """Persist all state and close resources."""
+        self.proactive.stop()
+        try:
+            self.learning.save_all()
+        except Exception as e:
+            logger.debug("Learning data save on shutdown failed: %s", e)
+        try:
+            self.memory.save_all()
+        except Exception as e:
+            logger.debug("Memory save on shutdown failed: %s", e)
+        await self.llm.close()
+        logger.info("JARVIS brain shut down.")

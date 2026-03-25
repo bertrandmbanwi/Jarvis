@@ -1,0 +1,252 @@
+# JARVIS: Setup and Operations Guide
+
+## Prerequisites
+
+Before running JARVIS, make sure you have the following installed on your Mac:
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| Python 3.11+ | Backend runtime | `brew install python@3.11` |
+| Node.js 18+ | Web UI (Next.js) | `brew install node` |
+| Ollama | Local LLM fallback | [ollama.com/download](https://ollama.com/download) |
+| FFmpeg | Audio encoding (Opus compression) | `brew install ffmpeg` |
+| PortAudio | Microphone access | `brew install portaudio` |
+| Homebrew | Package manager | [brew.sh](https://brew.sh) |
+
+Optional (recommended):
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| cloudflared | Remote/mobile access via HTTPS tunnel | `brew install cloudflared` |
+| Claude Code CLI | Delegate coding tasks to Claude | `npm install -g @anthropic-ai/claude-code` |
+
+## Quick Start
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/YOUR_USERNAME/Jarvis.git
+cd Jarvis
+
+# 2. Run the setup script (installs Python deps, pulls Ollama models)
+chmod +x setup.sh
+./setup.sh
+
+# 3. Create your .env file with API keys
+cp .env.example .env   # then edit with your keys
+# OR create manually:
+echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' > .env
+
+# 4. Start JARVIS
+./start.sh full
+```
+
+JARVIS will be available at **http://localhost:3000** in your browser.
+
+## Environment Variables (.env)
+
+Create a `.env` file in the project root. Only `ANTHROPIC_API_KEY` is required if you want Claude as the primary brain. Without it, JARVIS falls back to Ollama (local, free, slower).
+
+```bash
+# Required for Claude-powered intelligence
+ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+
+# Optional: override Claude model tiers
+CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001
+CLAUDE_BRAIN_MODEL=claude-sonnet-4-6
+CLAUDE_DEEP_MODEL=claude-opus-4-6
+
+# Optional: prefer local Ollama instead of Claude
+PREFER_CLAUDE=true
+
+# Optional: TTS configuration
+TTS_ENGINE=kokoro           # kokoro | edge | say
+TTS_VOICE=bf_emma           # Kokoro voice ID
+TTS_SPEED=1.05
+TTS_BROWSER_FORMAT=opus     # opus | wav
+
+# Optional: Whisper STT model size
+WHISPER_MODEL=small.en      # tiny.en | small.en | medium.en | large-v3
+
+# Optional: cost alerts (USD)
+COST_DAILY_ALERT=2.00
+COST_MONTHLY_ALERT=60.00
+```
+
+## Start Modes
+
+JARVIS supports four launch modes:
+
+```bash
+./start.sh text     # Terminal text chat only (no UI, no voice)
+./start.sh voice    # Voice interaction only (no web UI)
+./start.sh server   # API server + web UI only (no local voice)
+./start.sh full     # Everything: voice + API server + web UI (recommended)
+```
+
+**Default mode** is `full` if you run `./start.sh` with no arguments.
+
+## Accessing from Your Phone
+
+JARVIS includes built-in Cloudflare Tunnel support for mobile access. When you have `cloudflared` installed, the tunnel starts automatically with `./start.sh full`.
+
+The console will print a URL like:
+```
+https://random-words-here.trycloudflare.com
+```
+
+Open that URL on your phone's browser. The JARVIS UI is fully responsive and the microphone works over HTTPS. You will be prompted for a PIN on first connect (displayed in the JARVIS console on your Mac).
+
+For a persistent URL (instead of random words each time), set up a Named Cloudflare Tunnel:
+```bash
+cloudflared tunnel login
+cloudflared tunnel create jarvis
+cloudflared tunnel route dns jarvis jarvis.yourdomain.com
+```
+
+## Auto-Start on Boot (macOS launchd)
+
+To have JARVIS start automatically when you log into your Mac:
+
+```bash
+# Copy the launchd plist to your LaunchAgents
+cp com.jarvis.assistant.plist ~/Library/LaunchAgents/
+
+# Edit the plist if JARVIS is not in ~/Jarvis
+# (update the path in ProgramArguments)
+
+# Load (activate) the service
+launchctl load ~/Library/LaunchAgents/com.jarvis.assistant.plist
+
+# Verify it is running
+launchctl list | grep jarvis
+
+# To stop the auto-start service
+launchctl unload ~/Library/LaunchAgents/com.jarvis.assistant.plist
+```
+
+Logs are written to `/tmp/jarvis-stdout.log` and `/tmp/jarvis-stderr.log`.
+
+## Project Structure
+
+```
+Jarvis/
+  .env                        # Your API keys (git-ignored)
+  setup.sh                    # One-time setup script
+  start.sh                    # Launch script (text/voice/server/full)
+  requirements.txt            # Python dependencies
+  com.jarvis.assistant.plist  # macOS auto-start config
+  jarvis/
+    main.py                   # Entry point and mode router
+    config/
+      settings.py             # All configuration in one place
+    core/
+      server.py               # FastAPI + WebSocket server
+      brain.py                # Conversation engine, tool dispatch
+      llm.py                  # Claude API + Ollama backend abstraction
+      auth.py                 # PIN-based mobile authentication
+      cache.py                # Response caching layer
+      cost_tracker.py         # Per-request cost logging
+      hardening.py            # Rate limiting, input validation
+      perf.py                 # Performance monitoring
+      proactive.py            # Proactive suggestions engine
+      profile.py              # User preference learning
+    agent/
+      coordinator.py          # Multi-agent task orchestration
+      planner.py              # Task decomposition (plan-and-execute)
+      executor.py             # Subtask execution with tool access
+      task_tracker.py         # Persistent plan state
+      tools_schema.py         # Tool definitions for Claude tool-use
+      learning.py             # Pattern learning from past plans
+    memory/
+      store.py                # ChromaDB vector memory
+      facts.py                # Explicit user fact storage
+      preferences.py          # Implicit preference tracking
+    tools/
+      mac_control.py          # macOS: apps, system, volume, brightness
+      filesystem.py           # File operations: read, write, search
+      shell.py                # Terminal command execution
+      screen.py               # Screenshots and OCR
+      weather.py              # Weather lookups
+      web_search.py           # DuckDuckGo search
+      web_browse.py           # Fetch and parse web pages
+      browser_agent.py        # Playwright browser automation
+      calendar_email.py       # Calendar and email via Chrome/Gmail
+      chrome_extension.py     # Chrome extension bridge
+      chrome_sync.py          # Chrome cookie sync
+      claude_code.py          # Claude Code CLI delegation
+    voice/
+      listener.py             # Microphone capture + faster-whisper STT
+      speaker.py              # Kokoro/Edge TTS with chunked streaming
+    ui/
+      jarvis-ui/              # Next.js 14 web interface
+        src/
+          components/
+            cinematic/        # WebGL particle orb (Three.js)
+            chat/             # Chat message interface
+            dashboard/        # System status dashboard
+            auth/             # PIN entry screen
+            shared/           # Reusable UI components
+          hooks/
+            useJarvisWebSocket.ts  # WebSocket client with audio routing
+```
+
+## Tool Categories
+
+JARVIS has 86+ tools organized into these categories:
+
+| Category | Examples |
+|----------|---------|
+| macOS Control | Open/close apps, volume, brightness, battery, clipboard, notifications |
+| File System | Read, write, move, copy, search, list files and directories |
+| Shell | Execute terminal commands with safety guards |
+| Screen | Take screenshots, OCR text from screen regions |
+| Web Search | DuckDuckGo search, fetch page content, read news |
+| Browser Automation | Playwright-driven: fill forms, click buttons, navigate sites |
+| Calendar/Email | Read Gmail inbox via Chrome, calendar events |
+| Weather | Current conditions and forecasts |
+| Claude Code | Delegate coding tasks, scaffold projects, run smart commands |
+
+## Intelligence Tiers
+
+JARVIS uses a tiered model system that routes requests to the appropriate level of intelligence:
+
+| Tier | Model | Use Case | Cost |
+|------|-------|----------|------|
+| Fast | Claude Haiku 4.5 | Quick lookups, simple responses | Lowest |
+| Brain | Claude Sonnet 4.6 | General conversation, tool use | Medium |
+| Deep | Claude Opus 4.6 | Complex reasoning, multi-step plans | Highest |
+| Local | Ollama (llama3.1:8b) | Offline fallback, no API needed | Free |
+
+The multi-agent planner automatically escalates complex requests to higher tiers and decomposes them into subtasks.
+
+## Voice System
+
+JARVIS supports three TTS engines (in order of quality):
+
+1. **Kokoro** (default): High-quality neural TTS, runs locally, British-accented voices
+2. **Edge TTS**: Microsoft's cloud TTS, good quality, free, requires internet
+3. **macOS `say`**: Built-in system voice, lowest quality, always available
+
+Speech-to-text uses **faster-whisper** (local, private, no cloud dependency).
+
+Audio is streamed to the browser in chunked Opus format (~10x smaller than WAV) for low-latency playback.
+
+## Troubleshooting
+
+**JARVIS won't start:**
+Check that Ollama is running (`ollama serve`) and your `.env` has a valid `ANTHROPIC_API_KEY`.
+
+**No voice output in browser:**
+Make sure FFmpeg is installed (`brew install ffmpeg`). Check browser console for WebSocket errors.
+
+**Microphone not working:**
+Verify PortAudio is installed (`brew install portaudio`). Grant microphone permission to Terminal in System Settings > Privacy > Microphone.
+
+**Mobile access not working:**
+Install cloudflared (`brew install cloudflared`). The tunnel URL is printed in the console when JARVIS starts.
+
+**High API costs:**
+Adjust `COST_DAILY_ALERT` in `.env`. Use `PREFER_CLAUDE=false` to default to local Ollama. The System tab in the UI shows real-time cost tracking.
+
+**Port conflicts:**
+JARVIS uses ports 3000 (UI) and 8741 (API). If something else is using those ports, JARVIS will attempt to kill orphaned processes on startup. You can override with `API_PORT` and `UI_PORT` in `.env`.

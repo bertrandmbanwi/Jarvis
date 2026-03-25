@@ -1,0 +1,76 @@
+# ============================================================
+# JARVIS .gitignore
+# ============================================================
+
+# --- Secrets and credentials ---
+.env
+*.pem
+*.key
+*.crt
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# --- Runtime data (user-specific, regenerated on startup) ---
+data/
+*.db
+*.sqlite3
+
+# --- Node.js / Next.js ---
+jarvis/ui/jarvis-ui/node_modules/
+jarvis/ui/jarvis-ui/.next/
+jarvis/ui/jarvis-ui/out/
+
+# --- macOS ---
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Temporary files ---
+*.tmp
+*.temp
+*.bak
+
+# --- Chrome extension build artifacts ---
+jarvis/browser_extension/*.crx
+jarvis/browser_extension/*.zip
+
+# --- Whisper / ML models (large, downloadable) ---
+*.bin
+*.onnx
+*.pt
+*.gguf
+
+# --- Audio temp files ---
+*.wav
+*.mp3
+*.aiff
+*.webm
+!jarvis/ui/jarvis-ui/public/*.wav
+
+# --- Internal planning docs (not for public repo) ---
+HANDOFF.md
+RESEARCH_JARVIS_INSPIRATION.md
+*.docx
