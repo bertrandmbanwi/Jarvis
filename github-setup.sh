@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # JARVIS GitHub Setup Script
-# Run this ON YOUR MAC (not in the Cowork sandbox).
+# Run this ON YOUR MAC
 #
 # Prerequisites:
 #   - GitHub CLI installed: brew install gh
