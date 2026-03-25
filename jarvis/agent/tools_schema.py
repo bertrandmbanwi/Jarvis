@@ -18,7 +18,6 @@ from jarvis.agent import coordinator as _coordinator_module
 
 logger = logging.getLogger("jarvis.agent.tools_schema")
 
-
 async def _chrome_extension_status() -> str:
     """Check if the Chrome extension is connected."""
     connected = chrome_extension.is_extension_connected()
@@ -33,9 +32,6 @@ async def _chrome_extension_status() -> str:
         "to install and enable the JARVIS Browser Bridge extension in Chrome."
     )
 
-
-# Reference to the active planner instance (set by brain during init).
-# This allows plan tools to query the planner without circular imports.
 _active_planner: _planner_module.TaskPlanner | None = None
 
 
@@ -83,8 +79,6 @@ async def _cancel_active_plan() -> str:
     _active_planner.tracker.cancel_plan()
     return f"Plan '{goal}' ({plan_id}) has been cancelled."
 
-
-# Learning loop reference (set by brain.py via set_active_learning)
 _active_learning: _learning_module.LearningLoop | None = None
 
 
@@ -141,8 +135,6 @@ def _get_tool_reliability() -> str:
         lines.append(f"  {name}: {rate}% success ({calls} calls, avg {avg_dur:.1f}s) [{reliable}]")
     return "\n".join(lines)
 
-
-# Proactive engine reference (set by brain.py via set_active_proactive)
 _active_proactive: _proactive_module.ProactiveEngine | None = None
 
 
@@ -187,8 +179,6 @@ async def _set_proactive_setting(category: str = "", enabled: bool = True) -> st
         valid = [c.value for c in _proactive_module.SuggestionCategory]
         return f"Unknown category: '{category}'. Valid categories: {valid}"
 
-
-# Multi-agent coordinator reference (set by brain.py via set_active_coordinator)
 _active_coordinator: _coordinator_module.AgentCoordinator | None = None
 
 
@@ -344,7 +334,7 @@ _active_memory = None
 
 
 def set_active_memory(memory):
-    """Register the active memory store."""
+    """Register active memory store."""
     global _active_memory
     _active_memory = memory
 

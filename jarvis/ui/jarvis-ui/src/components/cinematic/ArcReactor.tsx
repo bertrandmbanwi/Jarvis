@@ -5,11 +5,7 @@ import { OrbState } from '@/lib/types';
 
 interface ArcReactorProps {
   state: OrbState;
-  /** 0-1 transition from boot screen to active sphere */
   transitionIn?: number;
-  /** Real-time audio amplitude (0.0-1.0) from the server's TTS envelope.
-   *  When > 0, replaces the synthetic breathing waveform for true
-   *  audio-reactive visualization. */
   audioAmplitude?: number;
   className?: string;
 }
@@ -28,17 +24,15 @@ interface StateConfig {
   trailLength: number;
   heartbeatStrength: number;
   heartbeatSpeed: number;
-  ringOpacity: number;       // structural ring visibility
-  connectionOpacity: number; // energy connection line visibility
-  breathingMix: number;      // 0 = pure heartbeat, 1 = pure breathing (speech-like)
+  ringOpacity: number;
+  connectionOpacity: number;
+  breathingMix: number;
 }
 
-// Light blue/cyan palette for idle state
 const CYAN: [number, number, number] = [0, 190, 255];
 const CYAN_BRIGHT: [number, number, number] = [140, 225, 255];
 const CYAN_DEEP: [number, number, number] = [0, 140, 220];
 
-// Golden/amber palette for speaking state
 const GOLD: [number, number, number] = [255, 180, 50];
 const GOLD_BRIGHT: [number, number, number] = [255, 225, 140];
 const GOLD_WARM: [number, number, number] = [255, 150, 30];
@@ -46,7 +40,7 @@ const AMBER: [number, number, number] = [255, 130, 20];
 
 const CONFIGS: Record<OrbState, StateConfig> = {
   idle: {
-    color: CYAN,                 // light blue at rest
+    color: CYAN,
     coreColor: CYAN_BRIGHT,
     accentColor: CYAN_DEEP,
     sphereRadius: 0.28,
@@ -64,7 +58,7 @@ const CONFIGS: Record<OrbState, StateConfig> = {
     breathingMix: 0.2,
   },
   listening: {
-    color: [80, 200, 255],       // slightly brighter cyan
+    color: [80, 200, 255],
     coreColor: [180, 235, 255],
     accentColor: CYAN_DEEP,
     sphereRadius: 0.30,
@@ -82,7 +76,7 @@ const CONFIGS: Record<OrbState, StateConfig> = {
     breathingMix: 0.3,
   },
   thinking: {
-    color: [180, 190, 140],      // transitional: cyan shifting toward gold
+    color: [180, 190, 140],
     coreColor: [220, 225, 180],
     accentColor: [120, 160, 80],
     sphereRadius: 0.26,
@@ -100,7 +94,7 @@ const CONFIGS: Record<OrbState, StateConfig> = {
     breathingMix: 0.15,
   },
   speaking: {
-    color: GOLD_BRIGHT,          // golden/amber when speaking
+    color: GOLD_BRIGHT,
     coreColor: [255, 245, 220],
     accentColor: GOLD,
     sphereRadius: 0.28,
@@ -171,9 +165,9 @@ function heartbeat(t: number, bps: number): number {
 }
 
 function breathing(t: number, rate: number): number {
-  const primary = Math.sin(t * rate * Math.PI * 2) * 0.5 + 0.5;           // main breath cycle
-  const secondary = Math.sin(t * rate * 1.37 * Math.PI * 2) * 0.15 + 0.15; // subtle variation
-  const micro = Math.sin(t * rate * 3.7 * Math.PI * 2) * 0.08;             // tiny fluctuations (speech cadence)
+  const primary = Math.sin(t * rate * Math.PI * 2) * 0.5 + 0.5;
+  const secondary = Math.sin(t * rate * 1.37 * Math.PI * 2) * 0.15 + 0.15;
+  const micro = Math.sin(t * rate * 3.7 * Math.PI * 2) * 0.08;
   return Math.max(0, Math.min(1, primary + secondary + micro));
 }
 
@@ -192,13 +186,16 @@ function lerpRgb(a: [number, number, number], b: [number, number, number], t: nu
 interface Particle {
   theta: number;
   phi: number;
-  x: number; y: number; z: number;
-  prevX: number; prevY: number;
+  x: number;
+  y: number;
+  z: number;
+  prevX: number;
+  prevY: number;
   size: number;
   brightness: number;
   noiseOffset: number;
   speed: number;
-  layer: number; // 0 = inner shell, 1 = mid, 2 = outer
+  layer: number;
 }
 
 function createParticles(count: number): Particle[] {
@@ -231,7 +228,6 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({ state, transitionIn = 1,
   const tgtRef = useRef<StateConfig>({ ...CONFIGS[state] });
   const audioAmpRef = useRef<number>(0);
 
-  // Smooth the audio amplitude to prevent jitter (exponential moving average)
   useEffect(() => {
     audioAmpRef.current = audioAmplitude;
   }, [audioAmplitude]);

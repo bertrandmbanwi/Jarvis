@@ -1,4 +1,4 @@
-"""Weather API using Open-Meteo (free, no API key needed)."""
+"""Weather API using Open-Meteo (free, no API key required)."""
 import asyncio
 import json
 import logging

@@ -26,7 +26,6 @@ export default function ChatView({
 }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({
@@ -36,7 +35,6 @@ export default function ChatView({
     }
   }, [messages]);
 
-  // Filter out empty assistant messages that are no longer streaming
   const visibleMessages = messages.filter(
     (msg) => msg.content || (msg.role === "assistant" && msg.isStreaming)
   );
@@ -111,8 +109,7 @@ export default function ChatView({
                   className={`animate-fade-in py-2.5 ${isLast ? '' : ''}`}
                 >
                   <div className="flex items-start gap-3">
-                    <div
-                      className={`
+                    <div className={`
                         w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0
                         text-3xs font-semibold mt-0.5
                         transition-colors duration-200
@@ -120,8 +117,7 @@ export default function ChatView({
                           ? "bg-jarvis-cyan/8 text-jarvis-cyan/60 border border-jarvis-cyan/12"
                           : "bg-white/[0.03] text-jarvis-text-dim/50 border border-white/[0.06]"
                         }
-                      `}
-                    >
+                      `}>
                       {isUser ? "B" : "J"}
                     </div>
 

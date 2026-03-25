@@ -33,29 +33,25 @@ from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.memory.facts")
 
-# Persistent storage
 FACTS_DIR = settings.DATA_DIR / "memory"
 FACTS_DIR.mkdir(parents=True, exist_ok=True)
 FACTS_FILE = FACTS_DIR / "user_facts.json"
 
-# Maximum number of facts to retain
 MAX_FACTS = 500
 
-# Confidence threshold below which facts are pruned during consolidation
 MIN_CONFIDENCE = 0.2
 
-# How much confidence decays per day without reinforcement
 DAILY_CONFIDENCE_DECAY = 0.02
 
 
 @dataclass
 class Fact:
-    """A single piece of knowledge about the user or their environment."""
-    category: str       # e.g., "personal", "work", "preference", "relationship", "location", "habit"
-    subject: str        # What the fact is about (e.g., "name", "job_title", "favorite_language")
-    value: str          # The actual fact content
-    confidence: float   # 0.0 to 1.0 (how certain we are)
-    source: str         # "pattern" or "llm" or "explicit" (user told us directly)
+    """A single piece of knowledge about the user or environment."""
+    category: str
+    subject: str
+    value: str
+    confidence: float
+    source: str
     created_at: float = field(default_factory=time.time)
     last_reinforced: float = field(default_factory=time.time)
     reinforcement_count: int = 1
@@ -96,10 +92,6 @@ class Fact:
     def key(self) -> str:
         """Unique key for deduplication: category + subject."""
         return f"{self.category}:{self.subject}"
-
-
-# Each rule: (compiled_regex, category, subject_key, confidence)
-# Regexes capture fact values in a named group "value".
 
 _FACT_PATTERNS: list[tuple[re.Pattern, str, str, float]] = []
 
@@ -150,19 +142,7 @@ _add_pattern(r"i wake up (?:at|around) (?P<value>\d{1,2}(?::\d{2})?\s*(?:am|pm)?
 
 
 def _is_valid_fact_value(value: str, subject: str, category: str) -> bool:
-    """
-    Validate that an extracted value is a genuine fact, not conversational noise.
-
-    Rejects incomplete phrases, conversational verbs, or trailing prepositions.
-
-    Args:
-        value: The extracted fact value
-        subject: The fact subject (e.g., "nickname", "name")
-        category: The fact category (e.g., "personal", "work")
-
-    Returns:
-        True if the value seems valid, False if it's likely noise
-    """
+    """Validate that extracted value is genuine fact, not conversational noise."""
     value_lower = value.lower()
 
     conversational_verbs = [
@@ -183,17 +163,12 @@ def _is_valid_fact_value(value: str, subject: str, category: str) -> bool:
 
 
 class FactStore:
-    """
-    Manages extracted facts about the user.
-
-    Facts are stored in memory and persisted to a JSON file.
-    Supports adding, searching, reinforcing, and pruning facts.
-    """
+    """Manages extracted facts about the user."""
 
     def __init__(self):
-        self._facts: dict[str, Fact] = {}  # key -> Fact
+        self._facts: dict[str, Fact] = {}
         self._loaded = False
-        self._dirty = False  # Tracks unsaved changes
+        self._dirty = False
 
     def load(self):
         """Load facts from disk."""
@@ -226,29 +201,18 @@ class FactStore:
             logger.warning("Could not save facts: %s", e)
 
     def add_fact(self, fact: Fact) -> bool:
-        """
-        Add or update a fact.
-
-        If a fact with the same key exists:
-        - If the new value matches, reinforce the existing fact
-        - If the new value differs, replace if new confidence is higher
-
-        Returns True if the fact was added/updated, False if skipped.
-        """
+        """Add or update a fact, reinforcing or replacing as needed."""
         existing = self._facts.get(fact.key)
 
         if existing:
             if existing.value.lower().strip() == fact.value.lower().strip():
-                # Same fact, reinforce it
                 existing.last_reinforced = time.time()
                 existing.reinforcement_count += 1
-                # Boost confidence slightly on reinforcement (cap at 1.0)
                 existing.confidence = min(1.0, existing.confidence + 0.05)
                 self._dirty = True
                 logger.debug("Reinforced fact: %s = %s (count: %d)", fact.subject, fact.value, existing.reinforcement_count)
-                return False  # Not new, just reinforced
+                return False
             elif fact.confidence >= existing.effective_confidence:
-                # New value with higher confidence replaces old
                 logger.info(
                     "Updating fact: %s = '%s' -> '%s' (confidence: %.2f -> %.2f)",
                     fact.subject, existing.value, fact.value,
@@ -258,25 +222,15 @@ class FactStore:
                 self._dirty = True
                 return True
             else:
-                # Existing fact has higher confidence, skip
                 return False
         else:
-            # New fact
             self._facts[fact.key] = fact
             self._dirty = True
             logger.info("New fact: [%s] %s = '%s' (confidence: %.2f)", fact.category, fact.subject, fact.value, fact.confidence)
             return True
 
     def extract_from_text(self, text: str) -> list[Fact]:
-        """
-        Extract facts from a text string using pattern matching.
-
-        Args:
-            text: User message or conversation text to analyze
-
-        Returns:
-            List of extracted facts (already added to the store)
-        """
+        """Extract facts from text using pattern matching."""
         extracted = []
 
         for pattern, category, subject, confidence in _FACT_PATTERNS:
@@ -285,13 +239,11 @@ class FactStore:
                 if not value or len(value) < 2:
                     continue
 
-                # For relationship patterns, adjust the subject
                 actual_subject = subject
                 if "rel" in match.groupdict():
                     rel = match.group("rel")
                     actual_subject = f"{subject}_{rel}"
 
-                # Validate that this is a genuine fact, not conversational noise
                 if not _is_valid_fact_value(value, actual_subject, category):
                     logger.debug("Skipped extraction: '%s' for %s (failed validation)", value, actual_subject)
                     continue
@@ -310,24 +262,9 @@ class FactStore:
         return extracted
 
     def extract_from_exchange(self, user_message: str, assistant_response: str) -> list[Fact]:
-        """
-        Extract facts from a user-assistant exchange.
-
-        Analyzes the user's message for explicit statements. Also looks
-        at the exchange context for implicit facts (e.g., if the user
-        asked about weather in a city, they might live there).
-
-        Args:
-            user_message: What the user said
-            assistant_response: What JARVIS replied
-
-        Returns:
-            List of newly extracted facts
-        """
-        # Primary: extract from user message
+        """Extract facts from a user-assistant exchange."""
         facts = self.extract_from_text(user_message)
 
-        # Secondary: check for implicit location from weather/time queries
         location_match = re.search(
             r"weather (?:in|for|at) (?P<value>[\w\s,]+?)(?:\?|\.|$)",
             user_message,
@@ -340,33 +277,21 @@ class FactStore:
                     category="location",
                     subject="mentioned_city",
                     value=city,
-                    confidence=0.40,  # Low confidence, just mentioned
+                    confidence=0.40,
                     source="pattern",
                 )
                 if self.add_fact(fact):
                     facts.append(fact)
 
-        # Save if we found anything
         if facts:
             self.save()
 
         return facts
 
     def search(self, query: str, category: Optional[str] = None, limit: int = 10) -> list[Fact]:
-        """
-        Search facts by keyword or category.
-
-        Args:
-            query: Search string (matched against subject and value)
-            category: Optional category filter
-            limit: Max results
-
-        Returns:
-            List of matching facts, sorted by effective confidence
-        """
+        """Search facts by keyword or category."""
         query_lower = query.lower()
         results = []
-
         for fact in self._facts.values():
             if fact.effective_confidence < MIN_CONFIDENCE:
                 continue
@@ -375,7 +300,6 @@ class FactStore:
             if query_lower in fact.subject.lower() or query_lower in fact.value.lower():
                 results.append(fact)
 
-        # Sort by confidence (highest first)
         results.sort(key=lambda f: f.effective_confidence, reverse=True)
         return results[:limit]
 
@@ -394,24 +318,11 @@ class FactStore:
         ]
 
     def get_context_string(self, max_facts: int = 20) -> str:
-        """
-        Generate a context string for injection into the system prompt.
-
-        Selects the most confident and recently reinforced facts, formatted
-        as a concise block JARVIS can reference in conversation.
-
-        Args:
-            max_facts: Maximum number of facts to include
-
-        Returns:
-            Formatted context string, or empty string if no facts
-        """
-        # Get facts sorted by: high confidence first, then recently reinforced
+        """Generate context string for injection into system prompt."""
         all_facts = [f for f in self._facts.values() if f.effective_confidence >= 0.3]
         if not all_facts:
             return ""
 
-        # Sort by effective confidence, breaking ties with recency
         all_facts.sort(
             key=lambda f: (f.effective_confidence, f.last_reinforced),
             reverse=True,
@@ -419,7 +330,6 @@ class FactStore:
 
         selected = all_facts[:max_facts]
 
-        # Group by category for readable output
         by_category: dict[str, list[Fact]] = {}
         for f in selected:
             by_category.setdefault(f.category, []).append(f)

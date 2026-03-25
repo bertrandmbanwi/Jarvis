@@ -1,8 +1,4 @@
-"""
-JARVIS Screen Tools
-Screen capture and OCR for reading what is on the Mac screen.
-Uses native macOS screencapture and Vision framework (via PyObjC) for OCR.
-"""
+"""JARVIS Screen Tools: screen capture and OCR using screencapture and Vision framework."""
 import asyncio
 import logging
 import subprocess
@@ -48,7 +44,6 @@ async def capture_window(output_path: Optional[str] = None) -> str:
         output_path = tempfile.mktemp(suffix=".png")
 
     try:
-        # -l flag captures a specific window; -w captures frontmost
         process = await asyncio.create_subprocess_exec(
             "screencapture", "-x", "-w", output_path,
             stdout=asyncio.subprocess.PIPE,
@@ -64,25 +59,16 @@ async def capture_window(output_path: Optional[str] = None) -> str:
 
 
 async def read_screen_text() -> str:
-    """
-    Capture the screen and extract all visible text using OCR.
-    Uses macOS shortcuts/automator or a Python OCR library.
-
-    Returns:
-        All text visible on screen
-    """
-    # First capture the screen
+    """Capture the screen and extract all visible text using OCR."""
     screenshot_path = await capture_screen()
     if screenshot_path.startswith("Error"):
         return screenshot_path
 
     try:
-        # Try using the macOS Vision framework via a small Swift/Python bridge
         text = await _ocr_with_vision_framework(screenshot_path)
         if text:
             return text
 
-        # Fallback: try tesseract if installed
         text = await _ocr_with_tesseract(screenshot_path)
         if text:
             return text
@@ -90,7 +76,6 @@ async def read_screen_text() -> str:
         return "OCR failed: no text extraction method available. Install tesseract: brew install tesseract"
 
     finally:
-        # Clean up temp screenshot
         try:
             Path(screenshot_path).unlink()
         except Exception:

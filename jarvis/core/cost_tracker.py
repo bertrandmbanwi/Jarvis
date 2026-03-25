@@ -1,8 +1,4 @@
-"""
-JARVIS Cost Tracker
-Persistent logging of API usage costs to disk. Tracks per-request, daily, and monthly totals.
-Stored as simple JSON files in data/costs/ for easy inspection.
-"""
+"""Persistent logging of API usage costs to JSON files."""
 import json
 import logging
 from datetime import datetime, date
@@ -18,11 +14,13 @@ COST_LOG_DIR = Path(settings.COST_LOG_DIR)
 
 def _today_file() -> Path:
     """Get path to today's cost log file."""
+
     return COST_LOG_DIR / f"{date.today().isoformat()}.json"
 
 
 def _load_day(file_path: Path) -> dict:
-    """Load a day's cost data from file or return empty template."""
+    """Load a day's cost data from file."""
+
     if file_path.exists():
         try:
             return json.loads(file_path.read_text())
@@ -44,6 +42,7 @@ def _load_day(file_path: Path) -> dict:
 
 def _save_day(file_path: Path, data: dict):
     """Save a day's cost data to disk."""
+
     try:
         file_path.write_text(json.dumps(data, indent=2))
     except OSError as e:
@@ -90,7 +89,6 @@ def log_request(
     })
     if len(data["requests"]) > 500:
         data["requests"] = data["requests"][-500:]
-
     _save_day(log_file, data)
 
 

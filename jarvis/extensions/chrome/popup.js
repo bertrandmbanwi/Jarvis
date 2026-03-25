@@ -1,10 +1,3 @@
-/**
- * JARVIS Browser Bridge - Popup Script
- *
- * Controls the extension popup UI: shows connection status,
- * provides connect/disconnect buttons, and quick actions.
- */
-
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 const serverUrl = document.getElementById("serverUrl");
@@ -13,13 +6,8 @@ const btnDisconnect = document.getElementById("btnDisconnect");
 const btnSendPage = document.getElementById("btnSendPage");
 const versionEl = document.getElementById("version");
 
-// Show extension version
 const manifest = chrome.runtime.getManifest();
 versionEl.textContent = `JARVIS Browser Bridge v${manifest.version}`;
-
-// ============================================================
-// Status Polling
-// ============================================================
 
 function updateUI(status) {
   if (status.connected) {
@@ -50,13 +38,8 @@ function refreshStatus() {
   });
 }
 
-// Poll status every 2 seconds while popup is open
 refreshStatus();
 const statusInterval = setInterval(refreshStatus, 2000);
-
-// ============================================================
-// Button Handlers
-// ============================================================
 
 btnConnect.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "connect" }, () => {
@@ -73,11 +56,9 @@ btnDisconnect.addEventListener("click", () => {
 });
 
 btnSendPage.addEventListener("click", async () => {
-  // Get the current tab's URL and title, send to JARVIS as context
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) return;
 
-  // Send a message to the background script to relay to JARVIS
   chrome.runtime.sendMessage({
     type: "sendToServer",
     payload: {

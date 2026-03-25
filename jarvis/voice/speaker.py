@@ -1,7 +1,4 @@
-"""
-JARVIS Voice Speaker
-Handles text-to-speech output using Kokoro TTS, Piper, or Edge TTS.
-"""
+"""JARVIS Voice Speaker: text-to-speech output using Kokoro TTS, Piper, or Edge TTS."""
 import asyncio
 import base64
 import logging
@@ -35,13 +32,7 @@ except ImportError:
 
 
 class VoiceSpeaker:
-    """
-    Text-to-speech output for JARVIS.
-    Supports multiple backends with automatic fallback:
-    1. Kokoro TTS (best quality, local)
-    2. Edge TTS (Microsoft, free, needs internet)
-    3. macOS 'say' command (built-in, always works)
-    """
+    """Text-to-speech with fallback support: Kokoro TTS, Edge TTS, or macOS 'say'."""
 
     def __init__(self):
         self._engine = None
@@ -92,7 +83,7 @@ class VoiceSpeaker:
 
     @staticmethod
     def _fix_pronunciation(text: str) -> str:
-        """Fix words and acronyms that TTS engines mispronounce (convert all-caps acronyms to spoken form)."""
+        """Fix words and acronyms that TTS engines mispronounce."""
         import re
 
         pronunciation_map = {
@@ -218,12 +209,7 @@ class VoiceSpeaker:
         on_audio_chunk: "Callable | None" = None,
         skip_local_playback: bool = False,
     ):
-        """Convert text to speech and play it (optionally chunked for faster UI response).
-
-        on_audio_ready: Callback (envelope, duration, audio_b64) after full audio generation.
-        on_audio_chunk: Callback (chunk_b64, index, is_last, envelope, duration) for streaming chunks.
-        skip_local_playback: If True, only send to client callback (browser), don't play locally.
-        """
+        """Convert text to speech and play it; optionally stream chunks for faster UI response."""
         if not text or not text.strip():
             return
 
@@ -256,7 +242,7 @@ class VoiceSpeaker:
             self._on_audio_chunk = None
 
     async def _speak_kokoro(self, text: str):
-        """Generate and stream Kokoro TTS with chunked delivery for faster time-to-first-audio."""
+        """Generate and stream Kokoro TTS with chunked delivery."""
         if self._kokoro_pipeline is None:
             raise RuntimeError("Kokoro not initialized")
 
@@ -385,7 +371,7 @@ class VoiceSpeaker:
             pass
 
     async def _speak_edge(self, text: str):
-        """Generate Edge TTS (Microsoft free voices) with browser streaming."""
+        """Generate Edge TTS (Microsoft free voices) with browser streaming."""  # MP3 to WAV conversion
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             mp3_path = f.name
 
@@ -507,7 +493,7 @@ class VoiceSpeaker:
                 pass
 
     async def _play_audio(self, filepath: str):
-        """Play audio file using afplay (macOS) or ffplay."""
+        """Play audio file using afplay or ffplay."""
         try:
             process = await asyncio.create_subprocess_exec(
                 "afplay", filepath,
@@ -540,7 +526,7 @@ class VoiceSpeaker:
 
     @staticmethod
     async def _encode_for_browser(wav_bytes: bytes) -> tuple[str, str]:
-        """Encode WAV for browser: Opus/WebM (~10x compression) or fallback to WAV base64."""
+        """Encode WAV for browser: Opus/WebM or fallback to WAV base64."""
         if settings.TTS_BROWSER_FORMAT == "opus":
             try:
                 import tempfile
@@ -590,7 +576,7 @@ class VoiceSpeaker:
     def _compute_amplitude_envelope(
         audio: "np.ndarray", sample_rate: int, fps: int = 60
     ) -> list[float]:
-        """Compute RMS amplitude envelope (0.0-1.0) for UI visualization at given fps."""
+        """Compute RMS amplitude envelope for UI waveform visualization."""
         import numpy as np
 
         samples_per_frame = max(1, sample_rate // fps)
@@ -612,7 +598,7 @@ class VoiceSpeaker:
         return self._last_amplitude_envelope, self._last_audio_duration
 
     def get_backend_info(self) -> dict:
-        """Get current TTS backend information."""
+        """Return current TTS backend and availability status."""
         return {
             "backend": self._backend or "none",
             "kokoro_available": HAS_KOKORO,

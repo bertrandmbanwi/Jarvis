@@ -18,7 +18,6 @@ from jarvis.memory.preferences import PreferenceTracker
 
 logger = logging.getLogger("jarvis.memory")
 
-# ChromaDB is optional for Phase 1; we fall back to in-memory if not installed
 try:
     import chromadb
     HAS_CHROMA = True
@@ -28,23 +27,13 @@ except ImportError:
 
 
 class MemoryStore:
-    """
-    Long-term memory for JARVIS (v2).
-
-    Combines three memory systems:
-    1. Vector store (ChromaDB): semantic search over conversation history
-    2. Fact store: structured knowledge extracted from conversations
-    3. Preference tracker: implicit behavior patterns learned over time
-
-    Falls back to simple list-based storage if ChromaDB is not available.
-    """
+    """Long-term memory combining vector store, facts, and preferences."""
 
     def __init__(self):
         self._client = None
         self._collection = None
         self._fallback_memory: list[dict] = []
         self._counter = 0
-        # Phase 6.3: structured memory systems
         self.facts = FactStore()
         self.preferences = PreferenceTracker()
 
@@ -126,16 +115,7 @@ class MemoryStore:
         return [m["text"] for m in recent]
 
     def get_enriched_context(self, query: str, top_k: int = 3) -> str:
-        """
-        Get enriched context combining facts, preferences, and semantic memories.
-
-        Args:
-            query: The user's current message
-            top_k: Number of conversation memories to retrieve
-
-        Returns:
-            Combined context string for prompt injection
-        """
+        """Get enriched context combining facts, preferences, and memories."""
         parts = []
 
         facts_context = self.facts.get_context_string(max_facts=15)

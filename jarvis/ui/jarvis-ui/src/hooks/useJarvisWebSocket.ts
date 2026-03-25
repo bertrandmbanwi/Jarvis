@@ -37,7 +37,6 @@ const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 let _audioCtx: AudioContext | null = null;
-
 let _audioEl: HTMLAudioElement | null = null;
 
 function getAudioElement(): HTMLAudioElement {
@@ -167,29 +166,18 @@ interface UseJarvisWebSocketReturn {
   costSummary: CostSummary | null;
   sendMessage: (text: string) => void;
   clearMessages: () => void;
-  isProcessing: boolean;      // true from send until first token arrives (waiting phase)
-  isStreaming: boolean;        // true while tokens are actively arriving (speaking phase)
-  isVoiceSpeaking: boolean;   // true while TTS is actively speaking aloud
-  currentAmplitude: number;   // real-time amplitude (0.0-1.0) from envelope playback
-  /** Signal to the server that the browser mic is recording/stopped.
-   *  Pauses the terminal mic listener to prevent duplicate speech capture. */
+  isProcessing: boolean;
+  isStreaming: boolean;
+  isVoiceSpeaking: boolean;
+  currentAmplitude: number;
   sendBrowserMicState: (recording: boolean) => void;
-  /** Stop TTS audio playback on all devices. */
   stopAudio: () => void;
-  /** Toggle whether this client receives TTS audio (vs animation only). */
   setWantsAudio: (wants: boolean) => void;
-  /** Connected devices info from the server. */
   connectedDevices: ConnectedDevice[];
-  /** Proactive suggestions from the background engine */
   suggestions: ProactiveSuggestion[];
   dismissSuggestion: (id: string) => void;
-  /** Active task plan progress */
   activePlan: PlanState | null;
 }
-
-/**
- * Detect device type from user agent for client registration.
- */
 function detectDeviceType(): { device_type: string; device_name: string } {
   if (typeof navigator === "undefined") {
     return { device_type: "unknown", device_name: "" };
@@ -222,13 +210,12 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
   const [activePlan, setActivePlan] = useState<PlanState | null>(null);
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDevice[]>([]);
 
-  // Amplitude envelope playback state
+  // Envelope playback and audio chunking state
   const envelopeRef = useRef<number[]>([]);
   const envelopeStartRef = useRef<number>(0);
   const envelopeDurationRef = useRef<number>(0);
   const envelopeRafRef = useRef<number | null>(null);
 
-  // Chunked audio queue for streamed TTS playback
   const chunkQueueRef = useRef<Array<{
     audio: string;
     envelope: number[];
@@ -249,8 +236,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     setStatus("connecting");
 
     try {
-      // Append auth token as query param for remote connections.
-      // Local connections don't need a token (server bypasses auth for localhost).
+      // Add auth token for remote connections
       let wsUrl = JARVIS_WS_URL;
       if (authToken) {
         const sep = wsUrl.includes("?") ? "&" : "?";
