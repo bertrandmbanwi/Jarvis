@@ -1068,7 +1068,11 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                 beam_size=3,
                 vad_filter=False,
             )
-            return " ".join(seg.text for seg in segments).strip()
+            parts = []
+            for seg in segments:
+                seg_text = seg.text if isinstance(seg.text, str) else " ".join(seg.text)
+                parts.append(seg_text)
+            return " ".join(parts).strip()
 
         text = await loop.run_in_executor(None, run_transcribe)
 
