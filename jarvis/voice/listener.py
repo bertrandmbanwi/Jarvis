@@ -416,7 +416,7 @@ class VoiceListener:
                     logger.debug("Using initial_prompt: %s", initial_prompt)
 
                 if hotwords:
-                    transcribe_kwargs["hotwords"] = hotwords
+                    transcribe_kwargs["hotwords"] = " ".join(hotwords)
                     logger.debug("Using hotwords: %s", ", ".join(hotwords))
 
                 segments, info = self._whisper_model.transcribe(audio_float, **transcribe_kwargs)
