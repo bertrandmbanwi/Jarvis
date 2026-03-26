@@ -420,7 +420,11 @@ class VoiceListener:
                     logger.debug("Using hotwords: %s", ", ".join(hotwords))
 
                 segments, info = self._whisper_model.transcribe(audio_float, **transcribe_kwargs)
-                text = " ".join(segment.text for segment in segments)
+                parts = []
+                for segment in segments:
+                    seg_text = segment.text if isinstance(segment.text, str) else " ".join(segment.text)
+                    parts.append(seg_text)
+                text = " ".join(parts)
 
             elif HAS_WHISPER_ORIGINAL:
                 result = self._whisper_model.transcribe(
