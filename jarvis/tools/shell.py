@@ -71,7 +71,7 @@ async def run_command(
     if reason != "OK":
         logger.info("Sensitive command: %s (%s)", command, reason)
 
-    logger.info("Executing: %s", command[:200])
+    logger.info("Executing: %s", command[:200].replace("\n", "\\n").replace("\r", "\\r"))
 
     try:
         args = shlex.split(command)

@@ -49,6 +49,11 @@ def _is_applescript_safe(script: str) -> tuple[bool, str]:
     return True, "OK"
 
 
+def _escape_applescript(value: str) -> str:
+    """Escape a string for safe interpolation into AppleScript double-quoted strings."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 async def run_applescript(script: str) -> str:
     """Execute an AppleScript and return the output."""
     is_safe, reason = _is_applescript_safe(script)
@@ -62,7 +67,11 @@ async def run_applescript(script: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            return "Error: AppleScript execution timed out (30s)"
 
         if process.returncode != 0:
             error = stderr.decode().strip()
@@ -78,8 +87,7 @@ async def run_applescript(script: str) -> str:
 async def open_application(app_name: str) -> str:
     """Open a macOS application by name."""
     logger.info("Opening application: %s", app_name)
-    safe_name = _escape_applescript(app_name)
-    result = await run_applescript(f'tell application "{safe_name}" to activate')
+    result = await run_applescript(f'tell application "{_escape_applescript(app_name)}" to activate')
     if result.startswith("Error"):
         return f"Failed to open {app_name}: {result}"
     return f"Opened {app_name} successfully."
@@ -88,8 +96,7 @@ async def open_application(app_name: str) -> str:
 async def close_application(app_name: str) -> str:
     """Close a macOS application by name."""
     logger.info("Closing application: %s", app_name)
-    safe_name = _escape_applescript(app_name)
-    result = await run_applescript(f'tell application "{safe_name}" to quit')
+    result = await run_applescript(f'tell application "{_escape_applescript(app_name)}" to quit')
     if result.startswith("Error"):
         return f"Failed to close {app_name}: {result}"
     return f"Closed {app_name}."
@@ -121,8 +128,7 @@ async def get_frontmost_application() -> str:
 async def open_url(url: str) -> str:
     """Open a URL in the default browser."""
     logger.info("Opening URL: %s", url)
-    safe_url = _escape_applescript(url)
-    result = await run_applescript(f'open location "{safe_url}"')
+    result = await run_applescript(f'open location "{_escape_applescript(url)}"')
     if result.startswith("Error"):
         return f"Failed to open URL: {result}"
     return f"Opened {url} in browser."
@@ -329,7 +335,6 @@ async def paste_to_app(text: str, app_name: str, new_document: bool = True) -> s
         return f"Error setting clipboard: {e}"
 
     safe_app = _escape_applescript(app_name)
-
     if new_document:
         script = f'''
         tell application "{safe_app}" to activate
@@ -372,8 +377,8 @@ async def write_to_app(text: str, app_name: str, new_document: bool = True) -> s
 
     logger.info("Typing %d chars into %s", len(text), app_name)
 
-    escaped_text = _escape_applescript(text)
     safe_app = _escape_applescript(app_name)
+    escaped_text = text.replace("\\", "\\\\").replace('"', '\\"')
 
     if new_document:
         script = f'''

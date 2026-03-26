@@ -32,10 +32,8 @@ _PBKDF2_ITERATIONS = 600_000
 
 
 def _hash_pin(pin: str, salt: bytes) -> str:
-    """Hash a PIN with salt using PBKDF2-HMAC-SHA256."""
-    return hashlib.pbkdf2_hmac(
-        "sha256", pin.encode("utf-8"), salt, _PBKDF2_ITERATIONS
-    ).hex()
+    """Hash a PIN with PBKDF2-HMAC-SHA256 (100k iterations)."""
+    return hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, 100_000).hex()
 
 
 def initialize_pin() -> str:

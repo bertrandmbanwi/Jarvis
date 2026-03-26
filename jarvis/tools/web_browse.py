@@ -3,7 +3,7 @@ import ipaddress
 import logging
 import re
 import socket
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 logger = logging.getLogger("jarvis.tools.web_browse")
 
@@ -22,21 +22,28 @@ except ImportError:
 
 
 def _is_url_safe(url: str) -> tuple[bool, str]:
-    """Block requests to private/internal IP ranges to prevent SSRF."""
-    try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname
-        if not hostname:
-            return False, "No hostname in URL."
+    """Block requests to private/reserved IPs, localhost, and metadata endpoints."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
 
-        # Resolve hostname to IP and check against private ranges
+    blocked_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
+    if hostname.lower() in blocked_hosts:
+        return False, f"Blocked: requests to {hostname} not allowed"
+
+    # Block cloud metadata endpoints
+    if hostname in ("169.254.169.254", "metadata.google.internal"):
+        return False, "Blocked: cloud metadata endpoint"
+
+    try:
         resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        for _, _, _, _, addr in resolved:
+        for family, _, _, _, addr in resolved:
             ip = ipaddress.ip_address(addr[0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return False, f"Blocked: URL resolves to private/internal address ({addr[0]})."
-    except (socket.gaierror, ValueError) as e:
-        return False, f"Cannot resolve hostname: {e}"
+            if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+                return False, f"Blocked: {hostname} resolves to private/reserved IP {ip}"
+    except (socket.gaierror, ValueError):
+        pass
+
     return True, "OK"
 
 

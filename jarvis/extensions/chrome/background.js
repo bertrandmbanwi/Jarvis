@@ -303,22 +303,38 @@ async function handleExecuteJs(code, tabId) {
   const id = tabId || (await getActiveTabId());
   if (!id) return { success: false, error: "No active tab." };
 
-  // Only allow execute_js from the trusted JARVIS server WebSocket
-  if (!isConnected) {
-    return { success: false, error: "Blocked: execute_js requires active JARVIS server connection." };
+  // Restrict JS execution to localhost and JARVIS-related URLs only
+  const tab = await chrome.tabs.get(id);
+  const tabUrl = (tab.url || "").toLowerCase();
+  const allowedPatterns = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "https://localhost",
+    "https://127.0.0.1",
+    "http://0.0.0.0",
+  ];
+  const isAllowed = allowedPatterns.some((p) => tabUrl.startsWith(p)) ||
+    tabUrl.includes(".trycloudflare.com");
+
+  if (!isAllowed) {
+    return { success: false, error: "JS execution restricted to localhost and JARVIS tunnel URLs." };
   }
 
-  if (typeof code !== "string" || code.length === 0) {
-    return { success: false, error: "Invalid code: must be a non-empty string." };
-  }
+  // Block dangerous patterns
+  const blocked = [
+    /document\.cookie/i,
+    /localStorage/i,
+    /sessionStorage/i,
+    /XMLHttpRequest|fetch\s*\(/i,
+    /eval\s*\(/i,
+    /Function\s*\(/i,
+    /import\s*\(/i,
+    /window\.open/i,
+  ];
 
-  if (code.length > _EXEC_JS_MAX_LENGTH) {
-    return { success: false, error: `Code too long (${code.length} chars, max ${_EXEC_JS_MAX_LENGTH}).` };
-  }
-
-  for (const pattern of _EXEC_JS_BLOCKED_PATTERNS) {
+  for (const pattern of blocked) {
     if (pattern.test(code)) {
-      return { success: false, error: `Blocked: code contains disallowed pattern (${pattern}).` };
+      return { success: false, error: `Blocked: code contains restricted pattern (${pattern.source}).` };
     }
   }
 
@@ -326,14 +342,14 @@ async function handleExecuteJs(code, tabId) {
     target: { tabId: id },
     func: (jsCode) => {
       try {
-        // eslint-disable-next-line no-eval
-        return { value: String(eval(jsCode)), error: null };
+        const fn = new Function(jsCode);
+        return { value: String(fn()), error: null };
       } catch (e) {
         return { value: null, error: e.message };
       }
     },
     args: [code],
-    world: "MAIN",
+    world: "ISOLATED",
   });
 
   const result = results?.[0]?.result;
