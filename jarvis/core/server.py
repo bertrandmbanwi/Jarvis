@@ -462,8 +462,8 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_origin_regex=r"https://.*\.trycloudflare\.com",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["authorization", "content-type", "x-requested-with"],
 )
 
 
@@ -566,7 +566,7 @@ async def auth_login(request: Request, body: PinRequest):
         value=token,
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite="lax",
         max_age=auth.SESSION_TOKEN_EXPIRY,
     )
     return response
@@ -818,9 +818,21 @@ async def get_profile():
     return user_profile.get_profile()
 
 
+_ALLOWED_PROFILE_KEYS = {
+    "name", "nickname", "location", "timezone", "language",
+    "communication_style", "interests", "occupation",
+    "wake_time", "sleep_time", "theme", "voice",
+}
+
+
 @app.put("/profile", dependencies=[Depends(require_auth)])
 async def update_profile_endpoint(body: ProfileUpdateRequest):
     """Update a profile field or preference."""
+    if body.key not in _ALLOWED_PROFILE_KEYS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unknown profile key: '{body.key}'. Allowed: {sorted(_ALLOWED_PROFILE_KEYS)}"},
+        )
     updated = user_profile.update_profile({body.key: body.value})
     return {"status": "updated", "profile": updated}
 

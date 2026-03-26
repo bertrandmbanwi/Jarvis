@@ -291,6 +291,14 @@ async function handleScreenshot(tabId) {
   return { success: true, data: { screenshot: base64, url: tab.url, title: tab.title } };
 }
 
+const _EXEC_JS_MAX_LENGTH = 50000;
+const _EXEC_JS_BLOCKED_PATTERNS = [
+  /document\.cookie\s*=/i,
+  /localStorage\s*\.\s*setItem/i,
+  /XMLHttpRequest|fetch\s*\(/i,
+  /window\.open\s*\(/i,
+];
+
 async function handleExecuteJs(code, tabId) {
   const id = tabId || (await getActiveTabId());
   if (!id) return { success: false, error: "No active tab." };

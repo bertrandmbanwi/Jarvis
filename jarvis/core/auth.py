@@ -28,6 +28,9 @@ _failed_attempts: dict[str, list[float]] = {}  # Maps IP -> list of failed attem
 _current_pin: Optional[str] = None  # Plaintext PIN for display on startup
 
 
+_PBKDF2_ITERATIONS = 600_000
+
+
 def _hash_pin(pin: str, salt: bytes) -> str:
     """Hash a PIN with PBKDF2-HMAC-SHA256 (100k iterations)."""
     return hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, 100_000).hex()

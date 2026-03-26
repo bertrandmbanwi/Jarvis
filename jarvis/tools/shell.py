@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import shlex
+import re
 from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.shell")

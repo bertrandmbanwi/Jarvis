@@ -16,6 +16,20 @@ _PROTECTED_APPS = [
 ]
 
 
+def _escape_applescript(value: str) -> str:
+    """Escape a string for safe embedding in AppleScript double-quoted strings.
+
+    Handles backslashes, double quotes, and other characters that could
+    break out of an AppleScript string context.
+    """
+    value = value.replace("\\", "\\\\")
+    value = value.replace('"', '\\"')
+    value = value.replace("\n", "\\n")
+    value = value.replace("\r", "\\r")
+    value = value.replace("\t", "\\t")
+    return value
+
+
 def _is_applescript_safe(script: str) -> tuple[bool, str]:
     """Check if an AppleScript is safe to execute."""
     script_lower = script.lower()
