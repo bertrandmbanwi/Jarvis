@@ -467,6 +467,42 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Add security headers to all HTTP responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' ws://localhost:* wss://localhost:* ws://127.0.0.1:* wss://127.0.0.1:*; "
+        "media-src 'self' blob:; "
+        "frame-ancestors 'none'"
+    )
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()"
+    return response
+
+
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    """Require X-JARVIS-Client header on state-changing requests from non-local origins."""
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        client_host = request.client.host if request.client else ""
+        if not auth.is_local_request(client_host):
+            jarvis_header = request.headers.get("x-jarvis-client", "")
+            if not jarvis_header:
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "Missing X-JARVIS-Client header. CSRF protection."},
+                )
+    return await call_next(request)
+
+
 _startup_pin = auth.initialize_pin()
 
 
@@ -501,6 +537,7 @@ async def require_auth(request: Request) -> bool:
 
     token = request.query_params.get("token", "")
     if token and auth.validate_token(token):
+        logger.warning("Auth via query param token (less secure). Use Authorization header or cookie instead.")
         return True
 
     from fastapi import HTTPException
@@ -651,6 +688,11 @@ async def status():
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_auth)])
 async def chat(request: ChatRequest):
     """Send a text message and get a response."""
+    if len(request.message) > 50000:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Message too long (max 50,000 characters)."},
+        )
     start = time.time()
     response = await brain.process(request.message)
     elapsed = (time.time() - start) * 1000
@@ -970,9 +1012,22 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             content={"error": "Speech-to-text model not available"},
         )
 
+    allowed_types = {"audio/webm", "audio/wav", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-wav"}
+    if audio.content_type and audio.content_type not in allowed_types:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unsupported audio format: {audio.content_type}. Accepted: webm, wav, ogg, mp3, mp4."},
+        )
+
+    MAX_AUDIO_SIZE = 25 * 1024 * 1024  # 25 MB
     suffix = ".webm" if "webm" in (audio.content_type or "") else ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         content = await audio.read()
+        if len(content) > MAX_AUDIO_SIZE:
+            return JSONResponse(
+                status_code=413,
+                content={"error": f"Audio file too large (max {MAX_AUDIO_SIZE // 1024 // 1024} MB)."},
+            )
         tmp.write(content)
         tmp_path = tmp.name
 
@@ -1012,7 +1067,7 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         logger.error("Transcription failed: %s", e)
         return JSONResponse(
             status_code=500,
-            content={"error": f"Transcription failed: {str(e)}"},
+            content={"error": "Transcription failed. Check server logs for details."},
         )
     finally:
         import os
@@ -1089,6 +1144,10 @@ async def websocket_chat(websocket: WebSocket):
 
             if not message:
                 await websocket.send_json({"error": "Empty message"})
+                continue
+
+            if len(message) > 50000:
+                await websocket.send_json({"error": "Message too long (max 50,000 characters)"})
                 continue
 
             if _listener:
