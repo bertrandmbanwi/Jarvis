@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import shlex
+import re
 from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.shell")
@@ -73,8 +74,9 @@ async def run_command(
     logger.info("Executing: %s", command[:200])
 
     try:
-        process = await asyncio.create_subprocess_shell(
-            command,
+        args = shlex.split(command)
+        process = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
@@ -123,8 +125,9 @@ async def run_command_background(command: str) -> str:
     logger.info("Starting background command: %s", command[:200])
 
     try:
-        process = await asyncio.create_subprocess_shell(
-            command,
+        args = shlex.split(command)
+        process = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )

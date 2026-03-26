@@ -1,7 +1,9 @@
 """JARVIS Web Browsing: fetch and extract text from web pages using httpx and BeautifulSoup."""
+import ipaddress
 import logging
 import re
-from urllib.parse import urljoin
+import socket
+from urllib.parse import urljoin, urlparse
 
 logger = logging.getLogger("jarvis.tools.web_browse")
 
@@ -19,6 +21,25 @@ except ImportError:
     logger.warning("beautifulsoup4 not installed. Web page reading limited.")
 
 
+def _is_url_safe(url: str) -> tuple[bool, str]:
+    """Block requests to private/internal IP ranges to prevent SSRF."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False, "No hostname in URL."
+
+        # Resolve hostname to IP and check against private ranges
+        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for _, _, _, _, addr in resolved:
+            ip = ipaddress.ip_address(addr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False, f"Blocked: URL resolves to private/internal address ({addr[0]})."
+    except (socket.gaierror, ValueError) as e:
+        return False, f"Cannot resolve hostname: {e}"
+    return True, "OK"
+
+
 async def fetch_page_text(url: str, max_chars: int = 5000) -> str:
     """Fetch a web page and extract its readable text content."""
     if not HAS_HTTPX:
@@ -26,6 +47,10 @@ async def fetch_page_text(url: str, max_chars: int = 5000) -> str:
 
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
+
+    safe, reason = _is_url_safe(url)
+    if not safe:
+        return reason
 
     logger.info("Fetching page: %s", url)
 
@@ -95,6 +120,10 @@ async def fetch_page_links(url: str, max_links: int = 20) -> str:
 
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
+
+    safe, reason = _is_url_safe(url)
+    if not safe:
+        return reason
 
     try:
         async with httpx.AsyncClient(

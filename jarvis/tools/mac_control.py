@@ -16,6 +16,20 @@ _PROTECTED_APPS = [
 ]
 
 
+def _escape_applescript(value: str) -> str:
+    """Escape a string for safe embedding in AppleScript double-quoted strings.
+
+    Handles backslashes, double quotes, and other characters that could
+    break out of an AppleScript string context.
+    """
+    value = value.replace("\\", "\\\\")
+    value = value.replace('"', '\\"')
+    value = value.replace("\n", "\\n")
+    value = value.replace("\r", "\\r")
+    value = value.replace("\t", "\\t")
+    return value
+
+
 def _is_applescript_safe(script: str) -> tuple[bool, str]:
     """Check if an AppleScript is safe to execute."""
     script_lower = script.lower()
@@ -64,7 +78,8 @@ async def run_applescript(script: str) -> str:
 async def open_application(app_name: str) -> str:
     """Open a macOS application by name."""
     logger.info("Opening application: %s", app_name)
-    result = await run_applescript(f'tell application "{app_name}" to activate')
+    safe_name = _escape_applescript(app_name)
+    result = await run_applescript(f'tell application "{safe_name}" to activate')
     if result.startswith("Error"):
         return f"Failed to open {app_name}: {result}"
     return f"Opened {app_name} successfully."
@@ -73,7 +88,8 @@ async def open_application(app_name: str) -> str:
 async def close_application(app_name: str) -> str:
     """Close a macOS application by name."""
     logger.info("Closing application: %s", app_name)
-    result = await run_applescript(f'tell application "{app_name}" to quit')
+    safe_name = _escape_applescript(app_name)
+    result = await run_applescript(f'tell application "{safe_name}" to quit')
     if result.startswith("Error"):
         return f"Failed to close {app_name}: {result}"
     return f"Closed {app_name}."
@@ -105,7 +121,8 @@ async def get_frontmost_application() -> str:
 async def open_url(url: str) -> str:
     """Open a URL in the default browser."""
     logger.info("Opening URL: %s", url)
-    result = await run_applescript(f'open location "{url}"')
+    safe_url = _escape_applescript(url)
+    result = await run_applescript(f'open location "{safe_url}"')
     if result.startswith("Error"):
         return f"Failed to open URL: {result}"
     return f"Opened {url} in browser."
@@ -114,17 +131,19 @@ async def open_url(url: str) -> str:
 async def open_url_in_browser(url: str, browser: str = "Google Chrome") -> str:
     """Open a URL in a specific browser application."""
     logger.info("Opening URL '%s' in %s", url, browser)
+    safe_browser = _escape_applescript(browser)
+    safe_url = _escape_applescript(url)
     script = f'''
-    tell application "{browser}"
+    tell application "{safe_browser}"
         activate
-        open location "{url}"
+        open location "{safe_url}"
     end tell
     '''
     result = await run_applescript(script)
     if result.startswith("Error"):
         logger.warning("Direct URL open in %s failed, trying fallback.", browser)
-        await run_applescript(f'tell application "{browser}" to activate')
-        result = await run_applescript(f'open location "{url}"')
+        await run_applescript(f'tell application "{safe_browser}" to activate')
+        result = await run_applescript(f'open location "{safe_url}"')
         if result.startswith("Error"):
             return f"Failed to open URL in {browser}: {result}"
     return f"Opened {url} in {browser}."
@@ -257,7 +276,9 @@ async def toggle_do_not_disturb(enable: bool) -> str:
 
 async def send_notification(title: str, message: str) -> str:
     """Send a macOS notification."""
-    script = f'display notification "{message}" with title "{title}"'
+    safe_title = _escape_applescript(title)
+    safe_message = _escape_applescript(message)
+    script = f'display notification "{safe_message}" with title "{safe_title}"'
     await run_applescript(script)
     return f"Notification sent: {title}"
 
@@ -307,9 +328,11 @@ async def paste_to_app(text: str, app_name: str, new_document: bool = True) -> s
     except Exception as e:
         return f"Error setting clipboard: {e}"
 
+    safe_app = _escape_applescript(app_name)
+
     if new_document:
         script = f'''
-        tell application "{app_name}" to activate
+        tell application "{safe_app}" to activate
         delay 0.8
         tell application "System Events"
             keystroke "n" using command down
@@ -319,7 +342,7 @@ async def paste_to_app(text: str, app_name: str, new_document: bool = True) -> s
         '''
     else:
         script = f'''
-        tell application "{app_name}" to activate
+        tell application "{safe_app}" to activate
         delay 0.5
         tell application "System Events"
             keystroke "v" using command down
@@ -349,11 +372,12 @@ async def write_to_app(text: str, app_name: str, new_document: bool = True) -> s
 
     logger.info("Typing %d chars into %s", len(text), app_name)
 
-    escaped_text = text.replace("\\", "\\\\").replace('"', '\\"')
+    escaped_text = _escape_applescript(text)
+    safe_app = _escape_applescript(app_name)
 
     if new_document:
         script = f'''
-        tell application "{app_name}" to activate
+        tell application "{safe_app}" to activate
         delay 0.8
         tell application "System Events"
             keystroke "n" using command down
@@ -363,7 +387,7 @@ async def write_to_app(text: str, app_name: str, new_document: bool = True) -> s
         '''
     else:
         script = f'''
-        tell application "{app_name}" to activate
+        tell application "{safe_app}" to activate
         delay 0.5
         tell application "System Events"
             keystroke "{escaped_text}"
