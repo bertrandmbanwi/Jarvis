@@ -291,9 +291,36 @@ async function handleScreenshot(tabId) {
   return { success: true, data: { screenshot: base64, url: tab.url, title: tab.title } };
 }
 
+const _EXEC_JS_MAX_LENGTH = 50000;
+const _EXEC_JS_BLOCKED_PATTERNS = [
+  /document\.cookie\s*=/i,
+  /localStorage\s*\.\s*setItem/i,
+  /XMLHttpRequest|fetch\s*\(/i,
+  /window\.open\s*\(/i,
+];
+
 async function handleExecuteJs(code, tabId) {
   const id = tabId || (await getActiveTabId());
   if (!id) return { success: false, error: "No active tab." };
+
+  // Only allow execute_js from the trusted JARVIS server WebSocket
+  if (!isConnected) {
+    return { success: false, error: "Blocked: execute_js requires active JARVIS server connection." };
+  }
+
+  if (typeof code !== "string" || code.length === 0) {
+    return { success: false, error: "Invalid code: must be a non-empty string." };
+  }
+
+  if (code.length > _EXEC_JS_MAX_LENGTH) {
+    return { success: false, error: `Code too long (${code.length} chars, max ${_EXEC_JS_MAX_LENGTH}).` };
+  }
+
+  for (const pattern of _EXEC_JS_BLOCKED_PATTERNS) {
+    if (pattern.test(code)) {
+      return { success: false, error: `Blocked: code contains disallowed pattern (${pattern}).` };
+    }
+  }
 
   const results = await chrome.scripting.executeScript({
     target: { tabId: id },

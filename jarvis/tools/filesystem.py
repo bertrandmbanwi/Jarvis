@@ -143,6 +143,13 @@ async def move_file(source: str, destination: str) -> str:
 
 async def copy_file(source: str, destination: str) -> str:
     """Copy a file or directory."""
+    safe_s, reason_s = _is_path_safe(source)
+    safe_d, reason_d = _is_path_safe(destination)
+    if not safe_s:
+        return f"Cannot copy source: {reason_s}"
+    if not safe_d:
+        return f"Cannot copy to destination: {reason_d}"
+
     try:
         src = Path(source).expanduser().resolve()
         dst = Path(destination).expanduser().resolve()

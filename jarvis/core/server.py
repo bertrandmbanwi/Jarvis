@@ -462,10 +462,33 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_origin_regex=r"https://.*\.trycloudflare\.com",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["authorization", "content-type", "x-requested-with"],
 )
 
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response: StarletteResponse = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' ws: wss:"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 _startup_pin = auth.initialize_pin()
 
@@ -529,7 +552,7 @@ async def auth_login(request: Request, body: PinRequest):
         value=token,
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite="lax",
         max_age=auth.SESSION_TOKEN_EXPIRY,
     )
     return response
@@ -776,9 +799,21 @@ async def get_profile():
     return user_profile.get_profile()
 
 
+_ALLOWED_PROFILE_KEYS = {
+    "name", "nickname", "location", "timezone", "language",
+    "communication_style", "interests", "occupation",
+    "wake_time", "sleep_time", "theme", "voice",
+}
+
+
 @app.put("/profile", dependencies=[Depends(require_auth)])
 async def update_profile_endpoint(body: ProfileUpdateRequest):
     """Update a profile field or preference."""
+    if body.key not in _ALLOWED_PROFILE_KEYS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unknown profile key: '{body.key}'. Allowed: {sorted(_ALLOWED_PROFILE_KEYS)}"},
+        )
     updated = user_profile.update_profile({body.key: body.value})
     return {"status": "updated", "profile": updated}
 
