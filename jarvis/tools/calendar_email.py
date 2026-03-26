@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from jarvis.tools.mac_control import run_applescript
+from jarvis.tools.mac_control import run_applescript, _escape_applescript
 
 logger = logging.getLogger("jarvis.tools.calendar_email")
 
@@ -86,29 +86,33 @@ async def create_calendar_event(
     all_day: bool = False,
 ) -> str:
     """Create a new calendar event."""
-    title_safe = title.replace('"', '\\"')
-    location_safe = location.replace('"', '\\"')
-    notes_safe = notes.replace('"', '\\"')
+    title_safe = _escape_applescript(title)
+    location_safe = _escape_applescript(location)
+    notes_safe = _escape_applescript(notes)
+
+    start_safe = _escape_applescript(start_date)
+    end_safe = _escape_applescript(end_date) if end_date else ""
+    cal_safe = _escape_applescript(calendar_name) if calendar_name else ""
 
     if all_day:
         date_setup = f'''
-        set evtStart to date "{start_date}"
+        set evtStart to date "{start_safe}"
         set time of evtStart to 0
         set evtEnd to evtStart + (1 * days)
         '''
     elif end_date:
         date_setup = f'''
-        set evtStart to date "{start_date}"
-        set evtEnd to date "{end_date}"
+        set evtStart to date "{start_safe}"
+        set evtEnd to date "{end_safe}"
         '''
     else:
         date_setup = f'''
-        set evtStart to date "{start_date}"
+        set evtStart to date "{start_safe}"
         set evtEnd to evtStart + (1 * hours)
         '''
 
     if calendar_name:
-        cal_target = f'calendar "{calendar_name}"'
+        cal_target = f'calendar "{cal_safe}"'
     else:
         cal_target = 'first calendar'
 
@@ -168,7 +172,7 @@ async def get_calendar_list() -> str:
 async def search_calendar_events(query: str, days: int = 30) -> str:
     """Search for calendar events by title within the next N days (1-90 days)."""
     days = max(1, min(days, 90))
-    query_safe = query.replace('"', '\\"').lower()
+    query_safe = _escape_applescript(query).lower()
 
     script = f'''
     set output to ""
@@ -317,9 +321,9 @@ async def send_email(
     bcc: str = "",
 ) -> str:
     """Compose and send an email via Mail.app."""
-    subject_safe = subject.replace('"', '\\"').replace("\\", "\\\\")
-    body_safe = body.replace('"', '\\"').replace("\\", "\\\\")
-    to_safe = to.replace('"', '\\"')
+    subject_safe = _escape_applescript(subject)
+    body_safe = _escape_applescript(body)
+    to_safe = _escape_applescript(to)
 
     to_recipients = ""
     for addr in to_safe.split(","):
@@ -330,14 +334,14 @@ async def send_email(
     cc_recipients = ""
     if cc:
         for addr in cc.split(","):
-            addr = addr.strip().replace('"', '\\"')
+            addr = _escape_applescript(addr.strip())
             if addr:
                 cc_recipients += f'make new cc recipient at end of cc recipients with properties {{address:"{addr}"}}\n'
 
     bcc_recipients = ""
     if bcc:
         for addr in bcc.split(","):
-            addr = addr.strip().replace('"', '\\"')
+            addr = _escape_applescript(addr.strip())
             if addr:
                 bcc_recipients += f'make new bcc recipient at end of bcc recipients with properties {{address:"{addr}"}}\n'
 
@@ -368,7 +372,7 @@ async def send_email(
 async def search_emails(query: str, count: int = 10) -> str:
     """Search for emails by subject or sender in Mail.app (up to 25 results)."""
     count = max(1, min(count, 25))
-    query_safe = query.replace('"', '\\"').lower()
+    query_safe = _escape_applescript(query).lower()
 
     script = f'''
     set output to ""
@@ -417,7 +421,7 @@ async def search_emails(query: str, count: int = 10) -> str:
 
 async def read_email(subject_search: str) -> str:
     """Read the full content of a specific email by searching for its subject."""
-    query_safe = subject_search.replace('"', '\\"').lower()
+    query_safe = _escape_applescript(subject_search).lower()
 
     script = f'''
     set searchTerm to "{query_safe}"

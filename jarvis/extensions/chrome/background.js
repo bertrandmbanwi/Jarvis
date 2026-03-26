@@ -295,18 +295,53 @@ async function handleExecuteJs(code, tabId) {
   const id = tabId || (await getActiveTabId());
   if (!id) return { success: false, error: "No active tab." };
 
+  // Restrict JS execution to localhost and JARVIS-related URLs only
+  const tab = await chrome.tabs.get(id);
+  const tabUrl = (tab.url || "").toLowerCase();
+  const allowedPatterns = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "https://localhost",
+    "https://127.0.0.1",
+    "http://0.0.0.0",
+  ];
+  const isAllowed = allowedPatterns.some((p) => tabUrl.startsWith(p)) ||
+    tabUrl.includes(".trycloudflare.com");
+
+  if (!isAllowed) {
+    return { success: false, error: "JS execution restricted to localhost and JARVIS tunnel URLs." };
+  }
+
+  // Block dangerous patterns
+  const blocked = [
+    /document\.cookie/i,
+    /localStorage/i,
+    /sessionStorage/i,
+    /XMLHttpRequest|fetch\s*\(/i,
+    /eval\s*\(/i,
+    /Function\s*\(/i,
+    /import\s*\(/i,
+    /window\.open/i,
+  ];
+
+  for (const pattern of blocked) {
+    if (pattern.test(code)) {
+      return { success: false, error: `Blocked: code contains restricted pattern (${pattern.source}).` };
+    }
+  }
+
   const results = await chrome.scripting.executeScript({
     target: { tabId: id },
     func: (jsCode) => {
       try {
-        // eslint-disable-next-line no-eval
-        return { value: String(eval(jsCode)), error: null };
+        const fn = new Function(jsCode);
+        return { value: String(fn()), error: null };
       } catch (e) {
         return { value: null, error: e.message };
       }
     },
     args: [code],
-    world: "MAIN",
+    world: "ISOLATED",
   });
 
   const result = results?.[0]?.result;

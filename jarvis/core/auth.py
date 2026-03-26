@@ -29,8 +29,8 @@ _current_pin: Optional[str] = None  # Plaintext PIN for display on startup
 
 
 def _hash_pin(pin: str, salt: bytes) -> str:
-    """Hash a PIN with salt."""
-    return hashlib.sha256(salt + pin.encode("utf-8")).hexdigest()
+    """Hash a PIN with PBKDF2-HMAC-SHA256 (100k iterations)."""
+    return hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, 100_000).hex()
 
 
 def initialize_pin() -> str:
