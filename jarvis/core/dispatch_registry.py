@@ -4,6 +4,9 @@ Dispatch Registry for JARVIS project builds.
 Tracks all active and recent project dispatches in SQLite.
 Maintains a history of build attempts with status, responses, and summaries.
 Provides context injection for LLM about active/recent work.
+
+Includes SuccessTracker for monitoring task success rates, usage patterns,
+and collecting suggestions for continuous improvement.
 """
 import logging
 import sqlite3
@@ -56,6 +59,55 @@ class DispatchRegistry:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_dispatches_status ON dispatches(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_dispatches_updated ON dispatches(updated_at DESC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_dispatches_project ON dispatches(project_name)")
+
+            # Create task_log table for success tracking
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                prompt TEXT,
+                success BOOLEAN DEFAULT 1,
+                retry_count INTEGER DEFAULT 0,
+                duration_seconds REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+            # Create usage_patterns table for action tracking
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS usage_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                keyword TEXT,
+                count INTEGER DEFAULT 1,
+                last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+            # Create suggestions table for continuous improvement
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER,
+                suggestion TEXT NOT NULL,
+                accepted BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+            # Indexes for task_log
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_log_type ON task_log(task_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_log_success ON task_log(success)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_log_created ON task_log(created_at DESC)")
+
+            # Indexes for usage_patterns
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_action ON usage_patterns(action_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_keyword ON usage_patterns(keyword)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_last_used ON usage_patterns(last_used DESC)")
+
+            # Indexes for suggestions
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_task ON suggestions(task_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_accepted ON suggestions(accepted)")
 
             conn.commit()
             conn.close()
@@ -330,3 +382,323 @@ class DispatchRegistry:
         except Exception as e:
             logger.error("Failed to format dispatches for prompt: %s", e)
             return ""
+
+
+class SuccessTracker:
+    """Track task success rates, usage patterns, and improvement suggestions.
+
+    Provides monitoring and analytics for JARVIS task execution to enable
+    continuous improvement and intelligent suggestion generation.
+    """
+
+    def __init__(self):
+        """Initialize the success tracker."""
+        self._ensure_tables()
+
+    def _ensure_tables(self) -> None:
+        """Ensure tracking tables exist in the database."""
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            cursor = conn.cursor()
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                prompt TEXT,
+                success BOOLEAN DEFAULT 1,
+                retry_count INTEGER DEFAULT 0,
+                duration_seconds REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS usage_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                keyword TEXT,
+                count INTEGER DEFAULT 1,
+                last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER,
+                suggestion TEXT NOT NULL,
+                accepted BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_log_type ON task_log(task_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_action ON usage_patterns(action_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_task ON suggestions(task_id)")
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error("Failed to ensure tracking tables: %s", e)
+
+    def log_task(
+        self,
+        task_type: str,
+        prompt: Optional[str] = None,
+        success: bool = True,
+        retry_count: int = 0,
+        duration_seconds: float = 0.0,
+    ) -> int:
+        """Log a task execution.
+
+        Args:
+            task_type: Category of the task (e.g., "code_generation", "search")
+            prompt: Optional original task prompt
+            success: Whether the task completed successfully
+            retry_count: Number of retries before success
+            duration_seconds: How long the task took
+
+        Returns:
+            Task log ID
+        """
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+
+            cursor.execute("""
+            INSERT INTO task_log (task_type, prompt, success, retry_count, duration_seconds)
+            VALUES (?, ?, ?, ?, ?)
+            """, (task_type, prompt, success, retry_count, duration_seconds))
+
+            task_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+            logger.debug(
+                "Task logged: id=%d, type=%s, success=%s, duration=%.2fs",
+                task_id, task_type, success, duration_seconds,
+            )
+            return task_id
+        except Exception as e:
+            logger.error("Failed to log task: %s", e)
+            return -1
+
+    def log_usage(
+        self,
+        action_type: str,
+        keyword: Optional[str] = None,
+    ) -> bool:
+        """Log usage pattern for an action.
+
+        Increments count if pattern exists, creates new if not.
+
+        Args:
+            action_type: Type of action (e.g., "search", "file_read")
+            keyword: Optional keyword for the action (e.g., search term)
+
+        Returns:
+            True if logged successfully
+        """
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+
+            # Check if pattern exists
+            cursor.execute("""
+            SELECT id, count FROM usage_patterns
+            WHERE action_type = ? AND keyword = ?
+            """, (action_type, keyword))
+
+            row = cursor.fetchone()
+
+            if row:
+                # Update existing pattern
+                cursor.execute("""
+                UPDATE usage_patterns
+                SET count = count + 1, last_used = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """, (row[0],))
+            else:
+                # Create new pattern
+                cursor.execute("""
+                INSERT INTO usage_patterns (action_type, keyword, count)
+                VALUES (?, ?, 1)
+                """, (action_type, keyword))
+
+            conn.commit()
+            conn.close()
+
+            logger.debug(
+                "Usage pattern logged: action=%s, keyword=%s",
+                action_type, keyword,
+            )
+            return True
+        except Exception as e:
+            logger.error("Failed to log usage pattern: %s", e)
+            return False
+
+    def log_suggestion(
+        self,
+        task_id: int,
+        suggestion: str,
+    ) -> int:
+        """Log a suggestion for improvement.
+
+        Args:
+            task_id: ID of the task to suggest improvement for
+            suggestion: The suggestion text
+
+        Returns:
+            Suggestion ID
+        """
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+
+            cursor.execute("""
+            INSERT INTO suggestions (task_id, suggestion, accepted)
+            VALUES (?, ?, 0)
+            """, (task_id, suggestion))
+
+            suggestion_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+            logger.debug(
+                "Suggestion logged: id=%d, task_id=%d",
+                suggestion_id, task_id,
+            )
+            return suggestion_id
+        except Exception as e:
+            logger.error("Failed to log suggestion: %s", e)
+            return -1
+
+    def mark_suggestion_accepted(self, suggestion_id: int) -> bool:
+        """Mark a suggestion as accepted.
+
+        Args:
+            suggestion_id: ID of the suggestion
+
+        Returns:
+            True if updated successfully
+        """
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+
+            cursor.execute("""
+            UPDATE suggestions SET accepted = 1 WHERE id = ?
+            """, (suggestion_id,))
+
+            conn.commit()
+            conn.close()
+
+            logger.debug("Suggestion marked as accepted: id=%d", suggestion_id)
+            return True
+        except Exception as e:
+            logger.error("Failed to mark suggestion as accepted: %s", e)
+            return False
+
+    def get_success_rate(self, task_type: Optional[str] = None) -> float:
+        """Get success rate for tasks.
+
+        Args:
+            task_type: Optional task type to filter by (all if None)
+
+        Returns:
+            Success rate as percentage (0-100)
+        """
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+
+            if task_type:
+                cursor.execute("""
+                SELECT COUNT(*) as total, SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successes
+                FROM task_log WHERE task_type = ?
+                """, (task_type,))
+            else:
+                cursor.execute("""
+                SELECT COUNT(*) as total, SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successes
+                FROM task_log
+                """)
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row or row[0] == 0:
+                return 0.0
+
+            total, successes = row
+            successes = successes or 0
+            return (successes / total) * 100
+        except Exception as e:
+            logger.error("Failed to get success rate: %s", e)
+            return 0.0
+
+    def get_top_actions(self, limit: int = 10) -> list[dict]:
+        """Get most frequently used actions.
+
+        Args:
+            limit: Maximum number of results
+
+        Returns:
+            List of action records with count and last used timestamp
+        """
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+            SELECT action_type, keyword, count, last_used
+            FROM usage_patterns
+            ORDER BY count DESC, last_used DESC
+            LIMIT ?
+            """, (limit,))
+
+            results = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+
+            return results
+        except Exception as e:
+            logger.error("Failed to get top actions: %s", e)
+            return []
+
+    def get_avg_duration(self, task_type: Optional[str] = None) -> float:
+        """Get average task duration.
+
+        Args:
+            task_type: Optional task type to filter by (all if None)
+
+        Returns:
+            Average duration in seconds
+        """
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+
+            if task_type:
+                cursor.execute("""
+                SELECT AVG(duration_seconds) as avg_duration
+                FROM task_log WHERE task_type = ?
+                """, (task_type,))
+            else:
+                cursor.execute("""
+                SELECT AVG(duration_seconds) as avg_duration
+                FROM task_log
+                """)
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row or row[0] is None:
+                return 0.0
+
+            return float(row[0])
+        except Exception as e:
+            logger.error("Failed to get average duration: %s", e)
+            return 0.0

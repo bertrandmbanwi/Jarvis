@@ -1,66 +1,93 @@
-task_type: fix
+name: Bug Fix Template
 version: v1
-description: "Debug and fix bugs in existing code"
-created_at: "2026-03-31"
-success_rate: null
+task_type: bug_fix
+keywords:
+  - bug
+  - fix
+  - error
+  - issue
+  - broken
+  - crash
+
 sections:
-  - heading: "Bug Report"
+  - name: Bug Description
     content: |
-      <bug_context>
-      Bug description: {bug_description}
-      Affected file(s): {affected_file}
+      Clearly describe the bug:
+      - What is broken
+      - When it occurs
+      - Impact on users
+      - Reproducibility (always, sometimes, rarely)
 
-      Steps to reproduce:
-      {reproduction_steps}
-
-      Expected behavior: {expected_behavior}
-      Actual behavior: {actual_behavior}
-      </bug_context>
-  - heading: "Root Cause Analysis"
+  - name: Expected vs Actual Behavior
     content: |
-      <analysis>
-      Think step by step to find the root cause:
+      Define the behavior contract:
+      - Expected behavior (how it should work)
+      - Actual behavior (what happens instead)
+      - Any error messages or logs
+      - Visual screenshots if applicable
 
-      1. **Code Review**: Examine the affected code section carefully, tracing execution flow.
-      2. **Logic Check**: Identify any logical errors, boundary conditions, or off-by-one mistakes.
-      3. **Edge Cases**: Determine which edge cases or unusual inputs are not being handled correctly.
-      4. **Error Context**: Review error messages, stack traces, and debug output.
-      5. **Data Flow**: Trace how data moves through the problem area and where it diverges from expected behavior.
-
-      Document your findings clearly before implementing the fix.
-      </analysis>
-  - heading: "Fix Implementation"
+  - name: Reproduction Steps
     content: |
-      <solution>
-      Implement the fix following these principles:
+      Provide clear, numbered steps:
+      1. Step to perform
+      2. Next step
+      3. Action that triggers bug
+      Include any preconditions needed
 
-      - Make minimal, surgical changes targeting only the specific bug
-      - Do not refactor unrelated code at this time
-      - Add defensive checks if the bug involves edge cases or boundary conditions
-      - Include comments explaining the root cause and fix rationale
-      - Consider both performance and security implications
-      - Ensure the fix does not introduce new issues in related code
-      </solution>
-  - heading: "Testing Strategy"
+  - name: Environment Details
     content: |
-      <testing>
-      Verify your fix is correct by:
+      Specify the environment:
+      - Application version
+      - Operating system
+      - Browser or runtime
+      - Relevant dependencies and versions
+      - Database/API backend being used
 
-      1. **Original Issue**: Confirm the fix resolves the reported bug exactly as described.
-      2. **Edge Cases**: Test boundary conditions, empty inputs, null values, and extreme values.
-      3. **Regression Testing**: Run the existing test suite to ensure no regressions.
-      4. **New Test**: Create a new test case that specifically covers this bug scenario.
-      5. **Multiple Scenarios**: Test with different input combinations to ensure robustness.
-      </testing>
-  - heading: "Acceptance Criteria"
+  - name: Root Cause Analysis
     content: |
-      <acceptance_criteria>
-      All of the following must be true:
-      - [ ] The original bug is completely fixed and no longer reproducible
-      - [ ] No regressions in existing functionality (all prior tests still pass)
-      - [ ] A new test case is added covering this specific bug scenario
-      - [ ] All existing tests pass without modification
-      - [ ] Code follows the project style guide and naming conventions
-      - [ ] The fix handles edge cases appropriately
-      - [ ] Root cause is documented in code comments
-      </acceptance_criteria>
+      Explain what is causing the issue:
+      - Code location or component affected
+      - Why the code is behaving this way
+      - Conditions that trigger the bug
+      - Related code or recent changes
+
+  - name: Fix Strategy
+    content: |
+      Outline how to fix it:
+      - Proposed solution
+      - Alternative approaches considered
+      - Potential side effects
+      - Performance implications
+
+  - name: Testing Approach
+    content: |
+      Define verification tests:
+      - Unit test for the specific bug
+      - Integration tests affected
+      - Regression test cases
+      - Manual testing steps
+
+  - name: Verification Checklist
+    content: |
+      Steps to verify the fix:
+      - Bug no longer reproduces
+      - Related functionality still works
+      - No new errors in logs
+      - Performance is acceptable
+      - Code review approved
+
+acceptance_criteria:
+  - Bug is reproducible from provided steps
+  - Root cause is clearly identified
+  - Fix does not introduce new regressions
+  - Unit test exists for bug case
+  - Error handling is robust
+  - Code is reviewed and approved
+  - All tests pass
+
+design_notes:
+  - Avoid temporary fixes or hacks
+  - Add defensive programming patterns
+  - Log appropriate debug information
+  - Consider edge cases and boundary conditions
+  - Update error messages if applicable

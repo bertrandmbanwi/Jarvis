@@ -70,6 +70,9 @@ jarvis/browser_extension/*.zip
 *.webm
 !jarvis/ui/jarvis-ui/public/*.wav
 
+# --- Claude Code local config (skills, rules, agents from plugins) ---
+.claude/
+
 # --- Internal planning docs (not for public repo) ---
 HANDOFF.md
 RESEARCH_JARVIS_INSPIRATION.md

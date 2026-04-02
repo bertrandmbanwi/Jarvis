@@ -22,9 +22,11 @@ from jarvis.agent.coordinator import AgentCoordinator, AgentType
 from jarvis.core.proactive import ProactiveEngine
 from jarvis.core.hardening import sanitize_user_input
 from jarvis.core.perf import perf_tracker, estimate_tokens, estimate_request_cost
-from jarvis.core.dispatch_registry import DispatchRegistry
+from jarvis.core.dispatch_registry import DispatchRegistry, SuccessTracker
 from jarvis.core.monitor import ConversationMonitor
-from jarvis.agent.suggestions import suggest_followup
+from jarvis.agent.suggestions import suggest_followup, suggest_task_followup
+from jarvis.agent.evolution_pipeline import EvolutionPipeline
+from jarvis.tools.work_session import WorkSession
 
 CONVERSATION_FILE = settings.DATA_DIR / "conversation_history.json"
 MAX_CONVERSATION_TURNS = 100
@@ -206,6 +208,9 @@ class JarvisBrain:
         self.proactive = ProactiveEngine()
         self.dispatch = DispatchRegistry()
         self.monitor = ConversationMonitor()
+        self.success_tracker = SuccessTracker()
+        self.evolution = EvolutionPipeline()
+        self.work_session: Optional[WorkSession] = None
         self.conversation: list[ConversationTurn] = []
         self._initialized = False
         self._shutdown_requested = False
@@ -251,6 +256,22 @@ class JarvisBrain:
 
         self.learning.initialize()
         self.learning.backfill_from_plan_files()
+
+        # Success tracker and evolution pipeline are initialized in __init__
+        logger.info("Success tracker ready (SQLite tables ensured).")
+        logger.info(
+            "Evolution pipeline ready (history: %d cycles).",
+            len(self.evolution._evolution_history),
+        )
+
+        # Restore persistent work session if one exists
+        try:
+            restored = WorkSession.restore()
+            if restored:
+                self.work_session = restored
+                logger.info("Work session restored: %s", restored.session_id)
+        except Exception as e:
+            logger.debug("No prior work session to restore: %s", e)
 
         self._load_conversation()
         self.proactive.start()
@@ -338,13 +359,30 @@ class JarvisBrain:
         )
 
         # Track experiment outcomes and suggestions for completed plans
+        task_elapsed = time.time() - start_time
         if hasattr(self, '_last_plan') and self._last_plan:
             try:
                 self.planner.record_experiment_outcome(self._last_plan, True)
             except Exception as e:
                 logger.debug("Experiment tracking failed: %s", e)
 
-            # Proactive follow-up suggestions: only after plan execution
+            # Record in success tracker and evolution pipeline
+            try:
+                self.success_tracker.log_task(
+                    task_type="build",
+                    prompt=user_input[:200],
+                    success=True,
+                    duration_seconds=task_elapsed,
+                )
+                self.evolution.on_task_complete(
+                    task_type="build",
+                    success=True,
+                    duration=task_elapsed,
+                )
+            except Exception as e:
+                logger.debug("Success/evolution tracking failed (non-critical): %s", e)
+
+            # Proactive follow-up suggestions: sync version first
             try:
                 suggestion = suggest_followup(
                     task_type="build",
@@ -356,6 +394,19 @@ class JarvisBrain:
                     logger.info("Follow-up suggestion appended: %s", suggestion.action_type)
             except Exception as e:
                 logger.debug("Suggestion generation failed (non-critical): %s", e)
+
+            # Async follow-up suggestions (richer, checks project files)
+            try:
+                async_suggestion = await suggest_task_followup(
+                    task_type="build",
+                    task_description=user_input[:200],
+                    working_dir=str(settings.JARVIS_HOME),
+                )
+                if async_suggestion and async_suggestion.text:
+                    response += f"\n\n{async_suggestion.text}"
+                    logger.info("Async follow-up appended: %s", async_suggestion.action_type)
+            except Exception as e:
+                logger.debug("Async suggestion failed (non-critical): %s", e)
 
             self._last_plan = None
 

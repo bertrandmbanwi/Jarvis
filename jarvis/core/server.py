@@ -20,6 +20,7 @@ from jarvis.core.brain import JarvisBrain
 from jarvis.core import cost_tracker
 from jarvis.core import auth
 from jarvis.core import profile as user_profile
+from jarvis.core.settings_api import settings_router
 from jarvis.tools import chrome_extension
 
 logger = logging.getLogger("jarvis.server")
@@ -525,6 +526,9 @@ async def csrf_protection(request: Request, call_next):
                     )
     return await call_next(request)
 
+
+# Mount settings API router (configuration, status, integration tests)
+app.include_router(settings_router)
 
 _startup_pin = auth.initialize_pin()
 

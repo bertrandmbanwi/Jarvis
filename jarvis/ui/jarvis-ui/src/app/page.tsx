@@ -12,6 +12,7 @@ import CinematicView from "@/components/cinematic/CinematicView";
 import ChatView from "@/components/chat/ChatView";
 import DashboardView from "@/components/dashboard/DashboardView";
 import LoginScreen from "@/components/auth/LoginScreen";
+import { SettingsPanel } from "@/components/settings/SettingsPanel";
 
 const SPEAKING_LINGER_MS = 1800;
 
@@ -164,6 +165,8 @@ export default function Page() {
       />
 
       <PlanProgress plan={activePlan} />
+
+      <SettingsPanel />
     </div>
   );
 }

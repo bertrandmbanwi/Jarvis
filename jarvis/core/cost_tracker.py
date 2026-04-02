@@ -9,13 +9,15 @@ from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.cost_tracker")
 
-COST_LOG_DIR = Path(settings.COST_LOG_DIR)
+def _cost_log_dir() -> Path:
+    """Get the cost log directory from settings (evaluated at call time for testability)."""
+    return Path(settings.COST_LOG_DIR)
 
 
 def _today_file() -> Path:
     """Get path to today's cost log file."""
 
-    return COST_LOG_DIR / f"{date.today().isoformat()}.json"
+    return _cost_log_dir() / f"{date.today().isoformat()}.json"
 
 
 def _load_day(file_path: Path) -> dict:
@@ -113,7 +115,7 @@ def get_month_summary() -> dict:
     total_requests = 0
     days_active = 0
 
-    for log_file in sorted(COST_LOG_DIR.glob(f"{month_prefix}-*.json")):
+    for log_file in sorted(_cost_log_dir().glob(f"{month_prefix}-*.json")):
         data = _load_day(log_file)
         total_cost += data.get("total_cost_usd", 0.0)
         total_requests += data.get("total_requests", 0)

@@ -9,8 +9,11 @@ Suggestion priority order:
     1. Missing favicon in web projects
     2. No tests directory/files found
     3. No README.md present (for projects with 3+ files)
-    4. Quality improvements from QA results
+    4. Missing .gitignore
+    5. Lint issues (basic file checks)
+    6. Quality improvements from QA results
 """
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -251,33 +254,185 @@ def _check_missing_readme(working_dir: str) -> Optional[Suggestion]:
         return None
 
 
-def _check_quality_issues(qa_result: QAResult) -> Optional[Suggestion]:
+def _check_quality_issues(qa_result: Optional[list[str]]) -> Optional[Suggestion]:
     """
     Check if QA results suggest quality improvements.
 
     Args:
-        qa_result: QAResult from verification
+        qa_result: List of QA issues from verification
 
     Returns:
         Suggestion if quality improvements are noted, None otherwise
     """
-    if not qa_result.issues or len(qa_result.issues) == 0:
+    if not qa_result or len(qa_result) == 0:
         return None
 
     issue_keywords = ["refactor", "clean", "optimize", "simplify", "improve"]
-    issue_text = " ".join(qa_result.issues).lower()
+    issue_text = " ".join(qa_result).lower()
 
     if any(keyword in issue_text for keyword in issue_keywords):
-        logger.info("Quality improvement suggested from QA: %s", qa_result.issues[0])
+        logger.info("Quality improvement suggested from QA: %s", qa_result[0])
 
         return Suggestion(
             text="That's done, sir. The QA noted some quality opportunities. "
                  "Would you like me to refactor for better code clarity?",
             action_type="refactor",
             action_details={
-                "issues": qa_result.issues,
+                "issues": qa_result,
                 "description": "Address quality improvements noted in QA",
             },
         )
 
+    return None
+
+
+def _check_missing_gitignore(working_dir: str) -> Optional[Suggestion]:
+    """
+    Check if project is missing a .gitignore file.
+
+    Args:
+        working_dir: Project directory path
+
+    Returns:
+        Suggestion if .gitignore is missing, None otherwise
+    """
+    try:
+        files = os.listdir(working_dir)
+        files_lower = [f.lower() for f in files]
+
+        if ".gitignore" in files_lower:
+            return None
+
+        logger.info("Project missing .gitignore in %s", working_dir)
+
+        return Suggestion(
+            text="That's done, sir. I notice the project is missing a .gitignore. "
+                 "Should I create one with common patterns?",
+            action_type="add_gitignore",
+            action_details={
+                "path": os.path.join(working_dir, ".gitignore"),
+                "description": "Generate .gitignore with language-appropriate patterns",
+            },
+        )
+
+    except OSError as e:
+        logger.warning("Error checking gitignore: %s", e)
+        return None
+
+
+def _has_tests(working_dir: str) -> bool:
+    """
+    Check if project has test files or directory.
+
+    Args:
+        working_dir: Project directory path
+
+    Returns:
+        True if tests found, False otherwise
+    """
+    try:
+        entries = os.listdir(working_dir)
+        entries_lower = [e.lower() for e in entries]
+
+        for pattern in TEST_PATTERNS:
+            if pattern in entries_lower:
+                return True
+
+        test_file_patterns = [".test.", ".spec.", "_test.", "_spec."]
+        if any(
+            any(pattern in f for pattern in test_file_patterns)
+            for f in entries
+        ):
+            return True
+
+        return False
+
+    except OSError:
+        return False
+
+
+def _is_python_project(path: str) -> bool:
+    """
+    Check if directory appears to be a Python project.
+
+    Looks for setup.py, pyproject.toml, or requirements.txt.
+
+    Args:
+        path: Directory path to check
+
+    Returns:
+        True if Python project indicators found
+    """
+    try:
+        files = os.listdir(path)
+        files_lower = [f.lower() for f in files]
+        python_indicators = {"setup.py", "pyproject.toml", "requirements.txt", "poetry.lock", "pipfile"}
+        return any(indicator in files_lower for indicator in python_indicators)
+    except OSError:
+        return False
+
+
+async def suggest_task_followup(
+    completed_task: str,
+    task_result: str,
+    working_dir: Optional[str] = None,
+    qa_issues: Optional[list[str]] = None,
+) -> Optional[str]:
+    """
+    Suggest a follow-up action after task completion.
+
+    Analyzes task result and project state to suggest next steps without LLM.
+    All checks are synchronous and heuristic-based.
+
+    Args:
+        completed_task: Description of the completed task
+        task_result: Result or output from the task
+        working_dir: Working directory to analyze (optional)
+        qa_issues: List of QA issues from verification (optional)
+
+    Returns:
+        Voice-friendly suggestion text (British butler style), or None if no suggestion
+    """
+    if not working_dir or not os.path.isdir(working_dir):
+        logger.debug("No working directory or invalid path; skipping task followup suggestions")
+        return None
+
+    logger.info("Checking for task followup suggestions (task=%s)", completed_task)
+
+    suggestion = None
+
+    # Priority 1: Check for missing tests
+    if not _has_tests(working_dir):
+        suggestion = _check_missing_tests(working_dir)
+        if suggestion:
+            return suggestion.text
+
+    # Priority 2: Check for missing README
+    try:
+        file_count = len([f for f in os.listdir(working_dir) if os.path.isfile(os.path.join(working_dir, f))])
+        if file_count >= 3:
+            suggestion = _check_missing_readme(working_dir)
+            if suggestion:
+                return suggestion.text
+    except OSError:
+        pass
+
+    # Priority 3: Check for missing .gitignore
+    suggestion = _check_missing_gitignore(working_dir)
+    if suggestion:
+        return suggestion.text
+
+    # Priority 4: Check for missing favicon (web projects)
+    if _is_web_project(working_dir):
+        suggestion = _check_missing_favicon(working_dir)
+        if suggestion:
+            return suggestion.text
+
+    # Priority 5: QA-noted improvements
+    if qa_issues:
+        suggestion = _check_quality_issues(qa_issues)
+        if suggestion:
+            return suggestion.text
+
+    logger.debug("No followup suggestions found for task in %s", working_dir)
     return None

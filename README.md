@@ -31,7 +31,7 @@ JARVIS routes each request to the right intelligence tier: a fast model for quic
 ## The Arc Reactor (Features)
 
 **Voice Interaction**
-Speak naturally and JARVIS responds with a warm British accent. Powered by faster-whisper (local STT) and Kokoro TTS with chunked Opus streaming for sub-second latency. Wake word detection ("Hey JARVIS") runs continuously in the background.
+Speak naturally and JARVIS responds with a warm British accent. Powered by Moonshine ONNX (primary STT, low hallucination) with faster-whisper as fallback, and Kokoro TTS with chunked Opus streaming for sub-second latency. Wake word detection ("Hey JARVIS") runs continuously in the background.
 
 **Cinematic Web UI**
 A Three.js particle orb that pulses and reacts to JARVIS' state: idle, listening, thinking, speaking. Three views: Voice (the orb), Chat (message interface), and System (dashboard with live cost tracking). PIN-protected for mobile access.
@@ -40,13 +40,25 @@ A Three.js particle orb that pulses and reacts to JARVIS' state: idle, listening
 A full Playwright-driven Chromium browser that JARVIS controls autonomously. Fill forms, click buttons, log into sites, apply to jobs, download files. Persistent browser profile means sessions and cookies survive restarts.
 
 **macOS System Control**
-86+ tools across 9 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, read Gmail, and delegate coding tasks via CLI.
+93+ tools across 9 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, read Gmail, and delegate coding tasks via CLI.
 
 **Multi-Agent Coordination**
 Complex requests are automatically decomposed into subtasks by the planner agent, then executed in parallel or sequence by specialized executor agents. The UI shows real-time plan progress with per-subtask status.
 
 **Memory and Learning**
-ChromaDB vector memory stores conversation context. JARVIS learns your implicit preferences, remembers explicit facts ("my dog's name is Max"), and improves its task planning based on past successes and failures.
+ChromaDB vector memory stores conversation context. JARVIS learns your implicit preferences, remembers explicit facts ("my dog's name is Max"), and improves its task planning based on past successes and failures. An evolution pipeline tracks performance across sessions, and a success tracker logs task outcomes to SQLite for long-term analysis.
+
+**Settings and Runtime Configuration**
+A REST API (`/api/settings`) and an in-UI Settings Panel let you adjust preferences at runtime: model tiers, cost alerts, TTS voice, and more. Changes persist across restarts.
+
+**Conversation Quality Monitor**
+Responses are automatically checked for quality issues: length limits for TTS, character consistency, response structure, and formatting. The QA verification agent retries tasks that do not meet quality thresholds.
+
+**Work Sessions**
+Long-running coding sessions persist to disk and restore automatically on restart, so multi-step development tasks survive JARVIS restarts without losing context.
+
+**Structured Prompt Templates**
+Task-specific prompt templates (build, feature, fix, refactor, research) guide the planner with structured formats and safe defaults. Templates evolve over time based on task outcomes.
 
 **Multi-Device Audio Routing**
 Connect from your Mac, phone, and tablet simultaneously. Each device registers independently and audio is routed only to devices that want it. Interrupt JARVIS mid-sentence from any device.
@@ -96,7 +108,7 @@ For the full setup guide including environment variables, launch modes, mobile a
               |                             |
      +--------+--------+          +--------+--------+
      |   Brain (LLM)   |          |  Voice Pipeline  |
-     |  Cloud / Local   |          | Whisper + Kokoro |
+     |  Cloud / Local   |          | Moonshine+Kokoro |
      +--------+--------+          +-----------------+
               |
      +--------+--------+
@@ -105,7 +117,7 @@ For the full setup guide including environment variables, launch modes, mobile a
      +--------+--------+
               |
    +----------+----------+
-   |  Tool Registry (86+) |
+   |  Tool Registry (93+) |
    |  macOS, Files, Web,  |
    |  Browser, Shell, ... |
    +-----------------------+
@@ -122,6 +134,15 @@ For the full setup guide including environment variables, launch modes, mobile a
 
 Cost tracking is built in. The System dashboard shows per-session spend, token counts, and requests by tier.
 
+## Testing
+
+JARVIS includes a comprehensive test suite with 265 unit tests covering hardening (retry logic, rate limiting, input sanitization, fork bomb detection), cost tracking, multi-agent coordination, planner heuristics, learning/evolution pipeline, and memory subsystems.
+
+```bash
+source .venv/bin/activate
+python -m pytest tests/ -v
+```
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -129,10 +150,10 @@ Cost tracking is built in. The System dashboard shows per-session spend, token c
 | Backend | Python 3.11, FastAPI, uvicorn, WebSockets |
 | Frontend | Next.js 14, TypeScript, Three.js, Tailwind CSS |
 | Intelligence | LLM API (cloud) + Ollama (local) |
-| Speech-to-Text | faster-whisper (local, private) |
+| Speech-to-Text | Moonshine ONNX (primary), faster-whisper (fallback) |
 | Text-to-Speech | Kokoro TTS (local), Edge TTS (cloud), macOS say |
 | Audio Format | Opus/WebM via FFmpeg (~10x compression) |
-| Memory | ChromaDB (vector store), JSON fact/preference files |
+| Memory | ChromaDB (vector), SQLite (success tracking, dispatch), JSON (facts/prefs) |
 | Browser | Playwright (persistent Chromium profile) |
 | Tunnel | Cloudflare Quick Tunnel (free HTTPS for mobile) |
 

@@ -115,6 +115,8 @@ class VoiceListener:
             try:
                 moonshine_model_name = getattr(settings, "MOONSHINE_MODEL", "moonshine/base")
                 self._moonshine_model = MoonshineOnnxModel(model_name=moonshine_model_name)
+                from moonshine_onnx import load_tokenizer
+                self._moonshine_tokenizer = load_tokenizer()
                 self._stt_engine = "moonshine"
                 stt_initialized = True
                 logger.info("Moonshine ONNX initialized (model: %s). Lower hallucination rate than Whisper.", moonshine_model_name)
@@ -453,11 +455,13 @@ class VoiceListener:
                 audio_input = audio_float[np.newaxis, :]
             else:
                 audio_input = audio_float
-            result = self._moonshine_model.generate(audio_input)
-            if isinstance(result, list):
-                text = " ".join(str(r) for r in result)
+            # generate() returns raw token IDs; decode them via the tokenizer
+            tokens = self._moonshine_model.generate(audio_input)
+            decoded = self._moonshine_tokenizer.decode_batch(tokens)
+            if isinstance(decoded, list):
+                text = " ".join(decoded)
             else:
-                text = str(result)
+                text = str(decoded)
             return text.strip()
         except Exception as e:
             logger.error("Moonshine transcription error: %s", e)

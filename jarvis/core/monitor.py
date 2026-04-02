@@ -117,6 +117,14 @@ class ConversationMonitor:
         complaint_issues = self._check_user_complaints(user_text)
         found_issues.extend(complaint_issues)
 
+        # Check for memory failures
+        memory_issues = self._check_memory_failure(user_text, jarvis_response)
+        found_issues.extend(memory_issues)
+
+        # Check for character breaches
+        breach_issues = self._check_character_breach(jarvis_response)
+        found_issues.extend(breach_issues)
+
         # Record issues
         for issue_msg in found_issues:
             issue = QualityIssue(
@@ -325,13 +333,15 @@ class ConversationMonitor:
             issue_msg: Issue message text
 
         Returns:
-            Category string: "voice", "character", "formatting", "complaint", "other"
+            Category string: "voice", "character", "formatting", "complaint", "memory", "other"
         """
         msg_lower = issue_msg.lower()
 
         if any(x in msg_lower for x in ["tts", "voice", "sentence", "word"]):
             return "voice"
-        elif any(x in msg_lower for x in ["sir", "character", "corporate", "phrase"]):
+        elif any(x in msg_lower for x in ["memory", "recall", "continuity"]):
+            return "memory"
+        elif any(x in msg_lower for x in ["sir", "character", "corporate", "phrase", "breach", "samantha"]):
             return "character"
         elif any(x in msg_lower for x in ["markdown", "bold", "header", "bullet", "em dash"]):
             return "formatting"
@@ -351,3 +361,96 @@ class ConversationMonitor:
         for issue in self.issues:
             counts[issue.category] = counts.get(issue.category, 0) + 1
         return counts
+
+    def _check_memory_failure(self, user_text: str, jarvis_response: str) -> list[str]:
+        """
+        Check for memory failure patterns.
+
+        User mentions earlier/before/remember + JARVIS says "I don't recall".
+
+        Args:
+            user_text: User message
+            jarvis_response: JARVIS response
+
+        Returns:
+            List of issue messages
+        """
+        issues = []
+        user_lower = user_text.lower()
+        response_lower = jarvis_response.lower()
+
+        memory_triggers = [r"\bearlier\b", r"\bbefore\b", r"\bremember\b", r"\brecall\b"]
+        memory_failure_patterns = [r"i don'?t recall", r"i don'?t remember", r"no memory"]
+
+        has_memory_trigger = any(re.search(trigger, user_lower) for trigger in memory_triggers)
+        has_failure_response = any(re.search(fail, response_lower) for fail in memory_failure_patterns)
+
+        if has_memory_trigger and has_failure_response:
+            issues.append(
+                "Memory failure detected: user referenced past context but JARVIS "
+                "has no recollection; conversation continuity broken"
+            )
+
+        return issues
+
+    def _check_character_breach(self, response: str) -> list[str]:
+        """
+        Check for character breaches (e.g., mention of other AIs).
+
+        Args:
+            response: Response text
+
+        Returns:
+            List of issue messages
+        """
+        issues = []
+        response_lower = response.lower()
+
+        if "samantha" in response_lower:
+            issues.append(
+                "Character breach: 'Samantha' mentioned; JARVIS should not reference "
+                "other AI systems"
+            )
+
+        return issues
+
+    def get_quality_score(self) -> float:
+        """
+        Calculate conversation quality score (0.0 to 1.0).
+
+        Based on recent issue density from last 20 responses.
+
+        Returns:
+            Quality score: 1.0 = perfect, 0.0 = all issues
+        """
+        if self.total_analyzed == 0:
+            return 1.0
+
+        recent_limit = 20
+        recent_issues = len(list(self.issues)[-recent_limit:])
+        recent_analyzed = min(self.total_analyzed, recent_limit)
+
+        issue_rate = recent_issues / recent_analyzed if recent_analyzed > 0 else 0.0
+        quality_score = max(0.0, 1.0 - issue_rate)
+
+        return round(quality_score, 2)
+
+    def report(self) -> dict:
+        """
+        Generate a quality report for the conversation.
+
+        Returns:
+            Dict with summary stats and recommendations
+        """
+        stats = self.get_quality_stats()
+        score = self.get_quality_score()
+
+        return {
+            "quality_score": score,
+            "total_responses_analyzed": stats["total_analyzed"],
+            "total_issues_found": stats["total_issues"],
+            "issue_rate": stats["issue_rate"],
+            "issue_categories": stats["issue_categories"],
+            "recent_issues": self.get_recent_issues(limit=5),
+            "sir_usage_count": self._sir_usage_count,
+        }

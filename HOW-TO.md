@@ -64,7 +64,7 @@ TTS_VOICE=bf_emma           # Kokoro voice ID
 TTS_SPEED=1.05
 TTS_BROWSER_FORMAT=opus     # opus | wav
 
-# Optional: Whisper STT model size
+# Optional: STT configuration (Moonshine is primary, Whisper is fallback)
 WHISPER_MODEL=small.en      # tiny.en | small.en | medium.en | large-v3
 
 # Optional: cost alerts (USD)
@@ -135,6 +135,8 @@ Jarvis/
   start.sh                    # Launch script (text/voice/server/full)
   requirements.txt            # Python dependencies
   com.jarvis.assistant.plist  # macOS auto-start config
+  tests/                      # 265 unit tests (pytest)
+  templates/prompts/          # Structured prompt templates (build, feature, fix, etc.)
   jarvis/
     main.py                   # Entry point and mode router
     config/
@@ -146,10 +148,13 @@ Jarvis/
       auth.py                 # PIN-based mobile authentication
       cache.py                # Response caching layer
       cost_tracker.py         # Per-request cost logging
-      hardening.py            # Rate limiting, input validation
+      hardening.py            # Rate limiting, input validation, retry logic
       perf.py                 # Performance monitoring
       proactive.py            # Proactive suggestions engine
       profile.py              # User preference learning
+      settings_api.py         # REST API for runtime settings
+      dispatch_registry.py    # Task routing registry + success tracker
+      monitor.py              # Conversation quality monitor
     agent/
       coordinator.py          # Multi-agent task orchestration
       planner.py              # Task decomposition (plan-and-execute)
@@ -157,6 +162,10 @@ Jarvis/
       task_tracker.py         # Persistent plan state
       tools_schema.py         # Tool definitions for LLM tool-use
       learning.py             # Pattern learning from past plans
+      suggestions.py          # Proactive follow-up suggestions
+      templates.py            # Structured prompt template library
+      template_evolution.py   # Template A/B testing and evolution
+      evolution_pipeline.py   # Cross-session performance evolution
     memory/
       store.py                # ChromaDB vector memory
       facts.py                # Explicit user fact storage
@@ -174,8 +183,9 @@ Jarvis/
       chrome_extension.py     # Chrome extension bridge
       chrome_sync.py          # Chrome cookie sync
       claude_code.py          # Coding CLI delegation
+      work_session.py         # Persistent coding sessions
     voice/
-      listener.py             # Microphone capture + faster-whisper STT
+      listener.py             # Microphone capture + Moonshine/whisper STT
       speaker.py              # Kokoro/Edge TTS with chunked streaming
     ui/
       jarvis-ui/              # Next.js 14 web interface
@@ -185,6 +195,7 @@ Jarvis/
             chat/             # Chat message interface
             dashboard/        # System status dashboard
             auth/             # PIN entry screen
+            settings/         # Settings panel (runtime config)
             shared/           # Reusable UI components
           hooks/
             useJarvisWebSocket.ts  # WebSocket client with audio routing
@@ -192,7 +203,7 @@ Jarvis/
 
 ## Tool Categories
 
-JARVIS has 86+ tools organized into these categories:
+JARVIS has 93+ tools organized into these categories:
 
 | Category | Examples |
 |----------|---------|
@@ -227,9 +238,51 @@ JARVIS supports three TTS engines (in order of quality):
 2. **Edge TTS**: Microsoft's cloud TTS, good quality, free, requires internet
 3. **macOS `say`**: Built-in system voice, lowest quality, always available
 
-Speech-to-text uses **faster-whisper** (local, private, no cloud dependency).
+Speech-to-text uses a two-tier approach:
+
+1. **Moonshine ONNX** (primary): Low hallucination rate, real-time optimized, runs locally. Tokenizer decodes raw model output into text.
+2. **faster-whisper** (fallback): Activates automatically if Moonshine fails or is unavailable. Supports hotwords and language hints.
 
 Audio is streamed to the browser in chunked Opus format (~10x smaller than WAV) for low-latency playback.
+
+## Testing
+
+JARVIS ships with 265 unit tests. Run them with:
+
+```bash
+source .venv/bin/activate
+python -m pytest tests/ -v
+```
+
+Test modules cover: hardening (retry, rate limiting, input sanitization, fork bomb detection), cost tracking, multi-agent coordination and routing, planner heuristics and decomposition, learning/evolution pipeline, and memory subsystems.
+
+To run with coverage:
+
+```bash
+python -m pytest tests/ -v --cov=jarvis --cov-report=term-missing
+```
+
+## PIN Authentication
+
+JARVIS uses PIN-based authentication for browser and mobile access. The PIN is displayed in the terminal on first launch and persists across restarts.
+
+To regenerate the PIN:
+
+```bash
+JARVIS_REGEN_PIN=true ./start.sh full
+```
+
+The new PIN will be printed to the console before the server starts.
+
+## Settings Panel
+
+The web UI includes a Settings Panel (gear icon) for runtime configuration. Changes made in the panel are saved via the `/api/settings` REST endpoint and persist across restarts.
+
+You can also query settings directly:
+
+```bash
+curl http://localhost:8741/api/settings
+```
 
 ## Troubleshooting
 

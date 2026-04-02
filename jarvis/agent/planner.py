@@ -27,6 +27,7 @@ from jarvis.config import settings
 from jarvis.agent.task_tracker import TaskPlan, TaskTracker
 from jarvis.agent.ab_testing import ABTester
 from jarvis.agent.planning_session import detect_planning_mode, PlanningSession
+from jarvis.agent.templates import get_template, fill_template
 
 logger = logging.getLogger("jarvis.agent.planner")
 
@@ -224,6 +225,30 @@ class TaskPlanner:
                         system_prompt = system_prompt + "\n" + learning_ctx
                 except Exception as e:
                     logger.debug("Could not get learning context: %s", e)
+
+            # Structured template library: inject matching template guidance
+            try:
+                matched_template = get_template(user_input)
+                if matched_template:
+                    template_guidance = fill_template(
+                        matched_template.template_format,
+                        task=user_input[:200],
+                        safe_defaults=True,
+                    )
+                    system_prompt = (
+                        system_prompt
+                        + "\n\nStructured template guidance ("
+                        + matched_template.task_type
+                        + "):\n"
+                        + template_guidance
+                    )
+                    logger.debug(
+                        "Template matched: %s (score: %.2f)",
+                        matched_template.task_type,
+                        matched_template.score_match(user_input),
+                    )
+            except Exception as e:
+                logger.debug("Template selection failed (non-critical): %s", e)
 
             # A/B testing: select template if available
             experiment_id = None

@@ -1,58 +1,99 @@
-task_type: build
+name: Build Task Template
 version: v1
-description: "Build a new project or feature from scratch"
-created_at: "2026-03-31"
-success_rate: null
+task_type: fullstack_app
+keywords:
+  - app
+  - application
+  - fullstack
+  - build
+  - scaffold
+  - create
+
 sections:
-  - heading: "Context"
+  - name: Overview
     content: |
-      <task_context>
-      You are building a new project or feature from the ground up.
+      Provide a brief overview of the application to be built. Include:
+      - Core purpose and user value proposition
+      - Target users and use cases
+      - Key differentiators from existing solutions
 
-      Project: {project_name}
-      Location: {working_dir}
-      Tech stack: {tech_stack}
-      </task_context>
-  - heading: "Requirements"
+  - name: Architecture
     content: |
-      <requirements>
-      Build with these features and requirements:
-      {sections}
+      Define the technical architecture:
+      - Frontend framework and libraries
+      - Backend stack and language
+      - Database choice and schema
+      - Deployment environment and infrastructure
 
-      Design guidelines:
-      {design_notes}
-      </requirements>
-  - heading: "Constraints and Quality Standards"
+  - name: Feature List
     content: |
-      <constraints>
-      - Mobile responsive (tested at 375px, 768px, 1024px breakpoints)
-      - Modern, clean aesthetic
-      - Semantic HTML with accessibility (WCAG 2.1 AA) in mind
-      - No console errors or warnings
-      - No TODO or placeholder content remains
-      - Clean, readable code with meaningful variable/function names
-      </constraints>
-  - heading: "Implementation Approach"
-    content: |
-      <approach>
-      Think step by step about these phases in order:
+      List all core features with priority:
+      - Must-have features (MVP)
+      - Nice-to-have features
+      - Future enhancements
+      Include acceptance criteria for each feature
 
-      1. **Project Structure**: Set up the project structure, initialize dependencies, configure build tools, and establish the folder hierarchy.
-      2. **Core Layout**: Build the foundational layout and navigation system.
-      3. **Feature Implementation**: Implement each feature or section systematically.
-      4. **Styling and Polish**: Add CSS, ensure responsiveness across all breakpoints, fix alignment and spacing issues.
-      5. **Cross-browser Testing**: Test functionality and appearance across different viewports and browsers.
-      6. **Final Review**: Scan for any remaining issues, console warnings, or incomplete code.
-      </approach>
-  - heading: "Acceptance Criteria"
+  - name: API Design
     content: |
-      <acceptance_criteria>
-      All of the following must be true:
-      - [ ] All listed features and sections are fully implemented
-      - [ ] No console errors or warnings appear
-      - [ ] Mobile responsive design works at all specified breakpoints (375px, 768px, 1024px)
-      - [ ] All imports resolve without errors
-      - [ ] No TODO comments, placeholder text, or unfinished code remains
-      - [ ] Code is clean, readable, and follows naming conventions
-      - [ ] The application runs without crashes
-      </acceptance_criteria>
+      Document RESTful API endpoints:
+      - Base URL and versioning strategy
+      - Authentication and authorization
+      - Request/response formats with examples
+      - Error handling and status codes
+
+  - name: Database Schema
+    content: |
+      Define database entities and relationships:
+      - Table/collection definitions
+      - Primary and foreign keys
+      - Indexes and constraints
+      - Migration strategy
+
+  - name: UI Components
+    content: |
+      List UI components needed:
+      - Page layouts and wireframes
+      - Reusable component library
+      - State management approach
+      - Responsive design requirements
+
+  - name: Security Considerations
+    content: |
+      Address security requirements:
+      - Authentication mechanism (OAuth, JWT, etc)
+      - Data validation and sanitization
+      - Rate limiting and DDoS protection
+      - Sensitive data handling and encryption
+
+  - name: Testing Strategy
+    content: |
+      Define testing approach:
+      - Unit test coverage targets (>80%)
+      - Integration test scenarios
+      - End-to-end test flows
+      - Performance and load testing
+
+  - name: Deployment
+    content: |
+      Document deployment process:
+      - Environment setup (dev, staging, production)
+      - CI/CD pipeline configuration
+      - Rollback procedures
+      - Monitoring and logging setup
+
+acceptance_criteria:
+  - All core features implemented and functional
+  - API fully documented with examples
+  - Frontend is responsive across devices
+  - Test coverage >= 80% of codebase
+  - Deployment is automated and repeatable
+  - Security checklist completed
+  - Performance meets requirements
+  - Documentation is complete and accurate
+
+design_notes:
+  - Follow immutability principles in data structures
+  - Keep modules under 800 lines
+  - Use type hints throughout
+  - Maintain high cohesion and low coupling
+  - No hardcoded configuration values

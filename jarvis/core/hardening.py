@@ -135,7 +135,7 @@ class RetryPolicy:
 
     def should_retry(self, error: Exception, attempt: int) -> bool:
         """Determine if a failed request should be retried."""
-        if attempt >= self.max_retries:
+        if attempt > self.max_retries:
             return False
         category = classify_error(error)
         return category in self.retryable_categories
@@ -276,7 +276,7 @@ _DANGEROUS_SHELL_PATTERNS = [
     r">\s*/dev/sd[a-z]",             # Writing to disk devices
     r"mkfs\.",                        # Formatting filesystems
     r"dd\s+.*of=/dev/",             # dd to devices
-    r":(){ :\|:& };:",              # Fork bomb
+    r":\(\)\s*\{.*:\s*\|\s*:.*&.*\}",  # Fork bomb variants
     r"chmod\s+-R\s+777\s+/",       # Recursive 777 on root
 ]
 
