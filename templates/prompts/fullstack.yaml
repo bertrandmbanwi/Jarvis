@@ -1,0 +1,165 @@
+task_type: fullstack
+version: v1
+description: "Build full-stack applications from frontend to database"
+created_at: "2026-03-31"
+success_rate: null
+sections:
+  - heading: "Project Overview"
+    content: |
+      <project_context>
+      Project Name: {project_name}
+      Description: {project_description}
+
+      Technology Stack:
+      - Frontend: {frontend_tech}
+      - Backend: {backend_tech}
+      - Database: {database_tech}
+
+      This is a complete full-stack build, so coordinate all three layers carefully.
+      </project_context>
+  - heading: "Functional Requirements"
+    content: |
+      <requirements>
+      User-facing functional requirements:
+      {functional_requirements}
+
+      Non-functional requirements:
+      - Performance target: {performance_target}
+      - Scalability requirements: {scalability_requirements}
+      - Security requirements: {security_requirements}
+      - Accessibility level: {accessibility_level}
+      </requirements>
+  - heading: "Architecture and Design"
+    content: |
+      <architecture>
+      Think through the complete architecture:
+
+      **Frontend Architecture**:
+      - {frontend_description}
+      - Component hierarchy and layout structure
+      - State management approach (Redux, Context API, Vuex, etc.)
+      - API integration points and how frontend communicates with backend
+
+      **Backend Architecture**:
+      - {backend_description}
+      - REST endpoints or GraphQL schema
+      - How business logic is organized (services, controllers, models)
+      - Authentication mechanism (JWT, sessions, OAuth)
+      - How backend interacts with the database
+
+      **Database Architecture**:
+      - {database_description}
+      - Schema design and entity relationships
+      - Key indexes needed for performance
+      - Query optimization strategy
+
+      **Infrastructure**:
+      - Deployment strategy (containerized, serverless, traditional)
+      - Environment configuration (dev, staging, production)
+      - Monitoring, logging, and error tracking
+      - How the three layers communicate across environments
+      </architecture>
+  - heading: "Frontend Implementation"
+    content: |
+      <frontend>
+      Build the frontend in this sequence:
+
+      1. **Project Setup**: Initialize project, install dependencies, configure build tools and dev server.
+      2. **Component Hierarchy**: Design and create the component tree and page layout structure.
+      3. **Routing**: Implement page routing and navigation between screens.
+      4. **API Client**: Create an HTTP client for backend communication; implement request/response handling.
+      5. **State Management**: Set up state management for shared data and user session.
+      6. **UI Components**: Build all UI components with styling, using consistent design patterns.
+      7. **Form Handling**: Implement form components with validation and error display.
+      8. **User Experience**: Add loading states, transitions, error boundaries, and empty states.
+      9. **Responsive Design**: Test and refine across all target device sizes (mobile, tablet, desktop).
+      </frontend>
+  - heading: "Backend Implementation"
+    content: |
+      <backend>
+      Build the backend in this sequence:
+
+      1. **Project Setup**: Initialize project, install dependencies, configure framework and build tools.
+      2. **Database Setup**: Configure database connection, set up ORM or query builder, create migrations.
+      3. **Data Models**: Define models for all entities; establish relationships and constraints.
+      4. **API Endpoints**: Implement all endpoint handlers with proper HTTP methods and paths.
+      5. **Input Validation**: Add validation for request parameters and body data; return 400 on invalid input.
+      6. **Authentication**: Implement user authentication (login, token generation, session management).
+      7. **Authorization**: Add role-based or permission-based authorization checks.
+      8. **Business Logic**: Implement all service classes and business rules.
+      9. **Error Handling**: Create consistent error response format; handle all error cases gracefully.
+      10. **Logging**: Add comprehensive logging for debugging, monitoring, and auditing.
+      11. **Documentation**: Generate API documentation (OpenAPI/Swagger).
+      </backend>
+  - heading: "Frontend-Backend Integration"
+    content: |
+      <integration>
+      Ensure proper integration:
+
+      1. **API Contract**: Frontend makes calls to correct endpoints with correct request format.
+      2. **Data Flow**: Trace data from user action through frontend to backend to database and back; verify correctness.
+      3. **Error Handling**: Frontend gracefully handles all possible API error responses.
+      4. **Loading States**: UI shows loading indicators during async API calls.
+      5. **Authentication Flow**: User login/logout works; tokens are sent and refreshed correctly.
+      6. **Form Submission**: Form data is validated on frontend, sent to backend, and processed correctly.
+      7. **Real-time Features**: If applicable, implement WebSocket or polling for real-time data.
+      8. **Session Management**: User session persists across page refreshes and is properly terminated on logout.
+      </integration>
+  - heading: "Testing Strategy"
+    content: |
+      <testing>
+      Create comprehensive tests at all levels:
+
+      **Frontend Testing**:
+      1. Component tests for isolated UI components
+      2. Page/integration tests for multi-component flows
+      3. API integration tests mocking the backend
+      4. Cross-browser testing
+
+      **Backend Testing**:
+      1. Unit tests for business logic and validators
+      2. Endpoint/integration tests for all API routes
+      3. Database tests for schema and migrations
+      4. Authentication and authorization tests
+
+      **End-to-End Testing**:
+      1. Complete user workflows from UI through database
+      2. Multi-step processes (sign up, create account, add items, etc.)
+      3. Error scenarios and edge cases
+
+      **Performance and Security**:
+      1. Load testing for expected user volume
+      2. Security testing (SQL injection, XSS, CSRF protection)
+      3. Performance profiling and optimization
+      </testing>
+  - heading: "Deployment and Operations"
+    content: |
+      <deployment>
+      Plan for deployment:
+
+      1. **Environment Configuration**: Manage database URLs, API keys, and secrets per environment.
+      2. **Database Migrations**: Strategy for running migrations in production safely.
+      3. **Frontend Build**: Optimize build for production (minification, code splitting, asset optimization).
+      4. **Backend Health Checks**: Implement health checks for monitoring service availability.
+      5. **Error Tracking**: Set up error tracking and alerting (Sentry, DataDog, etc.).
+      6. **Logging**: Centralized logging for debugging production issues.
+      7. **CI/CD Pipeline**: Automated testing and deployment on code changes.
+      8. **Monitoring**: Performance monitoring, uptime monitoring, and alerting.
+      </deployment>
+  - heading: "Acceptance Criteria"
+    content: |
+      <acceptance_criteria>
+      All of the following must be true:
+      - [ ] All functional requirements are implemented and working end-to-end
+      - [ ] Frontend is responsive and mobile-friendly across all target devices
+      - [ ] All API endpoints work correctly and return correct data
+      - [ ] Database schema is properly designed and migrations work
+      - [ ] Authentication and authorization are fully implemented and tested
+      - [ ] All tests pass with 100% success rate
+      - [ ] No console errors or warnings in browser or server logs
+      - [ ] Application performs acceptably under expected load
+      - [ ] Error handling is comprehensive and user-friendly
+      - [ ] Code follows project style guide and best practices
+      - [ ] Documentation is complete for API, deployment, and architecture
+      - [ ] Sensitive data is properly protected (no exposure in logs, no hardcoded secrets)
+      </acceptance_criteria>

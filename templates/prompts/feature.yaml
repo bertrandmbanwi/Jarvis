@@ -1,0 +1,73 @@
+task_type: feature
+version: v1
+description: "Add new features to an existing project"
+created_at: "2026-03-31"
+success_rate: null
+sections:
+  - heading: "Feature Overview"
+    content: |
+      <feature_context>
+      Feature name: {feature_name}
+      Description: {feature_description}
+      User story: {user_story}
+      </feature_context>
+  - heading: "Requirements and Constraints"
+    content: |
+      <requirements>
+      Feature requirements:
+      {requirements_list}
+
+      Technical constraints:
+      - Must integrate seamlessly with existing: {integration_points}
+      - Must not break any existing functionality
+      - Performance must not degrade
+      - Must follow established architectural patterns
+      </requirements>
+  - heading: "Design and Architecture"
+    content: |
+      <design>
+      Think step by step about the design:
+
+      1. **Fit in Architecture**: Where does this feature logically fit in the existing codebase? What layer does it belong to?
+      2. **Components Needed**: What new components, modules, or classes are required? Which existing ones will you reuse?
+      3. **Data Flow**: How does data flow into, through, and out of this feature? Draw the flow mentally.
+      4. **Data Model Changes**: Are database schema changes, migrations, or new models needed?
+      5. **API Integration**: How does this feature interact with existing APIs? What new endpoints or methods are required?
+      </design>
+  - heading: "Implementation Plan"
+    content: |
+      <implementation>
+      Implement in this order:
+
+      1. **Data Structures**: Create any required models, schemas, or data structures first.
+      2. **Core Logic**: Implement the business logic and core algorithms.
+      3. **Integration Points**: Add API endpoints, UI components, or integration with existing systems.
+      4. **Error Handling**: Implement comprehensive error handling and validation.
+      5. **Logging**: Add meaningful logging for debugging and monitoring.
+      6. **Documentation**: Update code comments and external documentation.
+      </implementation>
+  - heading: "Testing Strategy"
+    content: |
+      <testing>
+      Create tests at multiple levels:
+
+      1. **Unit Tests**: Test individual functions and business logic in isolation.
+      2. **Integration Tests**: Test interaction between the new feature and existing features.
+      3. **Acceptance Tests**: Verify the feature matches all user-facing requirements.
+      4. **Edge Cases**: Test boundary conditions, empty inputs, and error scenarios.
+      5. **Performance**: Ensure the feature meets performance requirements.
+      6. **Compatibility**: Test across browsers, devices, or platforms as applicable.
+      </testing>
+  - heading: "Acceptance Criteria"
+    content: |
+      <acceptance_criteria>
+      All of the following must be true:
+      - [ ] All functional requirements are fully implemented and working
+      - [ ] The feature integrates seamlessly with existing code
+      - [ ] No regressions in existing functionality (all prior tests still pass)
+      - [ ] Comprehensive test coverage exists (unit, integration, acceptance)
+      - [ ] All tests pass with 100% success rate
+      - [ ] Code follows the project style guide and conventions
+      - [ ] Documentation is updated if needed (README, API docs, comments)
+      - [ ] Performance is acceptable and meets stated requirements
+      </acceptance_criteria>

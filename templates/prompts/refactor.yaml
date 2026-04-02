@@ -1,0 +1,84 @@
+task_type: refactor
+version: v1
+description: "Improve code structure and maintainability"
+created_at: "2026-03-31"
+success_rate: null
+sections:
+  - heading: "Scope and Context"
+    content: |
+      <scope>
+      Refactoring scope: {scope}
+      Target files/modules: {target_files}
+
+      Current issues to address:
+      {current_issues}
+      </scope>
+  - heading: "Refactoring Goals"
+    content: |
+      <goals>
+      Primary goals:
+      1. {goal_1}
+      2. {goal_2}
+      3. {goal_3}
+
+      What must NOT change (backward compatibility):
+      - Public API signatures and method contracts
+      - External behavior for all valid inputs
+      - Performance characteristics or response times
+      - Data structures passed between modules
+      - Error types and error messages
+      </goals>
+  - heading: "Refactoring Strategy"
+    content: |
+      <approach>
+      Follow this systematic approach:
+
+      1. **Dependency Analysis**: Map dependencies and usage patterns before making changes.
+      2. **Incremental Changes**: Plan changes in small, reviewable chunks (each ~100 lines or one logical piece).
+      3. **Pattern Extraction**: Identify and extract common patterns into reusable, well-named functions.
+      4. **Naming Clarity**: Improve variable and function names to make intent obvious.
+      5. **Reduce Duplication**: Consolidate duplicate logic into shared code.
+      6. **Decompose**: Break large functions into smaller, testable, single-purpose functions.
+      7. **Improve Structure**: Enhance separation of concerns and module boundaries.
+      </approach>
+  - heading: "Implementation Guidelines"
+    content: |
+      <implementation>
+      As you refactor:
+
+      - Make focused changes, not wholesale rewrites (avoid "boiling the ocean")
+      - Prioritize readability and clarity over cleverness
+      - Break functions larger than 30 lines into smaller units
+      - Reduce conditional nesting to 2-3 levels maximum
+      - Extract hard-coded configuration into named constants
+      - Add docstrings explaining the "why" behind non-obvious code
+      - Use meaningful names: prefer `calculate_monthly_interest` over `calc_mi`
+      - Ensure error handling remains intact during refactoring
+      </implementation>
+  - heading: "Verification and Testing"
+    content: |
+      <verification>
+      Verify correctness by:
+
+      1. **Behavior Preservation**: Run the full test suite; all tests must pass without modification.
+      2. **No Behavioral Changes**: Verify outputs are identical for all inputs.
+      3. **Performance**: Benchmark performance before and after to catch regressions.
+      4. **Code Quality**: Review readability, duplication, and complexity improvements.
+      5. **Error Handling**: Confirm error paths and exception handling still work.
+
+      Do NOT assume the refactor is safe without running tests.
+      </verification>
+  - heading: "Acceptance Criteria"
+    content: |
+      <acceptance_criteria>
+      All of the following must be true:
+      - [ ] All existing tests pass without any modifications to test code
+      - [ ] Code is objectively cleaner and more maintainable
+      - [ ] Duplication is reduced or eliminated
+      - [ ] Complexity metrics improved (cyclomatic complexity, nesting depth)
+      - [ ] No functionality changes for external consumers
+      - [ ] Performance meets or exceeds baseline benchmarks
+      - [ ] Dead code and unreachable paths are removed
+      - [ ] Non-obvious implementation details are explained in comments
+      - [ ] Public APIs remain backward compatible
+      </acceptance_criteria>

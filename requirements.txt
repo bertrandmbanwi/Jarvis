@@ -13,6 +13,7 @@ python-multipart>=0.0.18
 anthropic>=0.52.0
 
 # Voice: Speech-to-Text
+useful-moonshine-onnx>=1.0.0
 faster-whisper>=1.1.0
 
 # Voice: Text-to-Speech
@@ -38,3 +39,4 @@ pycookiecheat>=0.8.0
 
 # Utilities
 python-dotenv>=1.0.0
+pyyaml>=6.0.0

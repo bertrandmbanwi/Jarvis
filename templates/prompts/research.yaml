@@ -1,0 +1,105 @@
+task_type: research
+version: v1
+description: "Research and document technical topics"
+created_at: "2026-03-31"
+success_rate: null
+sections:
+  - heading: "Research Topic"
+    content: |
+      <research_context>
+      Topic: {research_topic}
+      Focus area: {focus_area}
+      Context and background: {context}
+
+      This research will be used for making informed decisions, documenting best practices, or understanding complex technical areas.
+      </research_context>
+  - heading: "Research Objectives"
+    content: |
+      <objectives>
+      Your research should answer these objectives:
+
+      1. {objective_1}
+      2. {objective_2}
+      3. {objective_3}
+
+      Key questions that must be answered:
+      - {question_1}
+      - {question_2}
+      - {question_3}
+
+      Begin by stating what you already know about this topic, then identify gaps to fill.
+      </objectives>
+  - heading: "Research Methodology"
+    content: |
+      <methodology>
+      Follow this research approach in order:
+
+      1. **Official Sources First**: Consult official documentation, specifications, and standards before other sources.
+      2. **Core Concepts**: Understand foundational principles and theory.
+      3. **Practical Evidence**: Explore real-world examples, case studies, and working implementations.
+      4. **Comparative Analysis**: Compare different approaches, tools, and solutions, documenting trade-offs.
+      5. **Documentation**: Synthesize findings with proper citations and evidence.
+      6. **Gap Analysis**: Identify what is not well-documented or where understanding is incomplete.
+
+      Prioritize sources in this order:
+      - Official documentation and specifications
+      - RFCs and peer-reviewed research
+      - Reputable technical blogs and case studies
+      - Open source projects and code examples
+      - Community discussions and Q&A sites (Stack Overflow, forums)
+      </methodology>
+  - heading: "Analysis and Synthesis"
+    content: |
+      <analysis>
+      When analyzing findings, think step by step:
+
+      1. **Organize**: Group findings into logical categories.
+      2. **Patterns**: Identify recurring themes and relationships.
+      3. **Evaluation**: Assess strengths and weaknesses of each approach.
+      4. **Quantification**: Use metrics, benchmarks, or data where available.
+      5. **Conclusions**: Draw conclusions supported by evidence, not opinion.
+      6. **Limitations**: Clearly note limitations and assumptions in your analysis.
+      </analysis>
+  - heading: "Output Format"
+    content: |
+      <output_format>
+      Structure your research output as follows:
+
+      **Executive Summary (200 words max)**
+      - Key findings at a glance
+      - Main recommendations or conclusions
+
+      **Detailed Findings**
+      - Organized by category or theme
+      - Each finding includes citations to source
+      - Technical depth appropriate to the audience
+
+      **Comparison Tables (if applicable)**
+      - Side-by-side comparison of approaches, tools, or options
+      - Clearly labeled columns with relevant metrics
+
+      **Code Examples (if technical)**
+      - Practical examples demonstrating concepts
+      - Annotated with explanations
+
+      **Recommendations and Conclusions**
+      - Based on evidence from research
+      - Clear reasoning for recommendations
+
+      **References and Further Reading**
+      - Links to all sources consulted
+      - Organized by category
+      </output_format>
+  - heading: "Acceptance Criteria"
+    content: |
+      <acceptance_criteria>
+      All of the following must be true:
+      - [ ] All research questions are fully answered with evidence
+      - [ ] Key findings cite authoritative, credible sources
+      - [ ] Information is current and reflects the state of the field today
+      - [ ] Trade-offs and limitations are clearly documented
+      - [ ] Technical topics include practical code examples
+      - [ ] Recommendations are supported by evidence from research
+      - [ ] Writing is clear, well-organized, and easy to follow
+      - [ ] Sources are properly cited with links provided
+      </acceptance_criteria>

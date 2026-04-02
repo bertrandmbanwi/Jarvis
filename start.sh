@@ -23,6 +23,7 @@ NEXTJS_PID=""
 PROXY_PID=""
 OLLAMA_PID=""
 TUNNEL_PID=""
+OVERLAY_PID=""
 
 cleanup() {
     echo ""
@@ -46,6 +47,12 @@ cleanup() {
     for pid in $(lsof -ti :3000,:3001 2>/dev/null || true); do
         kill "${pid}" 2>/dev/null || true
     done
+    if [[ -n "${OVERLAY_PID}" ]] && kill -0 "${OVERLAY_PID}" 2>/dev/null; then
+        echo "Stopping Desktop Overlay..."
+        kill "${OVERLAY_PID}" 2>/dev/null || true
+    fi
+    # Also kill any orphaned overlay processes by name
+    pkill -f "JarvisOverlay" 2>/dev/null || true
     if [[ -n "${OLLAMA_PID}" ]] && kill -0 "${OLLAMA_PID}" 2>/dev/null; then
         echo "Stopping Ollama..."
         kill "${OLLAMA_PID}" 2>/dev/null || true
@@ -125,6 +132,51 @@ if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
     sleep 2
     echo "Ollama started (PID: ${OLLAMA_PID})"
     echo ""
+fi
+
+# Ensure pyyaml is installed (required for prompt templates)
+python -c "import yaml" 2>/dev/null || pip install pyyaml -q
+
+# Ensure data directories exist for SQLite databases
+mkdir -p "${SCRIPT_DIR}/data"
+mkdir -p "${SCRIPT_DIR}/templates/prompts"
+
+# Build and launch desktop overlay (macOS only, optional)
+OVERLAY_DIR="${SCRIPT_DIR}/desktop-overlay"
+OVERLAY_APP="${OVERLAY_DIR}/build/JarvisOverlay.app"
+OVERLAY_BIN="${OVERLAY_APP}/Contents/MacOS/JarvisOverlay"
+if [[ "${MODE}" == "full" ]] && [[ -f "${OVERLAY_DIR}/JarvisOverlay.swift" ]]; then
+    if command -v swiftc &>/dev/null; then
+        # Build if executable is missing (not just .app directory)
+        if [[ ! -x "${OVERLAY_BIN}" ]]; then
+            # Clean stale/broken builds
+            rm -rf "${OVERLAY_DIR}/build" 2>/dev/null || true
+            echo "Building JARVIS Desktop Overlay..."
+            # Run in subshell so build failure does not kill start.sh
+            set +e
+            (cd "${OVERLAY_DIR}" && bash build-overlay.sh) 2>&1 | tail -5
+            BUILD_EXIT=${PIPESTATUS[0]}
+            set -e
+            if [[ "${BUILD_EXIT}" -eq 0 ]]; then
+                echo "Overlay build succeeded."
+            else
+                echo "Warning: Overlay build failed (exit ${BUILD_EXIT}). JARVIS will continue without the desktop overlay."
+                echo "         You can retry manually: cd desktop-overlay && bash build-overlay.sh"
+            fi
+        fi
+        if [[ -x "${OVERLAY_BIN}" ]]; then
+            # Kill any orphaned overlay instances from previous runs
+            pkill -f "JarvisOverlay" 2>/dev/null || true
+            sleep 0.5
+            echo "Launching Desktop Overlay..."
+            # Launch the binary directly (not via 'open') so we get the real PID
+            "${OVERLAY_BIN}" &
+            OVERLAY_PID=$!
+        fi
+    else
+        echo "Note: swiftc not found. Skipping desktop overlay build."
+        echo "      Install Xcode Command Line Tools with: xcode-select --install"
+    fi
 fi
 
 cd "${SCRIPT_DIR}"

@@ -9,7 +9,7 @@ The TOOL_SCHEMAS list is passed directly to Claude's API.
 """
 import logging
 from jarvis.tools import mac_control, shell, filesystem, screen, web_search, web_browse
-from jarvis.tools import browser_agent, claude_code, chrome_extension, calendar_email, weather
+from jarvis.tools import browser_agent, claude_code, chrome_extension, calendar_email, weather, notes_access
 from jarvis.core import profile
 from jarvis.agent import planner as _planner_module
 from jarvis.agent import learning as _learning_module
@@ -858,6 +858,24 @@ TOOL_SCHEMAS = [
             "properties": {},
         },
     },
+    {
+        "name": "analyze_screen",
+        "description": (
+            "Capture a screenshot and analyze it with AI vision. "
+            "Use when the user asks 'what am I looking at?', 'what's on my screen?', "
+            "'can you see this?', or needs visual context about their current activity. "
+            "Optionally pass a question to ask about the screen content."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "Optional question about the screen content. E.g. 'What app is in the foreground?' or 'Is there an error message visible?'",
+                },
+            },
+        },
+    },
     # ---- Shell ----
     {
         "name": "run_command",
@@ -1160,6 +1178,7 @@ TOOL_SCHEMAS = [
             "tasks like: writing new code, debugging, refactoring, code review, creating scripts, "
             "setting up configurations, or any multi-step programming work. "
             "Claude Code has full filesystem and shell access in its working directory. "
+            "Use continue_session=true to maintain context from the previous coding interaction. "
             "For simple one-off shell commands, use run_command instead."
         ),
         "input_schema": {
@@ -1181,6 +1200,16 @@ TOOL_SCHEMAS = [
                 "allowed_tools": {
                     "type": "string",
                     "description": "Comma-separated Claude Code tools to allow (e.g., 'Bash,Read,Write,Edit'). Leave empty for defaults.",
+                    "default": "",
+                },
+                "continue_session": {
+                    "type": "boolean",
+                    "description": "Continue the previous Claude Code session for multi-turn coding work. Maintains full context.",
+                    "default": False,
+                },
+                "session_name": {
+                    "type": "string",
+                    "description": "Named session to resume (e.g., 'my-api-project'). For persistent context across separate interactions.",
                     "default": "",
                 },
             },
@@ -2019,6 +2048,87 @@ TOOL_SCHEMAS = [
             "properties": {},
         },
     },
+    # Apple Notes tools
+    {
+        "name": "get_recent_notes",
+        "description": "Get recent notes from Apple Notes. Returns a list of notes with title, folder, snippet, and modification date.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "description": "Number of recent notes to return (default 10).",
+                    "default": 10,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "read_note",
+        "description": "Read the full content of a specific note from Apple Notes by title (partial match supported).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title_match": {
+                    "type": "string",
+                    "description": "Title or partial title of the note to read.",
+                },
+            },
+            "required": ["title_match"],
+        },
+    },
+    {
+        "name": "search_notes",
+        "description": "Search Apple Notes by keyword. Searches across note titles and bodies.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query to find in notes.",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default 10).",
+                    "default": 10,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "create_note",
+        "description": "Create a new note in Apple Notes. Supports plain text and markdown checklists (lines starting with '- [ ]' or '- [x]').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Title for the new note.",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Body content of the note. Supports markdown checklist format.",
+                },
+                "folder": {
+                    "type": "string",
+                    "description": "Folder to create the note in (default: 'Notes').",
+                    "default": "Notes",
+                },
+            },
+            "required": ["title", "body"],
+        },
+    },
+    {
+        "name": "get_note_folders",
+        "description": "List all folders in Apple Notes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
 ]
 
 
@@ -2052,6 +2162,7 @@ TOOL_REGISTRY = {
     # Screen
     "capture_screen": screen.capture_screen,
     "read_screen_text": screen.read_screen_text,
+    "analyze_screen": screen.analyze_screen,
     # Shell
     "run_command": shell.run_command,
     # Web search
@@ -2129,6 +2240,12 @@ TOOL_REGISTRY = {
     "forget_fact": _forget_fact,
     "get_user_patterns": _get_user_patterns,
     "get_memory_stats": _get_memory_stats,
+    # Apple Notes (Phase 7: Notes Access)
+    "get_recent_notes": notes_access.get_recent_notes,
+    "read_note": notes_access.read_note,
+    "search_notes": notes_access.search_notes,
+    "create_note": notes_access.create_note,
+    "get_note_folders": notes_access.get_note_folders,
 }
 
 

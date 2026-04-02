@@ -184,7 +184,7 @@ async def run_server_mode():
 async def run_full():
     """Run API server and voice listener concurrently."""
     import uvicorn
-    from jarvis.core.server import app, brain, broadcast_voice_interaction, broadcast_voice_state, broadcast_voice_chunk, set_voice_components
+    from jarvis.core.server import app, brain, broadcast_voice_interaction, broadcast_voice_state, broadcast_voice_chunk, broadcast_overlay_state, set_voice_components
     from jarvis.voice.listener import VoiceListener
     from jarvis.voice.speaker import VoiceSpeaker
 
@@ -222,15 +222,11 @@ async def run_full():
 
         def on_wake():
             logger.info("* Wake word detected *")
+            asyncio.ensure_future(broadcast_overlay_state("listening"))
 
-        async def on_speech(text: str):
-            logger.info("User said: %s", text)
-            speaker.stop_speaking()
-            listener.set_speaking(True)
-
-            response = await brain.process(text)
-
-            await broadcast_voice_interaction(text, response)
+        async def _speak_response(response: str):
+            """Speak a response and broadcast to all UI clients."""
+            await broadcast_overlay_state("speaking")
 
             async def on_audio_ready(envelope, duration, audio_b64=None):
                 await broadcast_voice_state(
@@ -250,15 +246,91 @@ async def run_full():
                 on_audio_ready=on_audio_ready,
                 on_audio_chunk=on_audio_chunk,
             )
-
             await broadcast_voice_state(False)
-
-            if brain._shutdown_requested:
-                logger.info("Shutdown requested. Stopping listener.")
-                listener.stop()
-                return
-
+            await broadcast_overlay_state("idle")
             listener.set_speaking(False)
+
+        def _needs_async_execution(text: str) -> bool:
+            """Determine if a request should run async (immediate ack, background processing).
+
+            Returns True for complex tasks that involve planning or multi-step execution.
+            Returns False for chat, greetings, quick lookups (these respond fast enough inline).
+            """
+            from jarvis.core.brain import _select_tier, _is_chat_only
+            tier = _select_tier(text)
+            # Fast-tier chat is already quick; no need for async
+            if tier == "fast" and _is_chat_only(text):
+                return False
+            # Short conversational messages are fast enough inline
+            if len(text.split()) < 8 and tier != "deep":
+                return False
+            # Look for signals of complex work
+            complex_signals = [
+                "build", "create", "scaffold", "deploy", "write code",
+                "research", "analyze", "investigate", "compare",
+                "set up", "configure", "install", "refactor",
+                "find and", "search and", "go to", "open and",
+            ]
+            text_lower = text.lower()
+            for signal in complex_signals:
+                if signal in text_lower:
+                    return True
+            # Deep tier always gets async treatment
+            if tier == "deep":
+                return True
+            return False
+
+        async def _run_async_task(text: str):
+            """Run brain.process in background; speak result when done."""
+            try:
+                response = await brain.process(text)
+                await broadcast_voice_interaction(text, response)
+                listener.set_speaking(True)
+                await _speak_response(response)
+
+                if brain._shutdown_requested:
+                    logger.info("Shutdown requested. Stopping listener.")
+                    listener.stop()
+            except Exception as e:
+                logger.error("Async task failed: %s", e)
+                listener.set_speaking(True)
+                await _speak_response(
+                    f"I ran into an issue processing that request, sir. {str(e)[:100]}"
+                )
+
+        async def on_speech(text: str):
+            logger.info("User said: %s", text)
+            speaker.stop_speaking()
+            listener.set_speaking(True)
+
+            if _needs_async_execution(text):
+                # Complex task: acknowledge immediately, process in background
+                logger.info("Async execution: acknowledging and processing in background.")
+                await broadcast_overlay_state("speaking")
+                ack_phrases = [
+                    "On it, sir.",
+                    "Working on that now.",
+                    "Let me handle that.",
+                    "I'll get right on it, sir.",
+                ]
+                import random
+                ack = random.choice(ack_phrases)
+                await speaker.speak(ack)
+                listener.set_speaking(False)
+                await broadcast_overlay_state("thinking")
+                # Fire and forget: brain processes in background
+                asyncio.ensure_future(_run_async_task(text))
+            else:
+                # Quick request: process inline (fast enough for real-time voice)
+                await broadcast_overlay_state("thinking")
+                response = await brain.process(text)
+                await broadcast_voice_interaction(text, response)
+                await _speak_response(response)
+
+                if brain._shutdown_requested:
+                    logger.info("Shutdown requested. Stopping listener.")
+                    listener.stop()
+                    return
 
         listener.on_wake(on_wake)
         listener.on_speech(on_speech)

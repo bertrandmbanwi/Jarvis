@@ -31,6 +31,26 @@ brain = JarvisBrain()
 _speaker = None
 _listener = None
 
+# Desktop overlay WebSocket clients (lightweight, no auth required for localhost)
+_overlay_clients: List[WebSocket] = []
+_overlay_state: str = "idle"  # idle, listening, thinking, speaking
+
+
+async def broadcast_overlay_state(new_state: str):
+    """Broadcast state change to all connected desktop overlay clients."""
+    global _overlay_state
+    _overlay_state = new_state
+    if not _overlay_clients:
+        return
+    dead = []
+    for ws in _overlay_clients:
+        try:
+            await ws.send_json({"state": new_state})
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _overlay_clients.remove(ws)
+
 
 def set_voice_components(speaker, listener=None):
     """Register voice speaker/listener for WebSocket TTS triggering."""
@@ -488,18 +508,21 @@ async def security_headers(request: Request, call_next):
     return response
 
 
+_CSRF_EXEMPT_PATHS = {"/auth/login", "/auth/status", "/auth/logout", "/voice/transcribe"}
+
 @app.middleware("http")
 async def csrf_protection(request: Request, call_next):
     """Require X-JARVIS-Client header on state-changing requests from non-local origins."""
     if request.method in ("POST", "PUT", "DELETE", "PATCH"):
-        client_host = request.client.host if request.client else ""
-        if not auth.is_local_request(client_host):
-            jarvis_header = request.headers.get("x-jarvis-client", "")
-            if not jarvis_header:
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": "Missing X-JARVIS-Client header. CSRF protection."},
-                )
+        if request.url.path not in _CSRF_EXEMPT_PATHS:
+            client_host = request.client.host if request.client else ""
+            if not auth.is_local_request(client_host):
+                jarvis_header = request.headers.get("x-jarvis-client", "")
+                if not jarvis_header:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": "Missing X-JARVIS-Client header. CSRF protection."},
+                    )
     return await call_next(request)
 
 
@@ -1025,7 +1048,9 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         )
 
     allowed_types = {"audio/webm", "audio/wav", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-wav"}
-    if audio.content_type and audio.content_type not in allowed_types:
+    # Strip codec parameters (e.g. "audio/webm;codecs=opus" -> "audio/webm")
+    base_content_type = (audio.content_type or "").split(";")[0].strip()
+    if base_content_type and base_content_type not in allowed_types:
         return JSONResponse(
             status_code=400,
             content={"error": f"Unsupported audio format: {audio.content_type}. Accepted: webm, wav, ogg, mp3, mp4."},
@@ -1254,3 +1279,38 @@ async def websocket_extension(websocket: WebSocket):
         logger.error("Chrome extension WebSocket error: %s", e)
     finally:
         chrome_extension.clear_extension_ws()
+
+
+@app.websocket("/ws/overlay")
+async def websocket_overlay(websocket: WebSocket):
+    """Lightweight WebSocket for desktop overlay state (localhost only, no auth).
+
+    Sends JSON messages: {"state": "idle"|"listening"|"thinking"|"speaking"}
+    The overlay uses these to animate the particle orb.
+    """
+    client_host = websocket.client.host if websocket.client else ""
+    if not auth.is_local_request(client_host):
+        await websocket.close(code=4003, reason="Overlay only available locally")
+        return
+
+    await websocket.accept()
+    _overlay_clients.append(websocket)
+    logger.info("Desktop overlay connected. Sending current state: %s", _overlay_state)
+
+    # Send current state immediately on connect
+    try:
+        await websocket.send_json({"state": _overlay_state})
+    except Exception:
+        pass
+
+    try:
+        while True:
+            # Keep connection alive; overlay is read-only but we need to consume pings
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        logger.info("Desktop overlay disconnected.")
+    except Exception:
+        pass
+    finally:
+        if websocket in _overlay_clients:
+            _overlay_clients.remove(websocket)

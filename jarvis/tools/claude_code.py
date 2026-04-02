@@ -11,6 +11,9 @@ logger = logging.getLogger("jarvis.tools.claude_code")
 
 CLAUDE_CODE_TIMEOUT = 300
 DEFAULT_WORKING_DIR = Path.home()
+# Session file for persistent Claude Code context across interactions
+_SESSION_DIR = Path.home() / ".jarvis" / "claude-sessions"
+_SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _find_claude_binary() -> Optional[str]:
@@ -32,8 +35,18 @@ async def run_claude_code(
     task: str,
     working_directory: str = "",
     allowed_tools: str = "",
+    continue_session: bool = False,
+    session_name: str = "",
 ) -> str:
-    """Run a coding task using Claude Code CLI."""
+    """Run a coding task using Claude Code CLI.
+
+    Args:
+        task: The coding task to perform.
+        working_directory: Directory to work in.
+        allowed_tools: Comma-separated tools to allow (e.g. "Bash,Read,Write,Edit").
+        continue_session: If True, continues the previous session in this working directory.
+        session_name: Optional named session for persistent context across calls.
+    """
     claude_bin = _find_claude_binary()
     if not claude_bin:
         return (
@@ -51,7 +64,14 @@ async def run_claude_code(
         claude_bin,
         "--print",
         "--output-format", "text",
+        "--dangerously-skip-permissions",
     ]
+
+    # Session persistence: continue previous context
+    if continue_session:
+        cmd.append("--continue")
+    elif session_name.strip():
+        cmd.extend(["--resume", session_name.strip()])
 
     if allowed_tools.strip():
         for tool in allowed_tools.split(","):

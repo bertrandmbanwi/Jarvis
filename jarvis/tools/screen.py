@@ -144,6 +144,73 @@ async def _ocr_with_tesseract(image_path: str) -> Optional[str]:
         return None
 
 
+async def analyze_screen(question: Optional[str] = None) -> str:
+    """Capture the screen and analyze it with Claude's vision API.
+
+    Takes a screenshot, sends it to Claude with the optional question,
+    and returns a natural language description of what's on screen.
+    If no question is provided, gives a general summary.
+    """
+    import base64
+
+    screenshot_path = await capture_screen()
+    if screenshot_path.startswith("Error"):
+        return screenshot_path
+
+    try:
+        # Read screenshot as base64
+        image_data = Path(screenshot_path).read_bytes()
+        image_b64 = base64.b64encode(image_data).decode("utf-8")
+
+        prompt = question or "Describe what you see on the screen. Focus on the active application, any important content, and what the user appears to be working on."
+
+        # Use the LLM module to analyze the image with Claude vision
+        from jarvis.core.llm import JarvisLLM
+        llm = JarvisLLM()
+        if not llm._anthropic:
+            llm._init_anthropic()
+
+        if not llm._anthropic:
+            return "Vision analysis unavailable: Claude API not configured."
+
+        response = llm._anthropic.messages.create(
+            model=settings.CLAUDE_FAST_MODEL,
+            max_tokens=300,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": image_b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt,
+                        },
+                    ],
+                }
+            ],
+        )
+
+        if response.content and len(response.content) > 0:
+            return response.content[0].text
+        return "I captured the screen but couldn't analyze it."
+
+    except Exception as e:
+        logger.error("Screen analysis failed: %s", e)
+        return f"Screen analysis error: {e}"
+    finally:
+        try:
+            Path(screenshot_path).unlink()
+        except Exception:
+            pass
+
+
 async def get_screen_size() -> str:
     """Get the current screen resolution."""
     try:

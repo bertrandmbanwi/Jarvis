@@ -183,6 +183,11 @@ def get_system_prompt() -> str:
 
 JARVIS_SYSTEM_PROMPT = _build_system_prompt()
 
+# Speech-to-Text engine priority: moonshine > faster-whisper > whisper
+# Set STT_ENGINE to override auto-detection ("moonshine", "faster-whisper", "whisper")
+STT_ENGINE = os.getenv("STT_ENGINE", "auto")
+MOONSHINE_MODEL = os.getenv("MOONSHINE_MODEL", "moonshine/base")
+
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small.en")
 WHISPER_LANGUAGE = "en"
 WHISPER_USE_LOCATION_HINTS = os.getenv("WHISPER_USE_LOCATION_HINTS", "true").lower() in ("true", "1", "yes")
@@ -213,6 +218,27 @@ UI_PORT = int(os.getenv("UI_PORT", "3741"))
 
 CHROMA_PERSIST_DIR = str(MEMORY_DIR / "chroma")
 MEMORY_COLLECTION = "jarvis_conversations"
+
+# Template system
+TEMPLATES_DIR = str(JARVIS_HOME / "templates" / "prompts")
+
+# SQLite memory
+SQLITE_MEMORY_DB = str(DATA_DIR / "jarvis_memory.db")
+
+# Dispatch registry
+DISPATCH_DB = str(DATA_DIR / "jarvis_dispatch.db")
+
+# A/B testing experiments
+EXPERIMENTS_DB = str(DATA_DIR / "jarvis_experiments.db")
+
+# QA verification
+QA_MAX_RETRIES = int(os.getenv("QA_MAX_RETRIES", "3"))
+QA_VERIFY_TIER = os.getenv("QA_VERIFY_TIER", "fast")
+
+# Conversation monitor
+MONITOR_MAX_VOICE_WORDS = int(os.getenv("MONITOR_MAX_VOICE_WORDS", "100"))
+MONITOR_MAX_VOICE_SENTENCES = int(os.getenv("MONITOR_MAX_VOICE_SENTENCES", "4"))
+
 MAX_CONTEXT_MESSAGES = 20
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

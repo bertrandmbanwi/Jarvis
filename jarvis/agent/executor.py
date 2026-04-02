@@ -36,6 +36,7 @@ from jarvis.core.hardening import (
 )
 from jarvis.core.cache import tool_cache, invalidate_on_mutation
 from jarvis.core.perf import perf_tracker
+from jarvis.agent.qa_agent import QAAgent, QAResult
 
 logger = logging.getLogger("jarvis.agent")
 
@@ -46,6 +47,8 @@ class AgentExecutor:
     def __init__(self, llm: Optional[JarvisLLM] = None):
         self.llm = llm or JarvisLLM()
         self._on_tool_executed = None
+        self._qa_agent = QAAgent()
+        self._qa_enabled = True
 
     async def execute(
         self,
@@ -71,6 +74,40 @@ class AgentExecutor:
                 len(tool_calls),
                 [tc["name"] for tc in tool_calls],
             )
+
+            # QA verification for tool-based responses
+            if self._qa_enabled and tool_calls:
+                try:
+                    qa_result = await self._qa_agent.verify(
+                        task_prompt=user_input,
+                        task_result=response_text,
+                        llm=self.llm,
+                        tier="fast",
+                    )
+                    if not qa_result.passed:
+                        logger.info(
+                            "QA verification failed (attempt %d): %s",
+                            qa_result.attempt,
+                            qa_result.issues,
+                        )
+                        # Single retry with QA feedback
+                        retry_prompt = (
+                            f"Your previous response had quality issues:\n"
+                            f"Issues: {', '.join(qa_result.issues)}\n\n"
+                            f"Original request: {user_input}\n\n"
+                            f"Please provide a corrected response addressing these issues."
+                        )
+                        response_text, _ = await self.llm.chat_with_tools(
+                            user_message=retry_prompt,
+                            tools=TOOL_SCHEMAS,
+                            tool_executor=self._execute_tool,
+                            conversation_history=conversation_history,
+                            tier=tier,
+                            max_iterations=5,
+                        )
+                        logger.info("QA retry completed.")
+                except Exception as e:
+                    logger.debug("QA verification skipped (non-critical): %s", e)
 
         return response_text
 

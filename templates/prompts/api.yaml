@@ -1,0 +1,99 @@
+task_type: api
+version: v1
+description: "Build REST or GraphQL APIs"
+created_at: "2026-03-31"
+success_rate: null
+sections:
+  - heading: "API Specification"
+    content: |
+      <api_context>
+      API Name: {api_name}
+      Framework: {framework}
+      Base path: {base_path}
+
+      Build this API to be production-ready with proper security, validation, and error handling.
+      </api_context>
+  - heading: "Endpoints to Implement"
+    content: |
+      <endpoints>
+      Implement these endpoints:
+      {endpoints_list}
+
+      For each endpoint, define:
+      - HTTP method (GET, POST, PUT, DELETE, PATCH)
+      - Path (e.g., /api/v1/users/:id)
+      - Request parameters/body schema with types and validation rules
+      - Response schema for success cases (with HTTP 200, 201, etc.)
+      - Response schema for error cases (400, 401, 404, 500, etc.)
+      - Authentication requirements (API key, bearer token, OAuth, etc.)
+      - Rate limiting rules if applicable
+      </endpoints>
+  - heading: "Data Model and Storage"
+    content: |
+      <data_model>
+      Database and data design:
+      - Schema description: {schema_description}
+      - Entity relationships: {relationships}
+      - Database indexes needed: {indexes}
+      - Constraints and validation rules
+      - Migration strategy if upgrading existing schema
+      </data_model>
+  - heading: "API Architecture"
+    content: |
+      <architecture>
+      Structure your API with this flow for each request:
+
+      1. **Request Validation**: Parse and validate all inputs immediately; reject invalid data with 400 status.
+      2. **Authentication**: Verify the requester is authenticated; return 401 if not.
+      3. **Authorization**: Check if the authenticated user has permission for this action; return 403 if not.
+      4. **Business Logic**: Process the request using your business logic and services.
+      5. **Database Operations**: Perform reads/writes; handle constraints and conflicts.
+      6. **Response Formatting**: Return data in the correct format (JSON, XML, etc.).
+      7. **Error Handling**: Return appropriate error responses with meaningful messages.
+      8. **Logging**: Log all requests, errors, and important events for debugging and monitoring.
+      </architecture>
+  - heading: "Implementation Steps"
+    content: |
+      <implementation>
+      Build in this order:
+
+      1. **Project Setup**: Initialize project, install dependencies, configure framework.
+      2. **Database Configuration**: Set up database connection, configure migrations.
+      3. **Models and Schemas**: Define data models, validation schemas, and database models.
+      4. **Endpoint Handlers**: Implement each endpoint handler with full validation.
+      5. **Authentication Middleware**: Add middleware for authentication and token validation.
+      6. **Error Handling**: Implement consistent error response format and handling.
+      7. **Input Validation**: Add validation for all request parameters and body data.
+      8. **Rate Limiting**: Implement rate limiting if specified.
+      9. **Documentation**: Generate API documentation (OpenAPI/Swagger or equivalent).
+      10. **Testing**: Write tests for all endpoints before considering the API complete.
+      </implementation>
+  - heading: "Testing Strategy"
+    content: |
+      <testing>
+      Test comprehensively at multiple levels:
+
+      1. **Unit Tests**: Test business logic, validators, and utility functions in isolation.
+      2. **Integration Tests**: Test endpoint handlers with mocked or real database.
+      3. **Success Paths**: Test all happy-path scenarios for each endpoint.
+      4. **Error Cases**: Test invalid inputs, missing fields, and error conditions.
+      5. **Authentication**: Test authenticated vs. unauthenticated requests; verify tokens are validated.
+      6. **Authorization**: Test users can only access/modify their own data or permitted resources.
+      7. **Performance**: Load test to ensure API meets performance requirements.
+      8. **Contract Tests**: Validate responses match the documented schema exactly.
+      </testing>
+  - heading: "Acceptance Criteria"
+    content: |
+      <acceptance_criteria>
+      All of the following must be true:
+      - [ ] All endpoints are implemented exactly per specification
+      - [ ] Request/response schemas match the specification
+      - [ ] Input validation rejects all invalid data appropriately
+      - [ ] Authentication and authorization work correctly
+      - [ ] All tests pass with 100% success rate
+      - [ ] No console errors or warnings appear
+      - [ ] API documentation is complete and accurate
+      - [ ] Error responses include meaningful, user-friendly messages
+      - [ ] Database migrations execute correctly
+      - [ ] No sensitive data (passwords, tokens) logged or exposed
+      </acceptance_criteria>

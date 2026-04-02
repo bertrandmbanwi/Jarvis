@@ -22,6 +22,9 @@ from jarvis.agent.coordinator import AgentCoordinator, AgentType
 from jarvis.core.proactive import ProactiveEngine
 from jarvis.core.hardening import sanitize_user_input
 from jarvis.core.perf import perf_tracker, estimate_tokens, estimate_request_cost
+from jarvis.core.dispatch_registry import DispatchRegistry
+from jarvis.core.monitor import ConversationMonitor
+from jarvis.agent.suggestions import suggest_followup
 
 CONVERSATION_FILE = settings.DATA_DIR / "conversation_history.json"
 MAX_CONVERSATION_TURNS = 100
@@ -51,12 +54,18 @@ _CHAT_ONLY_PATTERNS = [
     r"^(?:bye|goodbye|see you(?: later| soon| around| tomorrow)?|later|good night|that's it|that's all|i'm done|we're done)[\s!.,]*$",
     r"^(?:that's it for now|that's all for now|nothing else|no more questions)[\s!.,]*$",
     r"^(?:ok|okay|alright|sure|got it|cool|nice|great|awesome|perfect|right)[\s!.,]*$",
-    r"^(?:how are you|what's up|you good)[\s!?,]*$",
+    r"^(?:how are you(?: today| doing)?|what's up|you good|how'?s it going)[\s!?,]*$",
     r"^(?:who are you|what are you|what is your name|what's your name)[\s!?,]*$",
     r"^(?:tell me a joke|say something funny|make me laugh)[\s!?,]*$",
     r"^(?:have a good (?:one|day|night|evening)|take care|talk later|peace)[\s!.,]*$",
     r"^(?:you're welcome|no problem|no worries|all good|it's fine)[\s!.,]*$",
     r"^(?:yes|no|yeah|yep|nope|nah)[\s!.,]*$",
+    # Conversational questions about JARVIS or general small talk
+    r"^(?:what are you doing|what do you do|what can you do)[\s!?,]*$",
+    r"^(?:my question is,?\s*)?how are you[\w\s]*[\s!?,]*$",
+    r"^(?:are you (?:there|awake|ready|listening|alive|okay|ok))[\s!?,]*$",
+    r"^(?:what'?s? (?:your|the) (?:plan|deal|status|update))[\s!?,]*$",
+    r"^(?:never\s*mind|forget it|skip it|doesn'?t matter|don'?t worry)[\s!.,]*$",
 ]
 
 
@@ -122,6 +131,16 @@ def _select_tier(text: str) -> str:
     if _is_chat_only(text):
         return "fast"
 
+    # Short messages with no action verbs and no question words that imply lookup
+    # are likely conversational; use fast tier to save cost
+    _LOOKUP_WORDS = {"weather", "time", "news", "price", "stock", "email", "note", "calendar", "remind"}
+    if len(text_lower) < 60:
+        has_lookup = any(w in text_lower for w in _LOOKUP_WORDS)
+        if not has_lookup:
+            from jarvis.agent.planner import _count_action_verbs
+            if _count_action_verbs(text_lower) == 0:
+                return "fast"
+
     deep_signals = 0
     matched_keywords = []
     for keyword in DEEP_KEYWORDS:
@@ -185,11 +204,14 @@ class JarvisBrain:
         self.learning = LearningLoop()
         self.coordinator = AgentCoordinator()
         self.proactive = ProactiveEngine()
+        self.dispatch = DispatchRegistry()
+        self.monitor = ConversationMonitor()
         self.conversation: list[ConversationTurn] = []
         self._initialized = False
         self._shutdown_requested = False
         self._conversation_file = CONVERSATION_FILE
         self._on_plan_progress = None  # Callback for broadcasting plan progress via WebSocket
+        self._last_plan = None
 
     async def initialize(self) -> bool:
         """Initialize and check all dependencies."""
@@ -220,6 +242,12 @@ class JarvisBrain:
         set_active_coordinator(self.coordinator)
 
         self.planner._get_learning_context = self.learning.get_planner_context
+
+        # Wire dispatch registry context into system prompt awareness
+        logger.info(
+            "Dispatch registry initialized (%d active dispatches).",
+            len(self.dispatch.get_active()),
+        )
 
         self.learning.initialize()
         self.learning.backfill_from_plan_files()
@@ -286,6 +314,14 @@ class JarvisBrain:
             ConversationTurn(role="assistant", content=response, tier_used=tier)
         )
 
+        # Monitor response quality
+        try:
+            quality_issues = self.monitor.analyze_response(user_input, response)
+            if quality_issues:
+                logger.info("Quality issues detected: %s", quality_issues)
+        except Exception as e:
+            logger.debug("Monitor analysis failed (non-critical): %s", e)
+
         self.memory.add(
             text=f"User: {user_input}\nJARVIS: {response}",
             metadata={
@@ -300,6 +336,28 @@ class JarvisBrain:
             assistant_response=response,
             tier=tier,
         )
+
+        # Track experiment outcomes and suggestions for completed plans
+        if hasattr(self, '_last_plan') and self._last_plan:
+            try:
+                self.planner.record_experiment_outcome(self._last_plan, True)
+            except Exception as e:
+                logger.debug("Experiment tracking failed: %s", e)
+
+            # Proactive follow-up suggestions: only after plan execution
+            try:
+                suggestion = suggest_followup(
+                    task_type="build",
+                    task_description=user_input[:200],
+                    working_dir=str(settings.JARVIS_HOME),
+                )
+                if suggestion:
+                    response += f"\n\nBy the way, sir: {suggestion.text}"
+                    logger.info("Follow-up suggestion appended: %s", suggestion.action_type)
+            except Exception as e:
+                logger.debug("Suggestion generation failed (non-critical): %s", e)
+
+            self._last_plan = None
 
         self._save_conversation()
         elapsed = time.time() - start_time
@@ -515,6 +573,23 @@ class JarvisBrain:
                         })
 
         self.planner.tracker.finalize_plan()
+
+        # Store plan reference for experiment tracking
+        self._last_plan = plan
+
+        # Register in dispatch registry
+        try:
+            dispatch_id = self.dispatch.register(
+                project_name=plan.goal_summary[:100],
+                original_prompt=user_input[:500],
+            )
+            self.dispatch.update_status(
+                dispatch_id,
+                status="completed" if plan.failed_count == 0 else "partial",
+                summary=f"{plan.completed_count}/{plan.total} subtasks completed",
+            )
+        except Exception as e:
+            logger.debug("Dispatch registration failed (non-critical): %s", e)
 
         try:
             self.learning.record_plan_outcome(plan.to_dict())

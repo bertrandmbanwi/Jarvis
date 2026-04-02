@@ -26,19 +26,27 @@ except ImportError:
     logger.warning("OpenWakeWord not installed. Wake word detection disabled.")
 
 try:
+    from moonshine_onnx import MoonshineOnnxModel
+    HAS_MOONSHINE = True
+except ImportError:
+    HAS_MOONSHINE = False
+    logger.info("Moonshine ONNX not installed. Trying faster-whisper as fallback.")
+
+try:
     from faster_whisper import WhisperModel
     HAS_WHISPER = True
 except ImportError:
     HAS_WHISPER = False
-    logger.warning("faster-whisper not installed.")
+    if not HAS_MOONSHINE:
+        logger.warning("faster-whisper not installed.")
 
-if not HAS_WHISPER:
+if not HAS_WHISPER and not HAS_MOONSHINE:
     try:
         import whisper
         HAS_WHISPER_ORIGINAL = True
     except ImportError:
         HAS_WHISPER_ORIGINAL = False
-        logger.warning("No whisper library found. STT disabled.")
+        logger.warning("No STT library found. Speech-to-text disabled.")
     else:
         HAS_WHISPER_ORIGINAL = True
 else:
@@ -53,6 +61,8 @@ class VoiceListener:
         self._stream: Optional[object] = None
         self._wake_model: Optional[object] = None
         self._whisper_model: Optional[object] = None
+        self._moonshine_model: Optional[object] = None
+        self._stt_engine: str = "none"  # "moonshine", "faster-whisper", "whisper", "none"
         self._is_listening = False
         self._is_speaking = False
         self._in_followup_window = False
@@ -98,24 +108,44 @@ class VoiceListener:
         else:
             logger.info("Wake word not available. Use keyboard to activate.")
 
-        if HAS_WHISPER:
+        # STT engine priority: Moonshine > faster-whisper > original whisper
+        stt_initialized = False
+
+        if HAS_MOONSHINE:
+            try:
+                moonshine_model_name = getattr(settings, "MOONSHINE_MODEL", "moonshine/base")
+                self._moonshine_model = MoonshineOnnxModel(model_name=moonshine_model_name)
+                self._stt_engine = "moonshine"
+                stt_initialized = True
+                logger.info("Moonshine ONNX initialized (model: %s). Lower hallucination rate than Whisper.", moonshine_model_name)
+            except Exception as e:
+                logger.warning("Moonshine init failed, falling back to faster-whisper: %s", e)
+
+        if not stt_initialized and HAS_WHISPER:
             try:
                 self._whisper_model = WhisperModel(
                     settings.WHISPER_MODEL,
                     device="auto",
                     compute_type="int8",
                 )
+                self._stt_engine = "faster-whisper"
+                stt_initialized = True
                 logger.info("faster-whisper initialized (model: %s)", settings.WHISPER_MODEL)
             except Exception as e:
-                logger.error("faster-whisper init failed: %s", e)
-                success = False
-        elif HAS_WHISPER_ORIGINAL:
+                logger.warning("faster-whisper init failed: %s", e)
+
+        if not stt_initialized and HAS_WHISPER_ORIGINAL:
             try:
                 self._whisper_model = whisper.load_model(settings.WHISPER_MODEL)
+                self._stt_engine = "whisper"
+                stt_initialized = True
                 logger.info("Whisper (original) initialized (model: %s)", settings.WHISPER_MODEL)
             except Exception as e:
                 logger.error("Whisper init failed: %s", e)
-                success = False
+
+        if not stt_initialized:
+            logger.error("No STT engine available. Voice transcription disabled.")
+            success = False
 
         return success
 
@@ -394,53 +424,100 @@ class VoiceListener:
         return combined
 
     def _transcribe(self, audio: np.ndarray) -> str:
-        """Transcribe audio to text using Whisper with optional location hints."""
-        if self._whisper_model is None:
-            logger.error("No STT model available.")
+        """Transcribe audio to text using the active STT engine."""
+        if self._stt_engine == "none":
+            logger.error("No STT engine available.")
             return ""
 
         try:
             audio_float = audio.astype(np.float32) / 32768.0
 
-            if HAS_WHISPER:
-                initial_prompt, hotwords = self._get_transcription_hints()
-
-                transcribe_kwargs = {
-                    "language": settings.WHISPER_LANGUAGE,
-                    "beam_size": settings.WHISPER_BEAM_SIZE,
-                    "vad_filter": False,
-                }
-
-                if initial_prompt:
-                    transcribe_kwargs["initial_prompt"] = initial_prompt
-                    logger.debug("Using initial_prompt: %s", initial_prompt)
-
-                if hotwords:
-                    transcribe_kwargs["hotwords"] = " ".join(hotwords)
-                    logger.debug("Using hotwords: %s", ", ".join(hotwords))
-
-                segments, info = self._whisper_model.transcribe(audio_float, **transcribe_kwargs)
-                parts = []
-                for segment in segments:
-                    seg_text = segment.text if isinstance(segment.text, str) else " ".join(segment.text)
-                    parts.append(seg_text)
-                text = " ".join(parts)
-
-            elif HAS_WHISPER_ORIGINAL:
-                result = self._whisper_model.transcribe(
-                    audio_float,
-                    language=settings.WHISPER_LANGUAGE,
-                    fp16=False,
-                )
-                text = result.get("text", "")
+            if self._stt_engine == "moonshine":
+                return self._transcribe_moonshine(audio_float)
+            elif self._stt_engine == "faster-whisper":
+                return self._transcribe_faster_whisper(audio_float)
+            elif self._stt_engine == "whisper":
+                return self._transcribe_whisper_original(audio_float)
             else:
                 return ""
 
-            return text.strip()
-
         except Exception as e:
-            logger.error("Transcription error: %s", e)
+            logger.error("Transcription error (%s): %s", self._stt_engine, e)
             return ""
+
+    def _transcribe_moonshine(self, audio_float: np.ndarray) -> str:
+        """Transcribe using Moonshine ONNX (low hallucination, real-time optimized)."""
+        try:
+            # Moonshine expects a 2D array with shape (1, num_samples) - batch dimension required
+            if audio_float.ndim == 1:
+                audio_input = audio_float[np.newaxis, :]
+            else:
+                audio_input = audio_float
+            result = self._moonshine_model.generate(audio_input)
+            if isinstance(result, list):
+                text = " ".join(str(r) for r in result)
+            else:
+                text = str(result)
+            return text.strip()
+        except Exception as e:
+            logger.error("Moonshine transcription error: %s", e)
+            # Fall back to faster-whisper if available
+            if self._whisper_model is not None:
+                logger.info("Falling back to faster-whisper for this transcription.")
+                return self._transcribe_faster_whisper(audio_float)
+            # Last resort: try loading faster-whisper on-demand
+            if HAS_WHISPER:
+                try:
+                    logger.info("Loading faster-whisper as emergency fallback...")
+                    from faster_whisper import WhisperModel
+                    self._whisper_model = WhisperModel(
+                        settings.WHISPER_MODEL, device="auto", compute_type="int8",
+                    )
+                    return self._transcribe_faster_whisper(audio_float)
+                except Exception as e2:
+                    logger.error("Emergency whisper fallback also failed: %s", e2)
+            return ""
+
+    def _transcribe_faster_whisper(self, audio_float: np.ndarray) -> str:
+        """Transcribe using faster-whisper with hallucination mitigation."""
+        initial_prompt, hotwords = self._get_transcription_hints()
+
+        transcribe_kwargs = {
+            "language": settings.WHISPER_LANGUAGE,
+            "beam_size": settings.WHISPER_BEAM_SIZE,
+            "vad_filter": False,
+            # Prevent hallucination loops: do not feed prior text back
+            "condition_on_previous_text": False,
+        }
+
+        if initial_prompt:
+            transcribe_kwargs["initial_prompt"] = initial_prompt
+
+        if hotwords:
+            transcribe_kwargs["hotwords"] = " ".join(hotwords)
+
+        segments, info = self._whisper_model.transcribe(audio_float, **transcribe_kwargs)
+        parts = []
+        for segment in segments:
+            # Skip segments where Whisper is uncertain there was speech
+            if hasattr(segment, "no_speech_prob") and segment.no_speech_prob > 0.6:
+                logger.debug(
+                    "Skipping low-confidence segment (no_speech_prob=%.2f): '%s'",
+                    segment.no_speech_prob, segment.text,
+                )
+                continue
+            seg_text = segment.text if isinstance(segment.text, str) else " ".join(segment.text)
+            parts.append(seg_text)
+        return " ".join(parts).strip()
+
+    def _transcribe_whisper_original(self, audio_float: np.ndarray) -> str:
+        """Transcribe using original OpenAI Whisper (fallback)."""
+        result = self._whisper_model.transcribe(
+            audio_float,
+            language=settings.WHISPER_LANGUAGE,
+            fp16=False,
+        )
+        return result.get("text", "").strip()
 
     def _is_meaningful_speech(self, text: str) -> bool:
         """Filter out known Whisper hallucinations on silence/noise. Errs on side of inclusion."""
@@ -464,6 +541,20 @@ class VoiceListener:
 
         import re
         phrases = [p.strip().rstrip(".!?,") for p in re.split(r'[.!?,]+', cleaned) if p.strip()]
+
+        # Detect repetitive hallucinations (same phrase repeated 3+ times)
+        if len(phrases) >= 3:
+            from collections import Counter
+            phrase_counts = Counter(phrases)
+            most_common_phrase, most_common_count = phrase_counts.most_common(1)[0]
+            # If one phrase makes up 75%+ of all phrases, it's a hallucination loop
+            if most_common_count >= 3 and most_common_count / len(phrases) >= 0.75:
+                logger.info(
+                    "Filtered repetitive hallucination ('%s' x%d): '%s'",
+                    most_common_phrase, most_common_count, text,
+                )
+                return False
+
         if len(phrases) >= 4:
             filler_words = {
                 "okay", "ok", "all right", "alright", "right", "um", "uh",

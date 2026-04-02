@@ -25,6 +25,8 @@ from typing import Optional
 
 from jarvis.config import settings
 from jarvis.agent.task_tracker import TaskPlan, TaskTracker
+from jarvis.agent.ab_testing import ABTester
+from jarvis.agent.planning_session import detect_planning_mode, PlanningSession
 
 logger = logging.getLogger("jarvis.agent.planner")
 
@@ -167,6 +169,13 @@ class TaskPlanner:
         self.llm = llm
         self.tracker = TaskTracker()
         self._get_learning_context = None
+        self._ab_tester = None
+        try:
+            self._ab_tester = ABTester()
+            logger.info("A/B testing framework initialized for planner.")
+        except Exception as e:
+            logger.warning("A/B testing init failed (non-critical): %s", e)
+        self._active_planning_session = None
 
     async def should_decompose(self, user_input: str) -> bool:
         """Decide whether a request needs task decomposition."""
@@ -216,6 +225,22 @@ class TaskPlanner:
                 except Exception as e:
                     logger.debug("Could not get learning context: %s", e)
 
+            # A/B testing: select template if available
+            experiment_id = None
+            if self._ab_tester:
+                try:
+                    template = self._ab_tester.select_template("build")
+                    if template:
+                        template_context = "\n\nTemplate guidance for this task:\n"
+                        for section in template.sections:
+                            template_context += f"\n## {section.get('heading', 'Section')}\n{section.get('content', '')}\n"
+                        system_prompt = system_prompt + template_context
+                        experiment_id = self._ab_tester.record_experiment(
+                            "build", template.version
+                        )
+                except Exception as e:
+                    logger.debug("Template selection failed (non-critical): %s", e)
+
             response = await self.llm.chat(
                 user_message=user_input,
                 conversation_history=conversation_history,
@@ -253,6 +278,9 @@ class TaskPlanner:
                 goal_summary=goal_summary,
                 subtasks=subtasks,
             )
+
+            if experiment_id:
+                plan._experiment_id = experiment_id
 
             logger.info(
                 "Plan created: '%s' with %d subtasks.",
@@ -295,3 +323,26 @@ class TaskPlanner:
     def get_plan_status(self) -> str:
         """Get human-readable status of the active plan."""
         return self.tracker.get_plan_status()
+
+    async def check_planning_mode(self, user_input: str) -> Optional[PlanningSession]:
+        """Check if a user input should trigger interactive planning mode."""
+        try:
+            mode_result = await detect_planning_mode(user_input, self.llm)
+            if mode_result and mode_result.get("should_plan"):
+                session = PlanningSession(
+                    task_type=mode_result.get("task_type", "general"),
+                    original_request=user_input,
+                )
+                self._active_planning_session = session
+                return session
+        except Exception as e:
+            logger.debug("Planning mode detection failed: %s", e)
+        return None
+
+    def record_experiment_outcome(self, plan, success: bool):
+        """Record the outcome of an A/B tested plan."""
+        if self._ab_tester and hasattr(plan, '_experiment_id') and plan._experiment_id:
+            try:
+                self._ab_tester.record_result(plan._experiment_id, success)
+            except Exception as e:
+                logger.debug("A/B result recording failed: %s", e)

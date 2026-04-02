@@ -1,0 +1,58 @@
+task_type: build
+version: v1
+description: "Build a new project or feature from scratch"
+created_at: "2026-03-31"
+success_rate: null
+sections:
+  - heading: "Context"
+    content: |
+      <task_context>
+      You are building a new project or feature from the ground up.
+
+      Project: {project_name}
+      Location: {working_dir}
+      Tech stack: {tech_stack}
+      </task_context>
+  - heading: "Requirements"
+    content: |
+      <requirements>
+      Build with these features and requirements:
+      {sections}
+
+      Design guidelines:
+      {design_notes}
+      </requirements>
+  - heading: "Constraints and Quality Standards"
+    content: |
+      <constraints>
+      - Mobile responsive (tested at 375px, 768px, 1024px breakpoints)
+      - Modern, clean aesthetic
+      - Semantic HTML with accessibility (WCAG 2.1 AA) in mind
+      - No console errors or warnings
+      - No TODO or placeholder content remains
+      - Clean, readable code with meaningful variable/function names
+      </constraints>
+  - heading: "Implementation Approach"
+    content: |
+      <approach>
+      Think step by step about these phases in order:
+
+      1. **Project Structure**: Set up the project structure, initialize dependencies, configure build tools, and establish the folder hierarchy.
+      2. **Core Layout**: Build the foundational layout and navigation system.
+      3. **Feature Implementation**: Implement each feature or section systematically.
+      4. **Styling and Polish**: Add CSS, ensure responsiveness across all breakpoints, fix alignment and spacing issues.
+      5. **Cross-browser Testing**: Test functionality and appearance across different viewports and browsers.
+      6. **Final Review**: Scan for any remaining issues, console warnings, or incomplete code.
+      </approach>
+  - heading: "Acceptance Criteria"
+    content: |
+      <acceptance_criteria>
+      All of the following must be true:
+      - [ ] All listed features and sections are fully implemented
+      - [ ] No console errors or warnings appear
+      - [ ] Mobile responsive design works at all specified breakpoints (375px, 768px, 1024px)
+      - [ ] All imports resolve without errors
+      - [ ] No TODO comments, placeholder text, or unfinished code remains
+      - [ ] Code is clean, readable, and follows naming conventions
+      - [ ] The application runs without crashes
+      </acceptance_criteria>

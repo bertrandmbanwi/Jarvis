@@ -1,0 +1,66 @@
+task_type: fix
+version: v1
+description: "Debug and fix bugs in existing code"
+created_at: "2026-03-31"
+success_rate: null
+sections:
+  - heading: "Bug Report"
+    content: |
+      <bug_context>
+      Bug description: {bug_description}
+      Affected file(s): {affected_file}
+
+      Steps to reproduce:
+      {reproduction_steps}
+
+      Expected behavior: {expected_behavior}
+      Actual behavior: {actual_behavior}
+      </bug_context>
+  - heading: "Root Cause Analysis"
+    content: |
+      <analysis>
+      Think step by step to find the root cause:
+
+      1. **Code Review**: Examine the affected code section carefully, tracing execution flow.
+      2. **Logic Check**: Identify any logical errors, boundary conditions, or off-by-one mistakes.
+      3. **Edge Cases**: Determine which edge cases or unusual inputs are not being handled correctly.
+      4. **Error Context**: Review error messages, stack traces, and debug output.
+      5. **Data Flow**: Trace how data moves through the problem area and where it diverges from expected behavior.
+
+      Document your findings clearly before implementing the fix.
+      </analysis>
+  - heading: "Fix Implementation"
+    content: |
+      <solution>
+      Implement the fix following these principles:
+
+      - Make minimal, surgical changes targeting only the specific bug
+      - Do not refactor unrelated code at this time
+      - Add defensive checks if the bug involves edge cases or boundary conditions
+      - Include comments explaining the root cause and fix rationale
+      - Consider both performance and security implications
+      - Ensure the fix does not introduce new issues in related code
+      </solution>
+  - heading: "Testing Strategy"
+    content: |
+      <testing>
+      Verify your fix is correct by:
+
+      1. **Original Issue**: Confirm the fix resolves the reported bug exactly as described.
+      2. **Edge Cases**: Test boundary conditions, empty inputs, null values, and extreme values.
+      3. **Regression Testing**: Run the existing test suite to ensure no regressions.
+      4. **New Test**: Create a new test case that specifically covers this bug scenario.
+      5. **Multiple Scenarios**: Test with different input combinations to ensure robustness.
+      </testing>
+  - heading: "Acceptance Criteria"
+    content: |
+      <acceptance_criteria>
+      All of the following must be true:
+      - [ ] The original bug is completely fixed and no longer reproducible
+      - [ ] No regressions in existing functionality (all prior tests still pass)
+      - [ ] A new test case is added covering this specific bug scenario
+      - [ ] All existing tests pass without modification
+      - [ ] Code follows the project style guide and naming conventions
+      - [ ] The fix handles edge cases appropriately
+      - [ ] Root cause is documented in code comments
+      </acceptance_criteria>
