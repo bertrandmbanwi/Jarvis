@@ -226,7 +226,7 @@ async def run_full():
 
         async def _speak_response(response: str):
             """Speak a response and broadcast to all UI clients."""
-            await broadcast_overlay_state("speaking")
+            await broadcast_overlay_state("speaking", text=response)
 
             async def on_audio_ready(envelope, duration, audio_b64=None):
                 await broadcast_voice_state(
@@ -306,7 +306,7 @@ async def run_full():
             if _needs_async_execution(text):
                 # Complex task: acknowledge immediately, process in background
                 logger.info("Async execution: acknowledging and processing in background.")
-                await broadcast_overlay_state("speaking")
+                await broadcast_overlay_state("speaking", user_text=text)
                 ack_phrases = [
                     "On it, sir.",
                     "Working on that now.",
@@ -317,12 +317,12 @@ async def run_full():
                 ack = random.choice(ack_phrases)
                 await speaker.speak(ack)
                 listener.set_speaking(False)
-                await broadcast_overlay_state("thinking")
+                await broadcast_overlay_state("thinking", user_text=text)
                 # Fire and forget: brain processes in background
                 asyncio.ensure_future(_run_async_task(text))
             else:
                 # Quick request: process inline (fast enough for real-time voice)
-                await broadcast_overlay_state("thinking")
+                await broadcast_overlay_state("thinking", user_text=text)
                 response = await brain.process(text)
                 await broadcast_voice_interaction(text, response)
                 await _speak_response(response)

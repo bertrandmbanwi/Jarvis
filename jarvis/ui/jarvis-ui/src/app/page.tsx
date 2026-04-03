@@ -20,6 +20,7 @@ export default function Page() {
   const authState = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>("cinematic");
   const [speakingLinger, setSpeakingLinger] = useState(false);
+  const [isBrowserMicRecording, setIsBrowserMicRecording] = useState(false);
   const lingerTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
@@ -77,14 +78,23 @@ export default function Page() {
     };
   }, []);
 
+  const handleBrowserMicState = useCallback(
+    (recording: boolean) => {
+      setIsBrowserMicRecording(recording);
+      sendBrowserMicState(recording);
+    },
+    [sendBrowserMicState]
+  );
+
   const orbState: OrbState = useMemo(() => {
     if (connectionStatus === "error") return "error";
     if (isProcessing) return "thinking";
     if (isStreaming) return "speaking";
     if (isVoiceSpeaking) return "speaking";
     if (speakingLinger) return "speaking";
+    if (isBrowserMicRecording) return "listening";
     return "idle";
-  }, [connectionStatus, isProcessing, isStreaming, isVoiceSpeaking, speakingLinger]);
+  }, [connectionStatus, isProcessing, isStreaming, isVoiceSpeaking, speakingLinger, isBrowserMicRecording]);
 
   const handleChatSubmit = useCallback(
     (message: string) => {
@@ -132,7 +142,7 @@ export default function Page() {
           currentAmplitude={currentAmplitude}
           onSendMessage={handleChatSubmit}
           disabled={connectionStatus !== "connected"}
-          onBrowserMicState={sendBrowserMicState}
+          onBrowserMicState={handleBrowserMicState}
           authToken={authState.token}
         />
       </div>
@@ -144,7 +154,7 @@ export default function Page() {
           onSendMessage={handleChatSubmit}
           onClearConversation={clearMessages}
           disabled={connectionStatus !== "connected"}
-          onBrowserMicState={sendBrowserMicState}
+          onBrowserMicState={handleBrowserMicState}
           authToken={authState.token}
         />
       )}
