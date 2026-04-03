@@ -1,9 +1,14 @@
 // Background service worker: WebSocket connection to JARVIS server
+// Uses chrome.alarms to survive MV3 service worker termination.
+
 const DEFAULT_CONFIG = {
   serverUrl: "ws://localhost:8741/ws/extension",
+  httpBaseUrl: "http://localhost:8741",
   reconnectIntervalMs: 3000,
   maxReconnectAttempts: 50,
   pingIntervalMs: 25000,
+  alarmName: "jarvis-keepalive",
+  alarmPeriodMinutes: 0.4, // ~24 seconds (minimum Chrome allows is ~0.33)
 };
 
 let ws = null;
@@ -12,6 +17,8 @@ let reconnectAttempts = 0;
 let reconnectTimer = null;
 let pingTimer = null;
 let isConnected = false;
+
+// --- Config ---
 
 async function loadConfig() {
   try {
@@ -23,6 +30,8 @@ async function loadConfig() {
     console.warn("[JARVIS] Failed to load config from storage:", e);
   }
 }
+
+// --- Connection ---
 
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -43,6 +52,10 @@ function connect() {
     console.log("[JARVIS] Connected to JARVIS server.");
     isConnected = true;
     reconnectAttempts = 0;
+
+    // Persist connected state so the alarm handler knows to maintain the connection
+    chrome.storage.local.set({ jarvisConnected: true });
+
     updateBadge("on");
 
     ws.send(JSON.stringify({
@@ -66,7 +79,9 @@ function connect() {
   ws.onclose = (event) => {
     console.log(`[JARVIS] Disconnected (code: ${event.code}, reason: ${event.reason})`);
     isConnected = false;
+    ws = null;
     stopPingInterval();
+    chrome.storage.local.set({ jarvisConnected: false });
     updateBadge("off");
     scheduleReconnect();
   };
@@ -87,14 +102,16 @@ function disconnect() {
     ws = null;
   }
   isConnected = false;
+  chrome.storage.local.set({ jarvisConnected: false, jarvisUserDisconnected: true });
   updateBadge("off");
 }
 
 function scheduleReconnect() {
   if (reconnectTimer) return;
   if (reconnectAttempts >= config.maxReconnectAttempts) {
-    console.warn("[JARVIS] Max reconnect attempts reached. Stopping.");
-    updateBadge("error");
+    console.warn("[JARVIS] Max reconnect attempts reached. Relying on alarm for future retries.");
+    updateBadge("off");
+    // Do NOT set "error" badge permanently. The alarm will keep retrying.
     return;
   }
 
@@ -107,6 +124,8 @@ function scheduleReconnect() {
     connect();
   }, delay);
 }
+
+// --- Keepalive Ping ---
 
 function startPingInterval() {
   stopPingInterval();
@@ -124,16 +143,59 @@ function stopPingInterval() {
   }
 }
 
-function sendToServer(msg) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-    return true;
-  }
-  console.warn("[JARVIS] Cannot send; not connected.");
-  return false;
+// --- Alarm-based keepalive (survives service worker termination) ---
+
+function ensureAlarm() {
+  chrome.alarms.get(config.alarmName, (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create(config.alarmName, {
+        delayInMinutes: 0.1,
+        periodInMinutes: config.alarmPeriodMinutes,
+      });
+      console.log("[JARVIS] Keepalive alarm created.");
+    }
+  });
 }
 
-// Badge / Status Indicator
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== config.alarmName) return;
+
+  // Check if user explicitly disconnected (don't auto-reconnect in that case)
+  const stored = await chrome.storage.local.get(["jarvisUserDisconnected"]);
+  if (stored.jarvisUserDisconnected) {
+    return;
+  }
+
+  // If already connected and WebSocket is open, nothing to do
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    return;
+  }
+
+  // Service worker may have been killed and restarted. All in-memory state is gone.
+  // Do a lightweight HTTP health check before attempting the full WebSocket connection.
+  console.log("[JARVIS] Alarm fired. Checking if JARVIS server is reachable...");
+
+  try {
+    const healthUrl = config.httpBaseUrl + "/health/ping";
+    const response = await fetch(healthUrl, {
+      method: "GET",
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (response.ok) {
+      console.log("[JARVIS] Server is reachable. Establishing WebSocket connection...");
+      reconnectAttempts = 0; // Reset since the server is confirmed alive
+      connect();
+    } else {
+      console.log(`[JARVIS] Server responded with ${response.status}. Will retry on next alarm.`);
+    }
+  } catch (e) {
+    // Server not reachable yet. Silently wait for next alarm cycle.
+    console.log("[JARVIS] Server not reachable. Will retry on next alarm.");
+  }
+});
+
+// --- Badge / Status Indicator ---
 
 function updateBadge(status) {
   const badges = {
@@ -146,6 +208,17 @@ function updateBadge(status) {
   const badge = badges[status] || badges.off;
   chrome.action.setBadgeText({ text: badge.text });
   chrome.action.setBadgeBackgroundColor({ color: badge.color });
+}
+
+// --- Server Message Handler ---
+
+function sendToServer(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+    return true;
+  }
+  console.warn("[JARVIS] Cannot send; not connected.");
+  return false;
 }
 
 async function handleServerMessage(msg) {
@@ -213,6 +286,8 @@ async function handleServerMessage(msg) {
     updateBadge(isConnected ? "on" : "off");
   }
 }
+
+// --- Tab / DOM Handlers ---
 
 async function handleGetTabs() {
   const tabs = await chrome.tabs.query({});
@@ -291,7 +366,6 @@ async function handleScreenshot(tabId) {
   return { success: true, data: { screenshot: base64, url: tab.url, title: tab.title } };
 }
 
-const _EXEC_JS_MAX_LENGTH = 50000;
 const _EXEC_JS_BLOCKED_PATTERNS = [
   /document\.cookie\s*=/i,
   /localStorage\s*\.\s*setItem/i,
@@ -359,7 +433,7 @@ async function handleExecuteJs(code, tabId) {
   return { success: true, data: { result: result?.value } };
 }
 
-// Content Script Router
+// --- Content Script Router ---
 
 async function routeToContentScript(msg) {
   const tabId = msg.tabId || (await getActiveTabId());
@@ -395,14 +469,14 @@ async function routeToContentScript(msg) {
   });
 }
 
-// Utility
+// --- Utility ---
 
 async function getActiveTabId() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.id || null;
 }
 
-// Event Listeners: Push browser events to JARVIS
+// --- Browser Event Listeners ---
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete" && isConnected) {
@@ -451,7 +525,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   });
 });
 
-// Message handler for popup and content scripts
+// --- Message handler for popup and content scripts ---
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "getStatus") {
@@ -464,6 +538,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "connect") {
+    // Clear user-disconnected flag so the alarm resumes auto-reconnect
+    chrome.storage.local.set({ jarvisUserDisconnected: false });
+    reconnectAttempts = 0;
     connect();
     sendResponse({ ok: true });
     return true;
@@ -481,11 +558,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+
+  if (msg.type === "sendToServer") {
+    const sent = sendToServer(msg.payload);
+    sendResponse({ ok: sent });
+    return true;
+  }
 });
 
-// Startup
+// --- Lifecycle events ---
+
+chrome.runtime.onInstalled.addListener(() => {
+  console.log("[JARVIS] Extension installed/updated. Setting up keepalive alarm.");
+  chrome.storage.local.set({ jarvisUserDisconnected: false });
+  ensureAlarm();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  console.log("[JARVIS] Chrome started. Setting up keepalive alarm.");
+  chrome.storage.local.set({ jarvisUserDisconnected: false });
+  ensureAlarm();
+});
+
+// --- Startup ---
 
 loadConfig().then(() => {
   console.log("[JARVIS] Background service worker started. Connecting...");
+  ensureAlarm();
   connect();
 });

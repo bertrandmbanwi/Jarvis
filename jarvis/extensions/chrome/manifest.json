@@ -9,7 +9,8 @@
     "scripting",
     "downloads",
     "cookies",
-    "storage"
+    "storage",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"

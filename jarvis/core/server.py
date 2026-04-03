@@ -35,18 +35,31 @@ _listener = None
 # Desktop overlay WebSocket clients (lightweight, no auth required for localhost)
 _overlay_clients: List[WebSocket] = []
 _overlay_state: str = "idle"  # idle, listening, thinking, speaking
+_overlay_text: str = ""  # latest assistant response text for overlay display
+_overlay_user_text: str = ""  # latest user utterance for overlay display
 
 
-async def broadcast_overlay_state(new_state: str):
-    """Broadcast state change to all connected desktop overlay clients."""
-    global _overlay_state
+async def broadcast_overlay_state(new_state: str, text: str | None = None, user_text: str | None = None):
+    """Broadcast state change to all connected desktop overlay clients.
+
+    Args:
+        new_state: One of idle, listening, thinking, speaking.
+        text: Optional assistant response text to display on the overlay.
+        user_text: Optional user utterance to display on the overlay.
+    """
+    global _overlay_state, _overlay_text, _overlay_user_text
     _overlay_state = new_state
+    if text is not None:
+        _overlay_text = text
+    if user_text is not None:
+        _overlay_user_text = user_text
     if not _overlay_clients:
         return
+    payload = {"state": new_state, "text": _overlay_text, "userText": _overlay_user_text}
     dead = []
     for ws in _overlay_clients:
         try:
-            await ws.send_json({"state": new_state})
+            await ws.send_json(payload)
         except Exception:
             dead.append(ws)
     for ws in dead:
@@ -745,6 +758,17 @@ async def clear_conversation():
     return {"status": "conversation cleared"}
 
 
+@app.get("/health/ping")
+async def health_ping():
+    """Lightweight unauthenticated liveness probe.
+
+    Used by the Chrome extension's alarm-based keepalive to detect
+    whether the server is running before attempting a WebSocket connection.
+    Returns minimal data to avoid leaking internal state.
+    """
+    return {"status": "ok"}
+
+
 @app.get("/health", dependencies=[Depends(require_auth)])
 async def health():
     """Simple health check for monitoring."""
@@ -1303,7 +1327,11 @@ async def websocket_overlay(websocket: WebSocket):
 
     # Send current state immediately on connect
     try:
-        await websocket.send_json({"state": _overlay_state})
+        await websocket.send_json({
+            "state": _overlay_state,
+            "text": _overlay_text,
+            "userText": _overlay_user_text,
+        })
     except Exception:
         pass
 
