@@ -19,6 +19,7 @@ Optional (recommended):
 |------|---------|---------|
 | cloudflared | Remote/mobile access via HTTPS tunnel | `brew install cloudflared` |
 | Claude Code CLI | Delegate coding tasks via CLI | `npm install -g @anthropic-ai/claude-code` |
+| Google Chrome | Required for Chrome Extension (browser bridge) | [google.com/chrome](https://www.google.com/chrome/) |
 
 ## Quick Start
 
@@ -60,16 +61,26 @@ PREFER_CLAUDE=true
 
 # Optional: TTS configuration
 TTS_ENGINE=kokoro           # kokoro | edge | say
-TTS_VOICE=bf_emma           # Kokoro voice ID
+TTS_VOICE=bf_emma           # Kokoro voice ID (bf = British female)
 TTS_SPEED=1.05
 TTS_BROWSER_FORMAT=opus     # opus | wav
 
-# Optional: STT configuration (Moonshine is primary, Whisper is fallback)
+# Optional: STT configuration (Moonshine is primary, faster-whisper is fallback)
+STT_ENGINE=auto             # moonshine | faster-whisper | whisper | auto
 WHISPER_MODEL=small.en      # tiny.en | small.en | medium.en | large-v3
 
 # Optional: cost alerts (USD)
 COST_DAILY_ALERT=2.00
 COST_MONTHLY_ALERT=60.00
+
+# Optional: port overrides
+API_PORT=8741               # Backend API server
+UI_PORT=3741                # Next.js dev server (proxied to 3000)
+
+# Optional: Ollama configuration
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_FAST_MODEL=llama3.2:latest
 ```
 
 ## Start Modes
@@ -80,10 +91,90 @@ JARVIS supports four launch modes:
 ./start.sh text     # Terminal text chat only (no UI, no voice)
 ./start.sh voice    # Voice interaction only (no web UI)
 ./start.sh server   # API server + web UI only (no local voice)
-./start.sh full     # Everything: voice + API server + web UI (recommended)
+./start.sh full     # Everything: voice + API + UI + overlay + tunnel (recommended)
 ```
 
 **Default mode** is `full` if you run `./start.sh` with no arguments.
+
+### What `./start.sh full` launches
+
+The full startup sequence brings up six components in order:
+
+1. **Ollama** (if not already running): Local LLM backend on port 11434
+2. **Desktop Overlay** (macOS only): Native Swift overlay app, built from source
+3. **Next.js UI**: Web interface on port 3000
+4. **Cloudflare Tunnel** (if cloudflared is installed): HTTPS URL for mobile access
+5. **JARVIS Backend**: FastAPI server on port 8741 with voice listener
+6. **Chrome Extension** (if installed): Auto-connects via WebSocket within ~30 seconds
+
+The script also handles cleanup of orphaned processes from previous runs, installs missing dependencies (python-multipart, Playwright Chromium, PyYAML), and sets up a persistent browser profile.
+
+## Chrome Extension (Browser Bridge)
+
+The Chrome extension gives JARVIS direct control over your browser tabs, navigation, page content, forms, and screenshots.
+
+### Installation
+
+1. Open Chrome and navigate to `chrome://extensions/`
+2. Enable **Developer mode** (toggle in the top-right corner)
+3. Click **Load unpacked**
+4. Select the `jarvis/extensions/chrome/` directory from the JARVIS project
+5. The JARVIS extension icon will appear in your toolbar
+
+### How It Works
+
+The extension connects to the JARVIS backend via WebSocket (`ws://localhost:8741/ws/extension`). It uses a `chrome.alarms` keepalive that fires every ~24 seconds, surviving Chrome's Manifest V3 service worker termination. This means:
+
+- Start Chrome first, then start JARVIS: the extension auto-connects within ~30 seconds
+- Start JARVIS first, then open Chrome: the extension connects immediately on load
+- JARVIS restarts: the extension detects the new server and reconnects automatically
+- No manual interaction needed: you never have to click the extension icon for it to come online
+
+### Badge Status
+
+The extension icon shows a badge indicating connection status:
+
+| Badge | Meaning |
+|-------|---------|
+| (no badge, green) | Connected to JARVIS |
+| ! (gray) | Disconnected, retrying |
+| ... (orange) | Processing a command |
+
+### Capabilities
+
+JARVIS can ask the extension to: list open tabs, open/close/switch tabs, navigate to URLs, take screenshots of the active tab, read page content, click elements, type text, fill forms, scroll, and execute scoped JavaScript (restricted to localhost and JARVIS tunnel URLs).
+
+### Extension Popup
+
+Click the extension icon to see connection status, manually connect/disconnect, or send the current page to JARVIS for analysis.
+
+## Desktop Overlay (macOS)
+
+The desktop overlay is a native Swift application that shows JARVIS' state as a floating panel above all windows.
+
+### What It Shows
+
+- A miniature particle orb (Three.js rendered in WKWebView)
+- Current state label: STANDING BY, LISTENING, PROCESSING, SPEAKING
+- User utterance text (what you said)
+- JARVIS response text (what it is saying)
+- Color-coded status dot matching the current state
+
+### Building Manually
+
+The overlay is built automatically by `./start.sh full`. To build and run it manually:
+
+```bash
+cd desktop-overlay
+bash build-overlay.sh
+open build/JarvisOverlay.app
+```
+
+The overlay connects to JARVIS via `ws://localhost:8741/ws/overlay` and updates in real-time.
+
+### Configuration
+
+The overlay window is positioned in the bottom-right corner of the screen with 50px padding. It ignores mouse events (click-through) and appears on all Spaces. The app runs as a background agent (no Dock icon, no menu bar entry).
 
 ## Accessing from Your Phone
 
@@ -135,14 +226,17 @@ Jarvis/
   start.sh                    # Launch script (text/voice/server/full)
   requirements.txt            # Python dependencies
   com.jarvis.assistant.plist  # macOS auto-start config
-  tests/                      # 265 unit tests (pytest)
+  tests/                      # Unit tests (pytest)
   templates/prompts/          # Structured prompt templates (build, feature, fix, etc.)
+  desktop-overlay/
+    JarvisOverlay.swift       # macOS native overlay (Swift + WKWebView)
+    build-overlay.sh          # Compile and bundle into .app
   jarvis/
     main.py                   # Entry point and mode router
     config/
       settings.py             # All configuration in one place
     core/
-      server.py               # FastAPI + WebSocket server
+      server.py               # FastAPI + WebSocket server (UI, overlay, extension)
       brain.py                # Conversation engine, tool dispatch
       llm.py                  # LLM API + Ollama backend abstraction
       auth.py                 # PIN-based mobile authentication
@@ -159,6 +253,7 @@ Jarvis/
       coordinator.py          # Multi-agent task orchestration
       planner.py              # Task decomposition (plan-and-execute)
       executor.py             # Subtask execution with tool access
+      qa_agent.py             # Quality assurance verification
       task_tracker.py         # Persistent plan state
       tools_schema.py         # Tool definitions for LLM tool-use
       learning.py             # Pattern learning from past plans
@@ -166,8 +261,10 @@ Jarvis/
       templates.py            # Structured prompt template library
       template_evolution.py   # Template A/B testing and evolution
       evolution_pipeline.py   # Cross-session performance evolution
+      ab_testing.py           # A/B testing framework
     memory/
-      store.py                # ChromaDB vector memory
+      store.py                # Abstract memory interface
+      sqlite_store.py         # SQLite-backed semantic memory
       facts.py                # Explicit user fact storage
       preferences.py          # Implicit preference tracking
     tools/
@@ -180,30 +277,38 @@ Jarvis/
       web_browse.py           # Fetch and parse web pages
       browser_agent.py        # Playwright browser automation
       calendar_email.py       # Calendar and email via Chrome/Gmail
-      chrome_extension.py     # Chrome extension bridge
+      chrome_extension.py     # Chrome extension bridge (tab/DOM control)
       chrome_sync.py          # Chrome cookie sync
       claude_code.py          # Coding CLI delegation
+      notes_access.py         # Apple Notes integration
       work_session.py         # Persistent coding sessions
     voice/
-      listener.py             # Microphone capture + Moonshine/whisper STT
-      speaker.py              # Kokoro/Edge TTS with chunked streaming
+      listener.py             # Microphone capture + Moonshine/whisper STT + wake word
+      speaker.py              # Kokoro/Edge TTS with chunked Opus streaming
+    extensions/
+      chrome/                 # Chrome extension (Manifest V3)
+        manifest.json         # Extension metadata and permissions
+        background.js         # Service worker with alarms keepalive
+        content.js            # Content script for DOM interaction
+        popup.html            # Extension popup UI
+        popup.js              # Popup controller
     ui/
       jarvis-ui/              # Next.js 14 web interface
         src/
           components/
-            cinematic/        # WebGL particle orb (Three.js)
+            cinematic/        # WebGL particle orb (Three.js GLSL shaders)
             chat/             # Chat message interface
             dashboard/        # System status dashboard
             auth/             # PIN entry screen
             settings/         # Settings panel (runtime config)
-            shared/           # Reusable UI components
+            shared/           # Reusable UI components (status bar, plan progress, etc.)
           hooks/
             useJarvisWebSocket.ts  # WebSocket client with audio routing
 ```
 
 ## Tool Categories
 
-JARVIS has 93+ tools organized into these categories:
+JARVIS has 109+ tools organized into these categories:
 
 | Category | Examples |
 |----------|---------|
@@ -212,21 +317,24 @@ JARVIS has 93+ tools organized into these categories:
 | Shell | Execute terminal commands with safety guards |
 | Screen | Take screenshots, OCR text from screen regions |
 | Web Search | DuckDuckGo search, fetch page content, read news |
-| Browser Automation | Playwright-driven: fill forms, click buttons, navigate sites |
+| Browser Automation | Playwright: fill forms, click buttons, navigate sites, persistent sessions |
+| Chrome Extension | Tab management, DOM interaction, screenshots, page reading, form filling |
 | Calendar/Email | Read Gmail inbox via Chrome, calendar events |
+| Apple Notes | Read, search, and create notes via AppleScript |
 | Weather | Current conditions and forecasts |
-| Coding CLI | Delegate coding tasks, scaffold projects, run smart commands |
+| Coding CLI | Delegate coding tasks via Claude Code, scaffold projects, smart commands |
+| Work Sessions | Persistent multi-step coding sessions that survive restarts |
 
 ## Intelligence Tiers
 
 JARVIS uses a tiered model system that routes requests to the appropriate level of intelligence:
 
-| Tier | Purpose | Use Case | Cost |
-|------|---------|----------|------|
-| Fast | Lightweight model | Quick lookups, simple responses | Lowest |
-| Brain | Mid-tier model | General conversation, tool use | Medium |
-| Deep | Reasoning model | Complex reasoning, multi-step plans | Highest |
-| Local | Ollama (offline) | Offline fallback, no API needed | Free |
+| Tier | Model | Use Case | Cost |
+|------|-------|----------|------|
+| Fast | Claude Haiku 4.5 | Quick lookups, simple responses | Lowest ($1/$5 per 1M tokens) |
+| Brain | Claude Sonnet 4.6 | General conversation, tool use | Medium ($3/$15 per 1M tokens) |
+| Deep | Claude Opus 4.6 | Complex reasoning, multi-step plans | Highest ($5/$25 per 1M tokens) |
+| Local | Ollama (llama3.1:8b) | Offline fallback, no API needed | Free |
 
 The multi-agent planner automatically escalates complex requests to higher tiers and decomposes them into subtasks.
 
@@ -234,7 +342,7 @@ The multi-agent planner automatically escalates complex requests to higher tiers
 
 JARVIS supports three TTS engines (in order of quality):
 
-1. **Kokoro** (default): High-quality neural TTS, runs locally, British-accented voices
+1. **Kokoro** (default): High-quality neural TTS, runs locally, British-accented voices (bf_emma)
 2. **Edge TTS**: Microsoft's cloud TTS, good quality, free, requires internet
 3. **macOS `say`**: Built-in system voice, lowest quality, always available
 
@@ -243,11 +351,54 @@ Speech-to-text uses a two-tier approach:
 1. **Moonshine ONNX** (primary): Low hallucination rate, real-time optimized, runs locally. Tokenizer decodes raw model output into text.
 2. **faster-whisper** (fallback): Activates automatically if Moonshine fails or is unavailable. Supports hotwords and language hints.
 
+Wake word detection uses OpenWakeWord with a "hey_jarvis" model. The wake word listener runs continuously in the background with a configurable threshold (default 0.7) and an 8-second followup window after activation.
+
 Audio is streamed to the browser in chunked Opus format (~10x smaller than WAV) for low-latency playback.
+
+## Multi-Agent System
+
+JARVIS includes a full multi-agent pipeline for complex task execution:
+
+| Component | Purpose |
+|-----------|---------|
+| Planner | Decomposes complex requests into ordered subtasks |
+| Executor | Runs each subtask with access to the full tool registry |
+| QA Agent | Verifies task quality and retries if below threshold |
+| Coordinator | Orchestrates parallel and sequential execution |
+| Learning | Captures patterns from successful plans for reuse |
+| Evolution Pipeline | A/B tests prompt templates and evolves them over sessions |
+| Task Tracker | Persists plan state so multi-step work survives restarts |
+
+The UI shows real-time plan progress via the PlanProgress component, with per-subtask status indicators.
+
+## WebSocket Endpoints
+
+The FastAPI server exposes three WebSocket endpoints:
+
+| Endpoint | Purpose | Client |
+|----------|---------|--------|
+| `/ws` | Main client connection (voice, chat, audio) | Next.js UI, mobile browser |
+| `/ws/overlay` | Desktop overlay state and text updates | JarvisOverlay.app (Swift) |
+| `/ws/extension` | Chrome extension command/response channel | Chrome extension (background.js) |
+
+## API Endpoints
+
+Key REST API endpoints:
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `GET /health/ping` | None | Lightweight liveness probe (used by Chrome extension keepalive) |
+| `GET /health` | Required | Full health report with backend, memory, cache stats |
+| `POST /auth/login` | None | PIN verification, returns session token |
+| `GET /auth/status` | None | Check if current request is authenticated |
+| `GET /api/settings` | Required | Read runtime settings |
+| `PUT /api/settings` | Required | Update runtime settings |
+| `POST /voice/transcribe` | None | Upload audio for speech-to-text |
+| `POST /clear` | Required | Clear conversation history |
 
 ## Testing
 
-JARVIS ships with 265 unit tests. Run them with:
+JARVIS ships with unit tests. Run them with:
 
 ```bash
 source .venv/bin/activate
@@ -272,7 +423,7 @@ To regenerate the PIN:
 JARVIS_REGEN_PIN=true ./start.sh full
 ```
 
-The new PIN will be printed to the console before the server starts.
+The new PIN will be printed to the console before the server starts. Local connections (from the same machine) bypass PIN authentication automatically.
 
 ## Settings Panel
 
@@ -283,6 +434,26 @@ You can also query settings directly:
 ```bash
 curl http://localhost:8741/api/settings
 ```
+
+## Data Storage
+
+JARVIS stores persistent data in the `data/` directory:
+
+| Path | Purpose |
+|------|---------|
+| `data/auth/` | Authentication credentials and session tokens |
+| `data/browser-profile/` | Persistent Chromium profile (cookies, sessions) |
+| `data/costs/` | Daily and monthly cost tracking records |
+| `data/learning/` | Learned patterns from successful task plans |
+| `data/logs/` | Application logs |
+| `data/memory/` | Semantic memory database |
+| `data/models/` | Local model caches |
+| `data/plans/` | Saved multi-step plan states |
+| `data/profile/` | User profile and preference data |
+| `data/sessions/` | Persistent work session state |
+| `data/jarvis_dispatch.db` | Tool dispatch tracking (SQLite) |
+| `data/jarvis_experiments.db` | A/B testing experiment data (SQLite) |
+| `data/jarvis_memory.db` | Semantic memory with FTS (SQLite) |
 
 ## Troubleshooting
 
@@ -297,6 +468,12 @@ Verify PortAudio is installed (`brew install portaudio`). Grant microphone permi
 
 **Mobile access not working:**
 Install cloudflared (`brew install cloudflared`). The tunnel URL is printed in the console when JARVIS starts.
+
+**Chrome extension not connecting:**
+Verify the extension is loaded in `chrome://extensions/` with Developer mode enabled. The extension auto-reconnects every ~24 seconds via the keepalive alarm. Check the extension's service worker console (click "Inspect views: service worker" on the extensions page) for connection logs.
+
+**Desktop overlay not showing:**
+The overlay only builds on macOS. Check that `desktop-overlay/build-overlay.sh` ran successfully during startup. You can rebuild manually with `cd desktop-overlay && bash build-overlay.sh && open build/JarvisOverlay.app`.
 
 **High API costs:**
 Adjust `COST_DAILY_ALERT` in `.env`. Set `PREFER_CLAUDE=false` to default to local Ollama. The System tab in the UI shows real-time cost tracking.
