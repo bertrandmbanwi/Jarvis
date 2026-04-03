@@ -49,7 +49,7 @@ const STATES: Record<OrbState, StateConfig> = {
     coreColor:     C.cyanBrite,
     particleColor: C.cyan,
     glowColor:     C.cyanDeep,
-    coreIntensity: 0.65,
+    coreIntensity: 0.95,
     particleAlpha: 1.0,
     orbitalSpeed:  0.04,
     turbulence:    0.012,
@@ -59,15 +59,15 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.0,
     breathBlend:   0.70,
     scaleTarget:   1.0,
-    dustAlpha:     0.18,
-    ringAlpha:     0.12,
+    dustAlpha:     0.30,
+    ringAlpha:     0.20,
   },
   listening: {
     coreColor:     C.cyanBrite,
     particleColor: C.cyanPale,
     glowColor:     C.cyanDeep,
-    coreIntensity: 0.65,
-    particleAlpha: 0.96,
+    coreIntensity: 0.95,
+    particleAlpha: 1.0,
     orbitalSpeed:  0.10,
     turbulence:    0.03,
     pulseRate:     0.8,
@@ -76,15 +76,15 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.15,           // rare arcs, not busy
     breathBlend:   0.30,
     scaleTarget:   0.93,           // slight inward pull
-    dustAlpha:     0.20,
-    ringAlpha:     0.12,
+    dustAlpha:     0.32,
+    ringAlpha:     0.20,
   },
   thinking: {
     coreColor:     C.white,
     particleColor: C.thinkA,
     glowColor:     C.thinkB,
-    coreIntensity: 0.72,
-    particleAlpha: 0.96,
+    coreIntensity: 1.0,
+    particleAlpha: 1.0,
     orbitalSpeed:  0.28,
     turbulence:    0.06,
     pulseRate:     1.2,
@@ -93,14 +93,14 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.5,           // occasional arcs, not frantic
     breathBlend:   0.10,
     scaleTarget:   0.94,
-    dustAlpha:     0.24,
-    ringAlpha:     0.14,
+    dustAlpha:     0.36,
+    ringAlpha:     0.22,
   },
   speaking: {
     coreColor:     C.speakCore,   // warm white-gold at nucleus only
     particleColor: C.speakPart,   // particles stay cyan with subtle warm tint
     glowColor:     C.speakGlow,   // warm-cyan glow, not full gold
-    coreIntensity: 0.85,
+    coreIntensity: 1.1,
     particleAlpha: 1.0,
     orbitalSpeed:  0.07,
     turbulence:    0.025,
@@ -110,8 +110,8 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.25,
     breathBlend:   0.85,          // smooth breathing, not spiky heartbeat
     scaleTarget:   1.05,          // gentle expansion, not dramatic
-    dustAlpha:     0.18,
-    ringAlpha:     0.12,
+    dustAlpha:     0.30,
+    ringAlpha:     0.20,
   },
   error: {
     coreColor:     C.errPale,
@@ -238,12 +238,12 @@ const VERT_PARTICLES = /* glsl */ `
     // Depth-based size attenuation with shell-based variation
     // Core particles stay small and bright, outer particles scale with size attributes
     float depth = -mvPos.z;
-    float baseSize = aSize * (35.0 / max(depth, 0.5));
+    float baseSize = aSize * (40.0 / max(depth, 0.5));
     gl_PointSize = max(1.5, baseSize * (0.85 + uPulse * 0.15) * audioMix);
 
     // Depth-based alpha: gentle fade so back-hemisphere reads as semi-transparent
     float depthFade = smoothstep(6.0, 2.5, depth);
-    vAlpha = aBright * (0.72 + depthFade * 0.28) * (0.80 + uPulse * 0.20);
+    vAlpha = aBright * (0.82 + depthFade * 0.18) * (0.85 + uPulse * 0.15);
     vShell = aShell;
   }
 `;
@@ -271,7 +271,7 @@ const FRAG_PARTICLES = /* glsl */ `
 
     // Combine: bright core + colored glow, both contributing
     float alpha = (core * 1.0 + glow * 0.6 + edge * 0.1) * vAlpha * uAlpha;
-    gl_FragColor = vec4(col * alpha * 2.2, alpha);
+    gl_FragColor = vec4(col * alpha * 3.2, alpha);
   }
 `;
 
@@ -309,7 +309,7 @@ const FRAG_DUST = /* glsl */ `
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5) discard;
     float glow = exp(-d * d * 12.0);
-    float alpha = glow * vFade * uAlpha * 0.35;
+    float alpha = glow * vFade * uAlpha * 0.45;
     gl_FragColor = vec4(uColor * alpha, alpha);
   }
 `;
@@ -336,11 +336,11 @@ const FRAG_GLOW = /* glsl */ `
     float p = 1.0 + uPulse * 0.25;
 
     // Layered radial falloff: white-hot center > colored mid > soft bloom
-    float L0 = exp(-d * d * 28.0) * 1.4;           // white nucleus
-    float L1 = exp(-d * d * 8.0)  * 0.55 * p;      // bright inner
-    float L2 = exp(-d * d * 2.5)  * 0.22 * p;      // colored mid
-    float L3 = exp(-d * d * 0.6)  * 0.08;           // soft bloom
-    float L4 = exp(-d * d * 0.18) * 0.025;          // atmospheric haze
+    float L0 = exp(-d * d * 28.0) * 1.8;           // white nucleus (brighter)
+    float L1 = exp(-d * d * 8.0)  * 0.72 * p;      // bright inner (boosted)
+    float L2 = exp(-d * d * 2.5)  * 0.30 * p;      // colored mid (boosted)
+    float L3 = exp(-d * d * 0.6)  * 0.10;           // soft bloom
+    float L4 = exp(-d * d * 0.18) * 0.035;          // atmospheric haze
 
     vec3 col = vec3(1.0) * L0
              + uCore  * L1
@@ -578,12 +578,12 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     });
     // Two glow planes at different scales for richer, brighter nucleus
     // Increased scales to create more prominent luminous center
-    const glow1 = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), glowMat);
+    const glow1 = new THREE.Mesh(new THREE.PlaneGeometry(1.25, 1.25), glowMat);
     glow1.renderOrder = -2;
     scene.add(glow1);
 
     const glow2Mat = glowMat.clone();
-    const glow2 = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.8), glow2Mat);
+    const glow2 = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 2.0), glow2Mat);
     glow2.renderOrder = -3;
     scene.add(glow2);
 
@@ -771,8 +771,8 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
         mat.uniforms.uPulse.value = pulse;
       };
       // Nucleus glow: bright enough to read as luminous core
-      glowUpdater(glowMat, 0.75);
-      glowUpdater(glow2Mat, 0.35);
+      glowUpdater(glowMat, 0.92);
+      glowUpdater(glow2Mat, 0.48);
 
       // Billboard glow planes
       glow1.quaternion.copy(camera.quaternion);
