@@ -1,8 +1,8 @@
 """Central orchestration service with agentic executor and task decomposition."""
-import json
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -10,6 +10,14 @@ from typing import Optional
 from jarvis.config import settings
 from jarvis.core.llm import JarvisLLM
 from jarvis.memory.store import MemoryStore
+from jarvis.memory.conversation_store import (
+    ConversationTurn,
+    initialize as init_conversation_store,
+    load_conversation,
+    save_turn,
+    prune_old_turns,
+    clear_conversation as clear_conversation_db,
+)
 from jarvis.agent.executor import AgentExecutor
 from jarvis.agent.planner import TaskPlanner
 from jarvis.agent.task_tracker import SubtaskStatus
@@ -28,7 +36,6 @@ from jarvis.agent.suggestions import suggest_followup, suggest_task_followup
 from jarvis.agent.evolution_pipeline import EvolutionPipeline
 from jarvis.tools.work_session import WorkSession
 
-CONVERSATION_FILE = settings.DATA_DIR / "conversation_history.json"
 MAX_CONVERSATION_TURNS = 100
 
 logger = logging.getLogger("jarvis.brain")
@@ -161,7 +168,8 @@ def _select_tier(text: str) -> str:
         est_cost_brain = estimate_request_cost(token_estimate + 2000, 2000, "brain")
         cost_premium = est_cost_deep - est_cost_brain
 
-        if cost_premium > 0.10:
+        premium_limit = settings.COST_DEEP_PREMIUM_LIMIT
+        if premium_limit > 0 and cost_premium > premium_limit:
             if deep_signals >= 3:
                 logger.info(
                     "Tier routing: deep (signals: %d, keywords: %s, premium: $%.3f)",
@@ -185,16 +193,6 @@ def _select_tier(text: str) -> str:
     return "brain"
 
 
-@dataclass
-class ConversationTurn:
-    """Conversation turn with metadata."""
-    role: str
-    content: str
-    timestamp: float = field(default_factory=time.time)
-    tier_used: str = ""
-    tool_calls: list = field(default_factory=list)
-
-
 class JarvisBrain:
     """Central orchestrator for LLM, memory, agent, and response generation."""
 
@@ -214,9 +212,9 @@ class JarvisBrain:
         self.conversation: list[ConversationTurn] = []
         self._initialized = False
         self._shutdown_requested = False
-        self._conversation_file = CONVERSATION_FILE
         self._on_plan_progress = None  # Callback for broadcasting plan progress via WebSocket
         self._last_plan = None
+        self._current_request_id: str = ""  # Correlation ID for the current request
 
     async def initialize(self) -> bool:
         """Initialize and check all dependencies."""
@@ -273,6 +271,8 @@ class JarvisBrain:
         except Exception as e:
             logger.debug("No prior work session to restore: %s", e)
 
+        # Initialize SQLite conversation store (migrates legacy JSON automatically)
+        init_conversation_store()
         self._load_conversation()
         self.proactive.start()
 
@@ -295,7 +295,11 @@ class JarvisBrain:
             return "I didn't catch that. Could you say something?"
 
         start_time = time.time()
-        logger.info("Processing: '%s'", user_input[:100])
+        self._current_request_id = uuid.uuid4().hex[:12]
+        logger.info(
+            "[req:%s] Processing: '%s'",
+            self._current_request_id, user_input[:100],
+        )
 
         self.proactive.mark_interaction()
 
@@ -304,7 +308,12 @@ class JarvisBrain:
             self._shutdown_requested = True
             return "Shutting down JARVIS. All systems offline. Goodbye, sir."
 
-        self.conversation.append(ConversationTurn(role="user", content=user_input))
+        user_turn = ConversationTurn(
+            role="user", content=user_input,
+            request_id=self._current_request_id,
+        )
+        self.conversation.append(user_turn)
+        self._save_turn(user_turn)
 
         if len(self.conversation) > MAX_CONVERSATION_TURNS:
             self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
@@ -317,7 +326,7 @@ class JarvisBrain:
         tier = _select_tier(user_input)
 
         if tier == "fast" and _is_chat_only(user_input):
-            logger.info("Routing to CHAT mode [tier: fast].")
+            logger.info("[req:%s] Routing to CHAT mode [tier: fast].", self._current_request_id)
             enriched_context = self.memory.get_enriched_context(user_input, top_k=3)
             enriched_input = f"{enriched_context}\n\nUser: {user_input}" if enriched_context else user_input
             response = await self.llm.chat(enriched_input, history, tier="fast")
@@ -325,15 +334,17 @@ class JarvisBrain:
             should_plan = await self.planner.should_decompose(user_input)
 
             if should_plan:
-                logger.info("Routing to PLAN+EXECUTE mode [tier: %s].", tier)
+                logger.info("[req:%s] Routing to PLAN+EXECUTE mode [tier: %s].", self._current_request_id, tier)
                 response = await self._execute_plan(user_input, history, tier)
             else:
-                logger.info("Routing to AGENT mode [tier: %s].", tier)
+                logger.info("[req:%s] Routing to AGENT mode [tier: %s].", self._current_request_id, tier)
                 response = await self.agent.execute(user_input, history, tier=tier)
 
-        self.conversation.append(
-            ConversationTurn(role="assistant", content=response, tier_used=tier)
+        assistant_turn = ConversationTurn(
+            role="assistant", content=response, tier_used=tier,
+            request_id=self._current_request_id,
         )
+        self.conversation.append(assistant_turn)
 
         # Monitor response quality
         try:
@@ -410,14 +421,14 @@ class JarvisBrain:
 
             self._last_plan = None
 
-        self._save_conversation()
+        self._save_turn(assistant_turn)
         elapsed = time.time() - start_time
         perf_tracker.record_request(elapsed, tier)
         perf_tracker.record(f"request.{tier}", elapsed)
 
         logger.info(
-            "Response generated in %.2fs [tier: %s]: '%s'",
-            elapsed, tier, response[:100],
+            "[req:%s] Response generated in %.2fs [tier: %s]: '%s'",
+            self._current_request_id, elapsed, tier, response[:100],
         )
 
         return response
@@ -437,8 +448,12 @@ class JarvisBrain:
 
         tier = _select_tier(user_input)
 
+        request_id = uuid.uuid4().hex[:12]
+
         if tier == "fast" and _is_chat_only(user_input):
-            self.conversation.append(ConversationTurn(role="user", content=user_input))
+            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id)
+            self.conversation.append(user_turn)
+            self._save_turn(user_turn)
 
             if len(self.conversation) > MAX_CONVERSATION_TURNS:
                 self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
@@ -454,16 +469,19 @@ class JarvisBrain:
                 yield token
 
             complete = "".join(full_response)
-            self.conversation.append(
-                ConversationTurn(role="assistant", content=complete, tier_used="fast")
+            assistant_turn = ConversationTurn(
+                role="assistant", content=complete, tier_used="fast", request_id=request_id,
             )
+            self.conversation.append(assistant_turn)
+            self._save_turn(assistant_turn)
             self.memory.add(
                 text=f"User: {user_input}\nJARVIS: {complete}",
                 metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
             )
-            self._save_conversation()
         else:
-            self.conversation.append(ConversationTurn(role="user", content=user_input))
+            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id)
+            self.conversation.append(user_turn)
+            self._save_turn(user_turn)
 
             if len(self.conversation) > MAX_CONVERSATION_TURNS:
                 self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
@@ -476,25 +494,26 @@ class JarvisBrain:
             should_plan = await self.planner.should_decompose(user_input)
 
             if should_plan:
-                logger.info("Routing to PLAN+EXECUTE mode (streaming) [tier: %s].", tier)
+                logger.info("[req:%s] Routing to PLAN+EXECUTE mode (streaming) [tier: %s].", request_id, tier)
                 complete = await self._execute_plan(user_input, history, tier)
                 yield complete
             else:
-                logger.info("Routing to AGENT mode (streaming) [tier: %s].", tier)
+                logger.info("[req:%s] Routing to AGENT mode (streaming) [tier: %s].", request_id, tier)
                 full_response = []
                 async for token in self.agent.execute_stream(user_input, history, tier=tier):
                     full_response.append(token)
                     yield token
                 complete = "".join(full_response)
 
-            self.conversation.append(
-                ConversationTurn(role="assistant", content=complete, tier_used=tier)
+            assistant_turn = ConversationTurn(
+                role="assistant", content=complete, tier_used=tier, request_id=request_id,
             )
+            self.conversation.append(assistant_turn)
+            self._save_turn(assistant_turn)
             self.memory.add(
                 text=f"User: {user_input}\nJARVIS: {complete}",
                 metadata={"type": "agent", "tier": tier, "timestamp": time.time()},
             )
-            self._save_conversation()
 
     async def _execute_plan(
         self,
@@ -827,44 +846,19 @@ class JarvisBrain:
             except Exception as e:
                 logger.debug("Plan progress broadcast failed: %s", e)
 
-    def _save_conversation(self):
-        """Persist conversation history to disk."""
-        try:
-            turns = [
-                {
-                    "role": turn.role,
-                    "content": turn.content,
-                    "timestamp": turn.timestamp,
-                    "tier_used": turn.tier_used,
-                }
-                for turn in self.conversation[-MAX_CONVERSATION_TURNS:]
-            ]
-            self._conversation_file.write_text(
-                json.dumps(turns, indent=2), encoding="utf-8"
-            )
-        except Exception as e:
-            logger.debug("Conversation save failed (non-critical): %s", e)
+    def _save_turn(self, turn: ConversationTurn):
+        """Persist a single conversation turn to SQLite."""
+        save_turn(turn)
 
     def _load_conversation(self):
-        """Restore conversation from previous session."""
-        if not self._conversation_file.exists():
-            return
+        """Restore conversation from SQLite (with automatic JSON migration)."""
+        self.conversation = load_conversation(limit=MAX_CONVERSATION_TURNS)
+        if self.conversation:
+            logger.info("Restored %d conversation turns from SQLite.", len(self.conversation))
 
-        try:
-            data = json.loads(self._conversation_file.read_text(encoding="utf-8"))
-            for entry in data:
-                self.conversation.append(
-                    ConversationTurn(
-                        role=entry["role"],
-                        content=entry["content"],
-                        timestamp=entry.get("timestamp", 0.0),
-                        tier_used=entry.get("tier_used", ""),
-                    )
-                )
-            logger.info("Restored %d conversation turns from disk.", len(self.conversation))
-        except Exception as e:
-            logger.warning("Could not load conversation history: %s. Starting fresh.", e)
-            self.conversation.clear()
+    def _prune_conversation(self):
+        """Prune old turns from the database to stay within retention limits."""
+        prune_old_turns()
 
     def get_conversation_summary(self) -> str:
         """Get a brief summary of the current conversation."""
@@ -877,11 +871,7 @@ class JarvisBrain:
     def clear_conversation(self):
         """Clear the current conversation (memory persists)."""
         self.conversation.clear()
-        try:
-            if self._conversation_file.exists():
-                self._conversation_file.unlink()
-        except Exception:
-            pass
+        clear_conversation_db()
         logger.info("Conversation cleared.")
 
     async def shutdown(self):
