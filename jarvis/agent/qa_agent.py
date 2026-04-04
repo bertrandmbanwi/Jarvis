@@ -42,11 +42,34 @@ class QAAgent:
     def __init__(self):
         """Initialize QA agent."""
         self.verification_system_prompt = (
-            "You are a strict quality assurance verifier. Your job is to validate "
-            "whether task outputs meet the stated requirements. "
-            "Respond in JSON format only: {\"passed\": true/false, \"issues\": [...], "
-            "\"summary\": \"...\"}"
+            "<role>Strict quality assurance verifier for JARVIS, a personal AI assistant.</role>\n"
+            "<purpose>Validate whether a task output meets the stated requirements.</purpose>\n"
+            "<instructions>\n"
+            "Check for: completeness (did it address the full request?), "
+            "correctness (are facts and data accurate?), and quality "
+            "(is the response concise and natural for voice output?).\n"
+            "A response that is factually correct but too verbose for TTS should still fail.\n"
+            "A response that uses markdown formatting (headers, bullets, bold) should fail "
+            "because JARVIS outputs are read aloud.\n"
+            "</instructions>\n"
+            "<response_format>\n"
+            "Respond in JSON format only:\n"
+            '{"passed": true/false, "issues": ["issue1", "issue2"], "summary": "brief verdict"}\n'
+            "</response_format>"
         )
+
+    def _select_qa_tier(self, request_tier: str) -> str:
+        """Select the appropriate model tier for QA verification.
+
+        For fast-tier requests, use fast (Haiku) for QA to keep costs down.
+        For brain/deep-tier requests, use brain (Sonnet) so the QA check
+        is actually capable of catching nuanced quality issues. Using Haiku
+        to verify Opus output is like having an intern review a principal
+        engineer's architecture doc.
+        """
+        if request_tier in ("brain", "deep"):
+            return "brain"
+        return "fast"
 
     async def verify(
         self,
@@ -62,12 +85,14 @@ class QAAgent:
             task_prompt: The original task/requirements description
             task_result: The output to verify
             llm: JarvisLLM instance for Claude communication
-            tier: Model tier to use ("fast", "brain", "deep")
+            tier: Model tier to use ("fast", "brain", "deep"). The actual
+                  QA model is selected by _select_qa_tier() based on this.
 
         Returns:
             QAResult with passed status, issues list, and summary
         """
-        logger.info("QA verification starting (tier=%s)", tier)
+        qa_tier = self._select_qa_tier(tier)
+        logger.info("QA verification starting (request_tier=%s, qa_tier=%s)", tier, qa_tier)
 
         verification_prompt = (
             f"Task requirement:\n{task_prompt}\n\n"
@@ -82,7 +107,7 @@ class QAAgent:
                 llm.chat(
                     user_message=verification_prompt,
                     system_prompt_override=self.verification_system_prompt,
-                    tier=tier,
+                    tier=qa_tier,
                     max_tokens_override=500,
                     temperature_override=0.1,
                 ),

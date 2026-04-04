@@ -1,0 +1,19 @@
+# JARVIS Development & Testing Dependencies
+# Install with: pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
+pytest-timeout>=2.3.0
+
+# Linting & Formatting
+ruff>=0.8.0
+
+# Type Checking
+mypy>=1.13.0
+
+# Security Scanning
+bandit>=1.8.0
