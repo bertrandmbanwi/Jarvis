@@ -1,16 +1,19 @@
 """JARVIS Voice Speaker: text-to-speech output using Kokoro TTS, Piper, or Edge TTS."""
 import asyncio
 import base64
+import contextlib
+import importlib.util
 import logging
-import subprocess
+import shutil
+import subprocess  # nosec B404
 import tempfile
-import wave
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.voice.speaker")
+# Fixed local media commands are invoked without shell=True.
 
 try:
     import kokoro
@@ -24,11 +27,7 @@ try:
 except ImportError:
     HAS_EDGE_TTS = False
 
-try:
-    import pyttsx3
-    HAS_PYTTSX3 = True
-except ImportError:
-    HAS_PYTTSX3 = False
+HAS_PYTTSX3 = importlib.util.find_spec("pyttsx3") is not None
 
 
 class VoiceSpeaker:
@@ -75,11 +74,7 @@ class VoiceSpeaker:
 
     def _check_macos_say(self) -> bool:
         """Check if macOS 'say' command is available."""
-        try:
-            result = subprocess.run(["which", "say"], capture_output=True, text=True)
-            return result.returncode == 0
-        except Exception:
-            return False
+        return shutil.which("say") is not None
 
     @staticmethod
     def _fix_pronunciation(text: str) -> str:
@@ -246,16 +241,17 @@ class VoiceSpeaker:
         if self._kokoro_pipeline is None:
             raise RuntimeError("Kokoro not initialized")
 
+        import io
+
         import numpy as np
         import soundfile as sf
-        import io
 
         loop = asyncio.get_event_loop()
         chunk_queue: asyncio.Queue = asyncio.Queue()
 
         def generate():
             chunk_count = 0
-            for graphemes, phonemes, audio_chunk in self._kokoro_pipeline(
+            for graphemes, _phonemes, audio_chunk in self._kokoro_pipeline(
                 text, voice=settings.TTS_VOICE, speed=settings.TTS_SPEED
             ):
                 chunk_count += 1
@@ -276,7 +272,7 @@ class VoiceSpeaker:
         chunk_index = 0
         accumulated_samples = []
         accumulated_count = 0
-        SAMPLES_PER_CHUNK_TARGET = int(24000 * 0.8)
+        samples_per_chunk_target = int(24000 * 0.8)
 
         try:
             while True:
@@ -288,7 +284,7 @@ class VoiceSpeaker:
                 accumulated_samples.append(audio_chunk)
                 accumulated_count += len(audio_chunk)
 
-                if self._on_audio_chunk and accumulated_count >= SAMPLES_PER_CHUNK_TARGET:
+                if self._on_audio_chunk and accumulated_count >= samples_per_chunk_target:
                     chunk_audio = np.concatenate(accumulated_samples)
                     chunk_duration = len(chunk_audio) / 24000
                     chunk_envelope = self._compute_amplitude_envelope(chunk_audio, 24000, fps=60)
@@ -345,7 +341,8 @@ class VoiceSpeaker:
         self._last_audio_duration = duration
         self._last_amplitude_envelope = self._compute_amplitude_envelope(audio, 24000, fps=60)
 
-        temp_path = tempfile.mktemp(suffix=".wav")
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            temp_path = tmp.name
         sf.write(temp_path, audio, 24000)
 
         wav_buffer = io.BytesIO()
@@ -365,10 +362,8 @@ class VoiceSpeaker:
         else:
             await self._play_audio(temp_path)
 
-        try:
+        with contextlib.suppress(Exception):
             Path(temp_path).unlink()
-        except Exception:
-            pass
 
     async def _speak_edge(self, text: str):
         """Generate Edge TTS (Microsoft free voices) with browser streaming."""  # MP3 to WAV conversion
@@ -393,7 +388,6 @@ class VoiceSpeaker:
                 wav_data = Path(wav_path).read_bytes()
                 audio_base64 = base64.b64encode(wav_data).decode("ascii")
 
-                import numpy as np
                 import soundfile as sf
                 audio_array, sr = sf.read(wav_path)
                 duration = len(audio_array) / sr
@@ -418,14 +412,13 @@ class VoiceSpeaker:
             await self._play_audio(mp3_path)
 
         for p in [mp3_path, wav_path]:
-            try:
+            with contextlib.suppress(Exception):
                 Path(p).unlink()
-            except Exception:
-                pass
 
     async def _speak_macos(self, text: str):
         """Generate macOS 'say' output with browser streaming and local playback."""
-        temp_aiff = tempfile.mktemp(suffix=".aiff")
+        with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as tmp:
+            temp_aiff = tmp.name
         wav_path = temp_aiff + ".wav"
         audio_base64 = None
 
@@ -451,7 +444,6 @@ class VoiceSpeaker:
                     audio_base64 = base64.b64encode(wav_data).decode("ascii")
 
                     try:
-                        import numpy as np
                         import soundfile as sf
                         audio_array, sr = sf.read(wav_path)
                         duration = len(audio_array) / sr
@@ -487,10 +479,8 @@ class VoiceSpeaker:
             await process.wait()
 
         for p in [temp_aiff, wav_path]:
-            try:
+            with contextlib.suppress(Exception):
                 Path(p).unlink()
-            except Exception:
-                pass
 
     async def _play_audio(self, filepath: str):
         """Play audio file using afplay or ffplay."""
@@ -515,14 +505,17 @@ class VoiceSpeaker:
     def stop_speaking(self):
         """Stop any current speech output."""
         try:
-            subprocess.run(
-                ["killall", "say"], capture_output=True, timeout=2
+            killall = shutil.which("killall")
+            if not killall:
+                return
+            subprocess.run(  # nosec B603
+                [killall, "say"], capture_output=True, timeout=2
             )
-            subprocess.run(
-                ["killall", "afplay"], capture_output=True, timeout=2
+            subprocess.run(  # nosec B603
+                [killall, "afplay"], capture_output=True, timeout=2
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to stop speech playback: %s", e)
 
     @staticmethod
     async def _encode_for_browser(wav_bytes: bytes) -> tuple[str, str]:
@@ -555,18 +548,14 @@ class VoiceSpeaker:
                         wav_kb, opus_kb, ratio,
                     )
                     for p in [wav_path, opus_path]:
-                        try:
+                        with contextlib.suppress(Exception):
                             Path(p).unlink()
-                        except Exception:
-                            pass
                     return encoded, "audio/webm;codecs=opus"
 
                 logger.warning("Opus encoding failed (ffmpeg rc=%d), falling back to WAV", proc.returncode)
                 for p in [wav_path, opus_path]:
-                    try:
+                    with contextlib.suppress(Exception):
                         Path(p).unlink()
-                    except Exception:
-                        pass
             except Exception as e:
                 logger.warning("Opus encoding error: %s, falling back to WAV", e)
 
@@ -574,7 +563,7 @@ class VoiceSpeaker:
 
     @staticmethod
     def _compute_amplitude_envelope(
-        audio: "np.ndarray", sample_rate: int, fps: int = 60
+        audio, sample_rate: int, fps: int = 60
     ) -> list[float]:
         """Compute RMS amplitude envelope for UI waveform visualization."""
         import numpy as np

@@ -6,8 +6,6 @@ import logging
 import os
 import secrets
 import time
-from pathlib import Path
-from typing import Optional
 
 from jarvis.config import settings
 
@@ -25,15 +23,20 @@ RATE_LIMIT_WINDOW = 60
 
 _active_sessions: dict[str, float] = {}  # Maps token -> expiry timestamp
 _failed_attempts: dict[str, list[float]] = {}  # Maps IP -> list of failed attempt timestamps
-_current_pin: Optional[str] = None  # Plaintext PIN for display on startup
+_current_pin: str | None = None  # Plaintext PIN for display on startup
 
 
 _PBKDF2_ITERATIONS = 600_000
+_LEGACY_PBKDF2_ITERATIONS = 100_000
+
+
+def _hash_pin_with_iterations(pin: str, salt: bytes, iterations: int) -> str:
+    return hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, iterations).hex()
 
 
 def _hash_pin(pin: str, salt: bytes) -> str:
-    """Hash a PIN with PBKDF2-HMAC-SHA256 (100k iterations)."""
-    return hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, 100_000).hex()
+    """Hash a PIN with PBKDF2-HMAC-SHA256."""
+    return _hash_pin_with_iterations(pin, salt, _PBKDF2_ITERATIONS)
 
 
 def initialize_pin() -> str:
@@ -76,12 +79,12 @@ def initialize_pin() -> str:
     return pin
 
 
-def get_current_pin() -> Optional[str]:
+def get_current_pin() -> str | None:
     """Get the current PIN if just generated; None if loaded from disk."""
     return _current_pin
 
 
-def verify_pin(pin: str, client_ip: str = "") -> Optional[str]:
+def verify_pin(pin: str, client_ip: str = "") -> str | None:
     """Verify PIN and return session token if correct."""
     if client_ip:
         now = time.time()
@@ -104,11 +107,22 @@ def verify_pin(pin: str, client_ip: str = "") -> Optional[str]:
     salt = PIN_SALT_FILE.read_bytes()
 
     candidate_hash = _hash_pin(pin, salt)
-    if not hmac.compare_digest(candidate_hash, stored_hash):
+    legacy_hash = _hash_pin_with_iterations(pin, salt, _LEGACY_PBKDF2_ITERATIONS)
+    if not (
+        hmac.compare_digest(candidate_hash, stored_hash)
+        or hmac.compare_digest(legacy_hash, stored_hash)
+    ):
         if client_ip:
             _failed_attempts.setdefault(client_ip, []).append(time.time())
         logger.warning("Invalid PIN attempt from %s.", client_ip or "unknown")
         return None
+
+    if (
+        hmac.compare_digest(legacy_hash, stored_hash)
+        and not hmac.compare_digest(candidate_hash, stored_hash)
+    ):
+        PIN_HASH_FILE.write_text(candidate_hash, encoding="utf-8")
+        logger.info("PIN hash upgraded to current PBKDF2 iteration count.")
 
     token = secrets.token_hex(32)
     _active_sessions[token] = time.time() + SESSION_TOKEN_EXPIRY
@@ -144,7 +158,7 @@ def revoke_token(token: str):
 
 def is_local_request(client_host: str) -> bool:
     """Check if request is from localhost (which bypasses authentication)."""
-    local_hosts = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+    local_hosts = {"127.0.0.1", "localhost", "::1"}
     return client_host in local_hosts
 
 

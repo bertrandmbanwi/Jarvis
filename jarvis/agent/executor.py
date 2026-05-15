@@ -22,21 +22,26 @@ Architecture:
     -> Loop until task is complete
 """
 import asyncio
+import contextlib
 import logging
 import time
-from typing import Optional
+from collections.abc import Callable
+from typing import Any, cast
 
-from jarvis.config import settings
-from jarvis.core.llm import JarvisLLM
-from jarvis.agent.tools_schema import TOOL_SCHEMAS, TOOL_REGISTRY
+from jarvis.agent.qa_agent import QAAgent
+from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS
+from jarvis.core.cache import invalidate_on_mutation, tool_cache
 from jarvis.core.hardening import (
-    get_tool_timeout, execute_with_timeout, validate_tool_args,
-    check_dangerous_command, classify_error, user_friendly_error,
-    get_tool_circuit, ErrorCategory,
+    check_dangerous_command,
+    classify_error,
+    execute_with_timeout,
+    get_tool_circuit,
+    get_tool_timeout,
+    user_friendly_error,
+    validate_tool_args,
 )
-from jarvis.core.cache import tool_cache, invalidate_on_mutation
+from jarvis.core.llm import JarvisLLM
 from jarvis.core.perf import perf_tracker
-from jarvis.agent.qa_agent import QAAgent, QAResult
 
 logger = logging.getLogger("jarvis.agent")
 
@@ -44,28 +49,32 @@ logger = logging.getLogger("jarvis.agent")
 class AgentExecutor:
     """Executes user requests using Claude's native tool_use agentic loop."""
 
-    def __init__(self, llm: Optional[JarvisLLM] = None):
+    def __init__(self, llm: JarvisLLM | None = None):
         self.llm = llm or JarvisLLM()
-        self._on_tool_executed = None
+        self._on_tool_executed: Callable[[str, bool, float, str], Any] | None = None
         self._qa_agent = QAAgent()
         self._qa_enabled = True
 
     async def execute(
         self,
         user_input: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
+        tools: list[dict] | None = None,
+        system_prompt_override: str | None = None,
     ) -> str:
         """Process a user request using Claude's agentic tool-use loop."""
         logger.info("Agent executing (tier=%s): '%s'", tier, user_input[:100])
+        active_tools = tools or TOOL_SCHEMAS
 
         response_text, tool_calls = await self.llm.chat_with_tools(
             user_message=user_input,
-            tools=TOOL_SCHEMAS,
+            tools=active_tools,
             tool_executor=self._execute_tool,
             conversation_history=conversation_history,
             tier=tier,
             max_iterations=10,
+            system_prompt_override=system_prompt_override,
         )
 
         if tool_calls:
@@ -99,11 +108,12 @@ class AgentExecutor:
                         )
                         response_text, _ = await self.llm.chat_with_tools(
                             user_message=retry_prompt,
-                            tools=TOOL_SCHEMAS,
+                            tools=active_tools,
                             tool_executor=self._execute_tool,
                             conversation_history=conversation_history,
                             tier=tier,
                             max_iterations=5,
+                            system_prompt_override=system_prompt_override,
                         )
                         logger.info("QA retry completed.")
                 except Exception as e:
@@ -114,19 +124,22 @@ class AgentExecutor:
     async def execute_stream(
         self,
         user_input: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
+        tools: list[dict] | None = None,
+        system_prompt_override: str | None = None,
     ):
         """Stream the final response token by token after tool iterations."""
         logger.info("Agent executing (streaming, tier=%s): '%s'", tier, user_input[:100])
 
         async for token in self.llm.chat_with_tools_stream(
             user_message=user_input,
-            tools=TOOL_SCHEMAS,
+            tools=tools or TOOL_SCHEMAS,
             tool_executor=self._execute_tool,
             conversation_history=conversation_history,
             tier=tier,
             max_iterations=10,
+            system_prompt_override=system_prompt_override,
         ):
             yield token
 
@@ -134,8 +147,10 @@ class AgentExecutor:
         self,
         subtask_description: str,
         prior_context: str = "",
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
+        tools: list[dict] | None = None,
+        system_prompt_override: str | None = None,
     ) -> str:
         """Execute a single subtask from a decomposed plan."""
         if prior_context:
@@ -154,11 +169,12 @@ class AgentExecutor:
 
         response_text, tool_calls = await self.llm.chat_with_tools(
             user_message=prompt,
-            tools=TOOL_SCHEMAS,
+            tools=tools or TOOL_SCHEMAS,
             tool_executor=self._execute_tool,
             conversation_history=conversation_history,
             tier=tier,
             max_iterations=10,
+            system_prompt_override=system_prompt_override,
         )
 
         if tool_calls:
@@ -195,8 +211,9 @@ class AgentExecutor:
             warning = check_dangerous_command(cmd)
             if warning:
                 logger.warning("Dangerous command detected for %s: %s", tool_name, warning)
+                return f"Command blocked for safety: {warning}"
 
-        tool_fn = TOOL_REGISTRY[tool_name]
+        tool_fn = cast(Callable[..., Any], TOOL_REGISTRY[tool_name])
         timeout_s = get_tool_timeout(tool_name)
         start_time = time.time()
 
@@ -258,7 +275,7 @@ class AgentExecutor:
                 circuit.record_failure()
                 category = classify_error(e2)
                 return user_friendly_error(category, context=f"running {tool_name}")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             duration = time.time() - start_time
             error_msg = f"Timed out after {timeout_s:.0f}s"
             self._notify_tool_executed(tool_name, False, duration, error_msg)
@@ -287,7 +304,5 @@ class AgentExecutor:
     ):
         """Notify learning loop of tool execution outcome."""
         if self._on_tool_executed:
-            try:
+            with contextlib.suppress(Exception):
                 self._on_tool_executed(tool_name, success, duration_s, error)
-            except Exception:
-                pass

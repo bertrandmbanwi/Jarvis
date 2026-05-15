@@ -15,8 +15,8 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
+from typing import Any, cast
 
 from jarvis.core.llm import JarvisLLM
 
@@ -120,7 +120,7 @@ class PlanSummary:
         lines = [
             f"Task: {self.task_type.upper()}",
             f"Project: {self.project}",
-            f"",
+            "",
             self.description,
             "",
         ]
@@ -178,11 +178,11 @@ class PlanningSession:
             working_dir=working_dir,
         )
         self.exchange_count = 0
-        self.context_window: list[dict] = []
+        self.context_window: list[dict[str, str]] = []
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
         self._closed = False
-        self._close_reason = None
+        self._close_reason: str | None = None
 
         logger.info(
             "Planning session started: task_type=%s, project=%s",
@@ -366,9 +366,8 @@ class PlanningSession:
                 self.current_plan.tech_stack = ["React"]
         elif key == "approach":
             self.current_plan.description += f" (Approach: {value})"
-        elif key == "testing":
-            if "test" in value.lower():
-                self.current_plan.tech_stack.append(value)
+        elif key == "testing" and "test" in value.lower():
+            self.current_plan.tech_stack.append(value)
 
 
 class ConversationMode:
@@ -376,8 +375,8 @@ class ConversationMode:
 
     def __init__(self):
         """Initialize conversation mode manager."""
-        self._mode = "chat"
-        self._planning_session: Optional[PlanningSession] = None
+        self._mode: str = "chat"
+        self._planning_session: PlanningSession | None = None
         self._browsing_active = False
 
     @property
@@ -439,7 +438,7 @@ class ConversationMode:
             and self._planning_session.is_active
         )
 
-    def get_planning_session(self) -> Optional[PlanningSession]:
+    def get_planning_session(self) -> PlanningSession | None:
         """Get current planning session if active."""
         if self.is_planning():
             return self._planning_session
@@ -448,7 +447,7 @@ class ConversationMode:
 
 async def detect_planning_mode(
     user_text: str,
-    llm: Optional[JarvisLLM] = None,
+    llm: JarvisLLM | None = None,
     force_bypass: bool = False,
 ) -> PlanningDecision:
     """
@@ -608,12 +607,13 @@ async def _classify_with_llm(
         # Parse JSON response
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if match:
-            data = json.loads(match.group(0))
+            data = cast(dict[str, Any], json.loads(match.group(0)))
+            missing_info = data.get("missing_info", [])
             return PlanningDecision(
                 needs_planning=bool(data.get("needs_planning", False)),
                 task_type=task_type,
                 confidence=float(data.get("confidence", 0.7)),
-                missing_info=data.get("missing_info", []),
+                missing_info=[str(item) for item in missing_info] if isinstance(missing_info, list) else [],
                 smart_defaults=SMART_DEFAULTS.get(task_type, {}),
             )
     except Exception as e:

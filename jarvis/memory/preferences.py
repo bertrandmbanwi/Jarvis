@@ -20,10 +20,8 @@ import json
 import logging
 import math
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
 from jarvis.config import settings
 
@@ -69,7 +67,7 @@ class InteractionPattern:
         return self.count * self.recency_weight
 
     @property
-    def peak_hour(self) -> Optional[int]:
+    def peak_hour(self) -> int | None:
         """Hour of day when this pattern is most common."""
         if max(self.hourly_counts) == 0:
             return None
@@ -163,7 +161,7 @@ class PreferenceTracker:
             self._patterns[name] = InteractionPattern(name=name, category=category)
         return self._patterns[name]
 
-    def record_request(self, user_message: str, tier: str, tool_calls: list[str] = None):
+    def record_request(self, user_message: str, tier: str, tool_calls: list[str] | None = None):
         """Record a user interaction for preference learning."""
         from datetime import datetime
         hour = datetime.now().hour
@@ -268,11 +266,10 @@ class PreferenceTracker:
             sections.append(f"Frequent topics: {topic_list}")
 
         active = self.get_active_hours()
-        if active:
-            if len(active) > 3:
-                sections.append(
-                    f"Most active hours: {active[0]:02d}:00-{active[-1]:02d}:00"
-                )
+        if active and len(active) > 3:
+            sections.append(
+                f"Most active hours: {active[0]:02d}:00-{active[-1]:02d}:00"
+            )
 
         detail_pref = self.get_detail_preference()
         if detail_pref != "balanced":

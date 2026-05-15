@@ -1,11 +1,10 @@
 """JARVIS Claude Code integration: spawns Claude Code CLI for coding, shell, scaffolding, git."""
 import asyncio
-import json
+import contextlib
 import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.claude_code")
 
@@ -16,7 +15,7 @@ _SESSION_DIR = Path.home() / ".jarvis" / "claude-sessions"
 _SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _find_claude_binary() -> Optional[str]:
+def _find_claude_binary() -> str | None:
     """Locate the claude CLI binary on the system."""
     # Check common install locations
     candidates = [
@@ -64,8 +63,10 @@ async def run_claude_code(
         claude_bin,
         "--print",
         "--output-format", "text",
-        "--dangerously-skip-permissions",
     ]
+
+    if os.getenv("JARVIS_CLAUDE_CODE_SKIP_PERMISSIONS", "").lower() in {"1", "true", "yes"}:
+        cmd.append("--dangerously-skip-permissions")
 
     # Session persistence: continue previous context
     if continue_session:
@@ -113,17 +114,15 @@ async def run_claude_code(
             output = "(Claude Code completed the task but produced no text output.)"
 
         if len(output) > 8000:
-            output = output[:7500] + "\n\n... [output truncated, total length: {} chars]".format(len(output))
+            output = output[:7500] + f"\n\n... [output truncated, total length: {len(output)} chars]"
 
         logger.info("Claude Code: task completed (%d chars output)", len(output))
         return output
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Claude Code: task timed out after %ds", CLAUDE_CODE_TIMEOUT)
-        try:
+        with contextlib.suppress(Exception):
             process.kill()
-        except Exception:
-            pass
         return f"Error: Claude Code task timed out after {CLAUDE_CODE_TIMEOUT} seconds."
     except FileNotFoundError:
         return "Error: Claude Code binary not found or not executable."

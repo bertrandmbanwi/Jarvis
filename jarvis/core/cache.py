@@ -5,8 +5,8 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger("jarvis.core.cache")
 
@@ -32,17 +32,13 @@ class CacheEntry:
 
 TOOL_CACHE_TTLS: dict[str, float] = {
     "get_battery_status": 30.0,
-    "get_disk_usage": 60.0,
-    "get_cpu_usage": 15.0,
     "get_system_info": 120.0,
-    "get_volume": 10.0,
-    "get_brightness": 10.0,
     "get_upcoming_events": 120.0,
-    "list_calendars": 300.0,
-    "get_unread_email_count": 60.0,
-    "read_inbox": 60.0,
-    "list_running_apps": 10.0,
-    "get_active_window": 5.0,
+    "get_calendar_list": 300.0,
+    "get_unread_count": 60.0,
+    "get_recent_emails": 60.0,
+    "get_running_applications": 10.0,
+    "get_frontmost_application": 5.0,
     "get_plan_status": 5.0,
     "get_plan_history": 30.0,
     "get_learning_insights": 60.0,
@@ -61,7 +57,7 @@ UNCACHEABLE_TOOLS: set[str] = {
     "run_command",
     "run_terminal_command_smart",
     "send_email",
-    "create_event",
+    "create_calendar_event",
     "write_file",
     "move_file",
     "copy_file",
@@ -70,7 +66,7 @@ UNCACHEABLE_TOOLS: set[str] = {
     "set_volume",
     "set_brightness",
     "toggle_dark_mode",
-    "show_notification",
+    "send_notification",
     "open_application",
     "close_application",
     "paste_to_app",
@@ -137,7 +133,7 @@ class ResultCache:
         """Get the TTL for a tool (0.0 if not cacheable)."""
         return TOOL_CACHE_TTLS.get(tool_name, 0.0)
 
-    async def get(self, tool_name: str, tool_input: dict) -> Optional[Any]:
+    async def get(self, tool_name: str, tool_input: dict) -> Any | None:
         """Look up a cached result, removing expired entries."""
         if not self.is_cacheable(tool_name):
             return None
@@ -197,7 +193,7 @@ class ResultCache:
                 tool_name=tool_name,
             )
 
-    async def invalidate(self, tool_name: str = None):
+    async def invalidate(self, tool_name: str | None = None):
         """Invalidate cache entries for a tool or all entries."""
         async with self._lock:
             if tool_name is None:
@@ -265,12 +261,10 @@ class ResultCache:
 tool_cache = ResultCache(max_size=200)
 
 INVALIDATION_MAP: dict[str, list[str]] = {
-    "send_email": ["get_unread_email_count", "read_inbox"],
-    "create_event": ["get_upcoming_events"],
-    "set_volume": ["get_volume"],
-    "set_brightness": ["get_brightness"],
-    "open_application": ["list_running_apps"],
-    "close_application": ["list_running_apps"],
+    "send_email": ["get_unread_count", "get_recent_emails"],
+    "create_calendar_event": ["get_upcoming_events"],
+    "open_application": ["get_running_applications", "get_frontmost_application"],
+    "close_application": ["get_running_applications", "get_frontmost_application"],
     "update_user_profile": ["get_user_profile", "get_user_preference"],
     "set_proactive_setting": ["get_proactive_status"],
     "cancel_active_plan": ["get_plan_status"],

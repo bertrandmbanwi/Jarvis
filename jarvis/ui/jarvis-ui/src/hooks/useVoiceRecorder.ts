@@ -1,17 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback } from "react";
-
-function getApiBaseUrl(): string {
-  if (typeof window === "undefined") return "http://localhost:8741";
-  const port = window.location.port;
-  const hostname = window.location.hostname;
-  const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
-  if ((!port || port === "443" || port === "80") && !isLocal) {
-    return `${window.location.origin}/jarvis-api`;
-  }
-  return `${window.location.protocol}//${hostname}:8741`;
-}
+import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 const JARVIS_API_URL = getApiBaseUrl();
 
 const SILENCE_RMS_THRESHOLD = 0.015;
@@ -101,10 +91,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): UseVoiceRec
           const ext = recorder.mimeType.includes("mp4") ? "mp4" : "webm";
           formData.append("audio", blob, `recording.${ext}`);
 
-          const headers: Record<string, string> = {};
-          if (options?.authToken) {
-            headers["Authorization"] = `Bearer ${options.authToken}`;
-          }
+          const headers = jarvisHeaders(options?.authToken);
 
           const response = await fetch(`${JARVIS_API_URL}/voice/transcribe`, {
             method: "POST",
@@ -137,7 +124,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): UseVoiceRec
 
       recorder.stop();
     });
-  }, [cleanupSilenceDetection]);
+  }, [cleanupSilenceDetection, options?.authToken]);
 
   stopRecordingRef.current = stopRecording;
 

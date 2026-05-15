@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 
 interface Settings {
   models: {
@@ -23,6 +24,7 @@ interface Settings {
     prefer_claude: boolean;
     ollama_url: string;
     ollama_model: string;
+    ollama_fast_model: string;
   };
 }
 
@@ -37,7 +39,15 @@ interface SystemStatus {
 
 type Step = "api_keys" | "models" | "voice" | "costs";
 
-export function SettingsPanel() {
+interface SettingsPanelProps {
+  authToken?: string | null;
+}
+
+function settingsApiUrl(path = ""): string {
+  return `${getApiBaseUrl()}/api/settings${path}`;
+}
+
+export function SettingsPanel({ authToken }: SettingsPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [currentStep, setCurrentStep] = useState<Step>("api_keys");
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -49,35 +59,46 @@ export function SettingsPanel() {
   const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null);
   const [ollamaValid, setOllamaValid] = useState<boolean | null>(null);
 
+  const loadSettings = useCallback(async () => {
+    try {
+      const response = await fetch(settingsApiUrl(), {
+        headers: jarvisHeaders(authToken),
+      });
+      if (!response.ok) {
+        throw new Error(`Settings request failed: ${response.status}`);
+      }
+      const data = await response.json();
+      setSettings(data);
+      setOllamaUrl(data.integrations?.ollama_url || "");
+      setError(null);
+    } catch (err) {
+      setError("Failed to load settings");
+      console.error(err);
+    }
+  }, [authToken]);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const response = await fetch(settingsApiUrl("/status"), {
+        headers: jarvisHeaders(authToken),
+      });
+      if (!response.ok) {
+        throw new Error(`Status request failed: ${response.status}`);
+      }
+      const data = await response.json();
+      setStatus(data);
+    } catch (err) {
+      console.error("Failed to load status:", err);
+    }
+  }, [authToken]);
+
   // Load settings on mount
   useEffect(() => {
     if (isOpen) {
       loadSettings();
       loadStatus();
     }
-  }, [isOpen]);
-
-  async function loadSettings() {
-    try {
-      const response = await fetch("/api/settings");
-      const data = await response.json();
-      setSettings(data);
-      setError(null);
-    } catch (err) {
-      setError("Failed to load settings");
-      console.error(err);
-    }
-  }
-
-  async function loadStatus() {
-    try {
-      const response = await fetch("/api/settings/status");
-      const data = await response.json();
-      setStatus(data);
-    } catch (err) {
-      console.error("Failed to load status:", err);
-    }
-  }
+  }, [isOpen, loadSettings, loadStatus]);
 
   async function testApiKey() {
     if (!apiKey) {
@@ -87,9 +108,9 @@ export function SettingsPanel() {
 
     setLoading(true);
     try {
-      const response = await fetch("/api/settings/test-api", {
+      const response = await fetch(settingsApiUrl("/test-api"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jarvisHeaders(authToken, true),
         body: JSON.stringify({ api_key: apiKey }),
       });
       const result = await response.json();
@@ -118,9 +139,10 @@ export function SettingsPanel() {
 
     setLoading(true);
     try {
-      const response = await fetch("/api/settings/test-ollama", {
+      const response = await fetch(settingsApiUrl("/test-ollama"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jarvisHeaders(authToken, true),
+        body: JSON.stringify({ base_url: ollamaUrl }),
       });
       const result = await response.json();
 
@@ -143,9 +165,9 @@ export function SettingsPanel() {
   async function saveSettings(updates: Record<string, any>) {
     setLoading(true);
     try {
-      const response = await fetch("/api/settings/update", {
+      const response = await fetch(settingsApiUrl("/update"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jarvisHeaders(authToken, true),
         body: JSON.stringify(updates),
       });
 
@@ -316,6 +338,13 @@ export function SettingsPanel() {
                 {apiKeyValid === false && (
                   <p className="mt-2 text-red-400 text-sm">API key is invalid</p>
                 )}
+                <button
+                  onClick={() => saveSettings({ ANTHROPIC_API_KEY: apiKey })}
+                  disabled={loading || !apiKey}
+                  className="mt-2 w-full py-2 px-3 bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition disabled:opacity-50"
+                >
+                  Save API Key
+                </button>
               </div>
 
               <div>
@@ -342,6 +371,13 @@ export function SettingsPanel() {
                 {ollamaValid === false && (
                   <p className="mt-2 text-red-400 text-sm">Ollama is not reachable</p>
                 )}
+                <button
+                  onClick={() => saveSettings({ OLLAMA_BASE_URL: ollamaUrl })}
+                  disabled={loading || !ollamaUrl}
+                  className="mt-2 w-full py-2 px-3 bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition disabled:opacity-50"
+                >
+                  Save Ollama URL
+                </button>
               </div>
 
               {/* Status Indicators */}

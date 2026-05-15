@@ -1,9 +1,12 @@
 """JARVIS Voice Listener: microphone input, wake word detection, and speech-to-text."""
 import asyncio
+import contextlib
 import logging
-import numpy as np
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Any
+
+import numpy as np
 
 from jarvis.config import settings
 from jarvis.core import profile
@@ -57,19 +60,20 @@ class VoiceListener:
     """Listens for wake word, captures and transcribes speech."""
 
     def __init__(self):
-        self._audio: Optional[object] = None
-        self._stream: Optional[object] = None
-        self._wake_model: Optional[object] = None
-        self._whisper_model: Optional[object] = None
-        self._moonshine_model: Optional[object] = None
+        self._audio: Any | None = None
+        self._stream: Any | None = None
+        self._wake_model: Any | None = None
+        self._whisper_model: Any | None = None
+        self._moonshine_model: Any | None = None
+        self._moonshine_tokenizer: Any | None = None
         self._stt_engine: str = "none"  # "moonshine", "faster-whisper", "whisper", "none"
         self._is_listening = False
         self._is_speaking = False
         self._in_followup_window = False
         self._followup_start = 0.0
         self._last_wake_time = 0.0
-        self._on_wake_callback: Optional[Callable] = None
-        self._on_speech_callback: Optional[Callable] = None
+        self._on_wake_callback: Callable | None = None
+        self._on_speech_callback: Callable | None = None
         self.FOLLOWUP_WINDOW_SECONDS = 8.0
         self._followup_sustained_frames = 0
         self._followup_max_amplitude = 0.0
@@ -289,7 +293,7 @@ class VoiceListener:
         finally:
             self._cleanup_stream()
 
-    def _get_transcription_hints(self) -> tuple[Optional[str], Optional[list[str]]]:
+    def _get_transcription_hints(self) -> tuple[str | None, list[str] | None]:
         """Build initial_prompt and hotwords from user profile for better transcription."""
         if not settings.WHISPER_USE_LOCATION_HINTS:
             return None, None
@@ -353,9 +357,13 @@ class VoiceListener:
             logger.debug("Wake word check error: %s", e)
             return False
 
-    async def _record_speech(self) -> Optional[np.ndarray]:
+    async def _record_speech(self) -> np.ndarray | None:
         """Record speech until silence detected; return numpy array or None if too short."""
         logger.info("Listening... (speak now, threshold=%d)", settings.SILENCE_THRESHOLD)
+        if self._stream is None:
+            logger.error("Cannot record speech: audio stream is not open.")
+            return None
+
         frames = []
         silence_start = None
         has_heard_speech = False
@@ -451,17 +459,13 @@ class VoiceListener:
         """Transcribe using Moonshine ONNX (low hallucination, real-time optimized)."""
         try:
             # Moonshine expects a 2D array with shape (1, num_samples) - batch dimension required
-            if audio_float.ndim == 1:
-                audio_input = audio_float[np.newaxis, :]
-            else:
-                audio_input = audio_float
+            audio_input = audio_float[np.newaxis, :] if audio_float.ndim == 1 else audio_float
             # generate() returns raw token IDs; decode them via the tokenizer
+            if self._moonshine_model is None or self._moonshine_tokenizer is None:
+                return ""
             tokens = self._moonshine_model.generate(audio_input)
             decoded = self._moonshine_tokenizer.decode_batch(tokens)
-            if isinstance(decoded, list):
-                text = " ".join(decoded)
-            else:
-                text = str(decoded)
+            text = " ".join(decoded) if isinstance(decoded, list) else str(decoded)
             return text.strip()
         except Exception as e:
             logger.error("Moonshine transcription error: %s", e)
@@ -500,6 +504,8 @@ class VoiceListener:
         if hotwords:
             transcribe_kwargs["hotwords"] = " ".join(hotwords)
 
+        if self._whisper_model is None:
+            return ""
         segments, info = self._whisper_model.transcribe(audio_float, **transcribe_kwargs)
         parts = []
         for segment in segments:
@@ -516,12 +522,14 @@ class VoiceListener:
 
     def _transcribe_whisper_original(self, audio_float: np.ndarray) -> str:
         """Transcribe using original OpenAI Whisper (fallback)."""
+        if self._whisper_model is None:
+            return ""
         result = self._whisper_model.transcribe(
             audio_float,
             language=settings.WHISPER_LANGUAGE,
             fp16=False,
         )
-        return result.get("text", "").strip()
+        return str(result.get("text", "")).strip()
 
     def _is_meaningful_speech(self, text: str) -> bool:
         """Filter out known Whisper hallucinations on silence/noise. Errs on side of inclusion."""
@@ -618,8 +626,8 @@ class VoiceListener:
             try:
                 self._stream.stop_stream()
                 self._stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Audio stream cleanup failed: %s", e)
             self._stream = None
 
     def stop(self):
@@ -631,7 +639,5 @@ class VoiceListener:
         """Terminate listener and close audio resources."""
         self.stop()
         if self._audio is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._audio.terminate()
-            except Exception:
-                pass

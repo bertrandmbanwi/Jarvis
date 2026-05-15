@@ -135,7 +135,7 @@ export default function CinematicView({
     return () => {
       if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
     };
-  }, [latestAssistant?.id]);
+  }, [latestAssistant]);
 
   const toggleTranscript = useCallback(() => {
     setShowTranscript((prev) => !prev);

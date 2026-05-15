@@ -2,7 +2,7 @@
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import Any, cast
 
 logger = logging.getLogger("jarvis.tools.weather")
 
@@ -11,8 +11,6 @@ try:
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
-    import urllib.request
-    import urllib.error
 
 
 async def get_weather(location: str) -> str:
@@ -43,7 +41,7 @@ async def get_weather(location: str) -> str:
         return f"Error retrieving weather: {str(e)[:100]}"
 
 
-async def _geocode_location(location: str) -> Optional[tuple[float, float, str]]:
+async def _geocode_location(location: str) -> tuple[float, float, str] | None:
     """Convert location name or zip to latitude, longitude, and place name."""
     url = "https://geocoding-api.open-meteo.com/v1/search"
 
@@ -109,15 +107,13 @@ def _build_search_variants(location: str) -> list[str]:
             variants.append(city_part)
             variants.append(location)
 
-    if re.match(r'^\d{5}(-\d{4})?$', location):
-        variants.append(location)
-    elif not variants:
+    if re.match(r'^\d{5}(-\d{4})?$', location) or not variants:
         variants.append(location)
 
     return variants
 
 
-async def _fetch_weather(lat: float, lon: float) -> Optional[dict]:
+async def _fetch_weather(lat: float, lon: float) -> dict | None:
     """Fetch weather data from Open-Meteo Weather API."""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -139,7 +135,7 @@ async def _fetch_weather(lat: float, lon: float) -> Optional[dict]:
         return None
 
 
-async def _http_get(url: str, params: dict) -> Optional[dict]:
+async def _http_get(url: str, params: dict) -> dict | None:
     """Fetch JSON from a URL with query parameters."""
     if HAS_HTTPX:
         return await _http_get_httpx(url, params)
@@ -150,27 +146,28 @@ async def _http_get(url: str, params: dict) -> Optional[dict]:
         )
 
 
-async def _http_get_httpx(url: str, params: dict) -> Optional[dict]:
+async def _http_get_httpx(url: str, params: dict) -> dict | None:
     """Fetch using httpx (async-friendly)."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            return cast(dict[str, Any], response.json())
     except Exception as e:
         logger.error("httpx request error: %s", e)
         return None
 
 
-def _http_get_urllib(url: str, params: dict) -> Optional[dict]:
+def _http_get_urllib(url: str, params: dict) -> dict | None:
     """Fetch using urllib (sync, run in executor)."""
     try:
         import urllib.parse
         query_string = urllib.parse.urlencode(params)
         full_url = f"{url}?{query_string}"
-        with urllib.request.urlopen(full_url, timeout=10) as response:
+        # URL is built from fixed weather API constants plus encoded query params.
+        with urllib.request.urlopen(full_url, timeout=10) as response:  # nosec B310
             data = response.read()
-            return json.loads(data)
+            return cast(dict[str, Any], json.loads(data))
     except Exception as e:
         logger.error("urllib request error: %s", e)
         return None
@@ -221,7 +218,7 @@ def _format_weather_summary(place_name: str, weather_data: dict) -> str:
     return "\n".join(lines)
 
 
-def _weather_code_to_text(code: Optional[int]) -> str:
+def _weather_code_to_text(code: int | None) -> str:
     """Convert WMO weather code to human-readable text."""
     if code is None:
         return "Unknown"

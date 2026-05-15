@@ -1,15 +1,12 @@
 """Tests for JARVIS learning loop module."""
 import json
 import time
-from pathlib import Path
-
-import pytest
 
 from jarvis.agent.learning import (
-    LearningLoop,
-    ToolStats,
-    PlanPattern,
     MIN_EXECUTIONS_FOR_RELIABILITY,
+    LearningLoop,
+    PlanPattern,
+    ToolStats,
 )
 
 
@@ -353,9 +350,9 @@ class TestGetCommonFailurePatterns:
     def test_failure_pattern_counts(self):
         """Patterns should show occurrence counts."""
         loop = LearningLoop()
-        for i in range(5):
+        for _i in range(5):
             loop._failure_log.append({"error": "timeout error", "timestamp": time.time()})
-        for i in range(3):
+        for _i in range(3):
             loop._failure_log.append({"error": "connection error", "timestamp": time.time()})
         patterns = loop.get_common_failure_patterns(limit=5)
         assert len(patterns) > 0
@@ -442,7 +439,7 @@ class TestGetPlannerContext:
                         {"title": "Step 2", "status": "completed", "duration_s": 1.0}],
             "completed_at": time.time()
         }
-        for i in range(5):
+        for _i in range(5):
             loop.record_plan_outcome(plan)
         context = loop.get_planner_context()
         assert "SUCCESSFUL PLAN EXAMPLES" in context or "PLAN HISTORY" in context

@@ -14,8 +14,6 @@ import logging
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
 from jarvis.config import settings
 
@@ -202,7 +200,7 @@ def prune_old_turns(keep: int = MAX_RETAINED_TURNS) -> int:
     """
     try:
         conn = _get_conn()
-        total = conn.execute("SELECT COUNT(*) FROM conversation_turns").fetchone()[0]
+        total = int(conn.execute("SELECT COUNT(*) FROM conversation_turns").fetchone()[0])
         if total <= keep:
             conn.close()
             return 0
@@ -238,7 +236,7 @@ def get_turn_count() -> int:
     """Get the total number of stored conversation turns."""
     try:
         conn = _get_conn()
-        count = conn.execute("SELECT COUNT(*) FROM conversation_turns").fetchone()[0]
+        count = int(conn.execute("SELECT COUNT(*) FROM conversation_turns").fetchone()[0])
         conn.close()
         return count
     except Exception:

@@ -1,17 +1,19 @@
 """Production-grade error handling, retry logic, timeouts, input sanitization, and circuit breaking."""
 import asyncio
 import logging
-import random
 import re
+import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Optional
+from enum import StrEnum
+from typing import Any
 
 logger = logging.getLogger("jarvis.hardening")
+_JITTER_RANDOM = secrets.SystemRandom()
 
 
-class ErrorCategory(str, Enum):
+class ErrorCategory(StrEnum):
     """Categorized error types for structured handling."""
     RATE_LIMIT = "rate_limit"
     AUTH = "auth"
@@ -144,8 +146,8 @@ class RetryPolicy:
         """Calculate the delay before the next retry attempt."""
         delay = min(self.base_delay_s * (2 ** attempt), self.max_delay_s)
         if self.jitter:
-            delay *= (0.5 + random.random())  # 50%-150% of calculated delay
-        return delay
+            delay *= 0.5 + _JITTER_RANDOM.random()  # 50%-150% of calculated delay
+        return float(delay)
 
 
 API_RETRY_POLICY = RetryPolicy(max_retries=3, base_delay_s=1.0, max_delay_s=30.0)
@@ -163,7 +165,7 @@ async def retry_with_backoff(
     **kwargs,
 ) -> Any:
     """Execute async function with retry and exponential backoff."""
-    last_error = None
+    last_error: Exception | None = None
 
     for attempt in range(policy.max_retries + 1):
         try:
@@ -190,7 +192,9 @@ async def retry_with_backoff(
             await asyncio.sleep(delay)
 
     # Should not reach here, but just in case
-    raise last_error
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Retry loop exited without returning or capturing an exception.")
 
 
 TOOL_TIMEOUTS: dict[str, float] = {
@@ -256,15 +260,15 @@ async def execute_with_timeout(
     """Execute coroutine with timeout guard."""
     try:
         return await asyncio.wait_for(coro, timeout=timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError as err:
         logger.warning(
             "Tool '%s' timed out after %.1fs",
             tool_name or "unknown", timeout_s,
         )
-        raise asyncio.TimeoutError(
+        raise TimeoutError(
             f"Tool '{tool_name}' timed out after {timeout_s:.0f}s. "
             f"The operation took too long to complete."
-        )
+        ) from err
 
 
 MAX_USER_INPUT_LENGTH = 10000
@@ -312,26 +316,24 @@ def validate_tool_args(tool_name: str, args: dict) -> dict:
                 value = value[:MAX_TOOL_ARG_LENGTH]
 
             # Validate file paths
-            if key in ("path", "file_path", "directory", "source", "destination"):
-                if len(value) > MAX_FILE_PATH_LENGTH:
-                    logger.warning(
-                        "Tool '%s' file path too long (%d chars).",
-                        tool_name, len(value),
-                    )
-                    value = value[:MAX_FILE_PATH_LENGTH]
+            if key in ("path", "file_path", "directory", "source", "destination") and len(value) > MAX_FILE_PATH_LENGTH:
+                logger.warning(
+                    "Tool '%s' file path too long (%d chars).",
+                    tool_name, len(value),
+                )
+                value = value[:MAX_FILE_PATH_LENGTH]
 
         cleaned[key] = value
 
     return cleaned
 
 
-def check_dangerous_command(command: str) -> Optional[str]:
-    """Check if command contains dangerous patterns (warns but doesn't block)."""
+def check_dangerous_command(command: str) -> str | None:
+    """Check if command contains dangerous patterns that should be blocked."""
     for pattern in _DANGEROUS_SHELL_PATTERNS:
         if re.search(pattern, command, re.IGNORECASE):
             return (
-                f"Warning: this command matches a dangerous pattern ({pattern}). "
-                f"Proceeding with caution."
+                f"this command matches a dangerous pattern ({pattern})."
             )
     return None
 
