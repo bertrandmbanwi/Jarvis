@@ -1,8 +1,6 @@
 """JARVIS macOS Control Tools: AppleScript-based automation for Mac apps and system."""
 import asyncio
 import logging
-import subprocess
-from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.mac_control")
 
@@ -49,11 +47,6 @@ def _is_applescript_safe(script: str) -> tuple[bool, str]:
     return True, "OK"
 
 
-def _escape_applescript(value: str) -> str:
-    """Escape a string for safe interpolation into AppleScript double-quoted strings."""
-    return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
 async def run_applescript(script: str) -> str:
     """Execute an AppleScript and return the output."""
     is_safe, reason = _is_applescript_safe(script)
@@ -69,7 +62,7 @@ async def run_applescript(script: str) -> str:
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             return "Error: AppleScript execution timed out (30s)"
 
@@ -249,7 +242,7 @@ async def set_brightness(level: int) -> str:
             )
             await process2.communicate()
             if process2.returncode != 0:
-                return f"Brightness adjustment requires the 'brightness' CLI tool. Install with: brew install brightness"
+                return "Brightness adjustment requires the 'brightness' CLI tool. Install with: brew install brightness"
         return f"Brightness set to {level}%."
     except Exception as e:
         return f"Error setting brightness: {e}"

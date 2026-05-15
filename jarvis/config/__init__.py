@@ -1,1 +1,1 @@
-from jarvis.config.settings import *
+from jarvis.config.settings import *  # noqa: F403

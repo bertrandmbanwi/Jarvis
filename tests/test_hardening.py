@@ -1,22 +1,22 @@
 """Tests for JARVIS error handling and hardening module."""
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from jarvis.core.hardening import (
-    ErrorCategory,
-    classify_error,
-    user_friendly_error,
-    RetryPolicy,
-    sanitize_user_input,
-    validate_tool_args,
-    check_dangerous_command,
     CircuitBreaker,
-    get_tool_circuit,
+    ErrorCategory,
+    RetryPolicy,
+    check_dangerous_command,
+    classify_error,
     execute_with_timeout,
+    get_tool_circuit,
     retry_with_backoff,
+    sanitize_user_input,
+    user_friendly_error,
+    validate_tool_args,
 )
 
 
@@ -49,7 +49,7 @@ class TestErrorClassification:
 
     def test_classify_timeout_error(self):
         """Timeout errors should be classified correctly."""
-        error = asyncio.TimeoutError("request timed out")
+        error = TimeoutError("request timed out")
         category = classify_error(error)
         assert category == ErrorCategory.TIMEOUT
 
@@ -311,7 +311,7 @@ class TestCircuitBreaker:
     def test_circuit_breaker_open_on_threshold(self):
         """Circuit breaker should open after threshold failures."""
         cb = CircuitBreaker(name="test", failure_threshold=3)
-        for i in range(3):
+        for _i in range(3):
             cb.record_failure()
         assert cb.state == "open"
         assert cb.allow_request() is False
@@ -419,8 +419,8 @@ class TestRetryWithBackoff:
     async def test_exhausts_retries(self):
         """Should raise after exhausting retries."""
         # Use a retryable error (rate limit) so retries actually happen
-        func = AsyncMock(side_effect=Exception("rate limit exceeded"))
-        with pytest.raises(Exception):
+        func = AsyncMock(side_effect=RuntimeError("rate limit exceeded"))
+        with pytest.raises(RuntimeError):
             await retry_with_backoff(
                 func,
                 policy=RetryPolicy(max_retries=2, base_delay_s=0.01, jitter=False)

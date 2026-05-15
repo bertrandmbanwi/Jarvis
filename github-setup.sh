@@ -51,7 +51,7 @@ git commit -m "Initial commit: JARVIS personal AI assistant v0.3.0
 Complete Phases 1-6: voice interaction, cinematic web UI, browser automation,
 macOS system control, multi-agent coordination, and production hardening.
 
-86 tools across 9+ categories. Tiered LLM routing (Haiku/Sonnet/Opus) with
+93 registered tools across 15 categories. Tiered LLM routing (Haiku/Sonnet/Opus) with
 Kokoro TTS, faster-whisper STT, chunked audio streaming, Opus compression,
 per-device audio routing, and Cloudflare tunnel for mobile access."
 

@@ -30,6 +30,7 @@ data/
 jarvis/ui/jarvis-ui/node_modules/
 jarvis/ui/jarvis-ui/.next/
 jarvis/ui/jarvis-ui/out/
+jarvis/ui/jarvis-ui/tsconfig.tsbuildinfo
 
 # --- macOS ---
 .DS_Store

@@ -1,9 +1,8 @@
 """JARVIS Shell Command Execution: runs shell commands safely on macOS with timeout."""
 import asyncio
 import logging
-import shlex
 import re
-from typing import Optional
+import shlex
 
 logger = logging.getLogger("jarvis.tools.shell")
 
@@ -15,7 +14,7 @@ BLOCKED_COMMANDS = [
 BLOCKED_POWER_PATTERNS = [
     "shutdown", "reboot", "restart", "halt", "poweroff", "power off",
     "log out", "logout", "pmset sleepnow", "systemsetup", "fdesetup",
-    "shut down", "sleep", "osascript",
+    "shut down",
 ]
 
 _APPLESCRIPT_POWER_PHRASES = [
@@ -27,7 +26,7 @@ SENSITIVE_PREFIXES = [
 ]
 
 
-def is_command_safe(command: str) -> tuple[bool, str]:
+def is_command_safe(command: str, confirmed: bool = False) -> tuple[bool, str]:
     """Verify command is not destructive or power-affecting."""
     cmd_lower = command.lower().strip()
 
@@ -35,8 +34,8 @@ def is_command_safe(command: str) -> tuple[bool, str]:
         if blocked in cmd_lower:
             return False, f"Blocked: contains dangerous pattern '{blocked}'"
 
-    for power_cmd in ["shutdown", "reboot", "halt", "poweroff", "pmset sleepnow"]:
-        if power_cmd in cmd_lower:
+    for power_cmd in BLOCKED_POWER_PATTERNS:
+        if re.search(rf"\b{re.escape(power_cmd)}\b", cmd_lower):
             return False, (
                 f"Blocked: '{power_cmd}' would affect the host computer. "
                 "JARVIS cannot shut down, restart, or sleep the system."
@@ -52,7 +51,12 @@ def is_command_safe(command: str) -> tuple[bool, str]:
 
     for prefix in SENSITIVE_PREFIXES:
         if cmd_lower.startswith(prefix):
-            return True, f"Warning: sensitive command ({prefix.strip()}). Proceeding with caution."
+            if confirmed:
+                return True, f"Warning: sensitive command ({prefix.strip()}). User confirmation recorded."
+            return False, (
+                f"Blocked: sensitive command ({prefix.strip()}) requires explicit "
+                "user confirmation and confirmed=true."
+            )
 
     return True, "OK"
 
@@ -60,10 +64,11 @@ def is_command_safe(command: str) -> tuple[bool, str]:
 async def run_command(
     command: str,
     timeout: float = 30.0,
-    working_dir: Optional[str] = None,
+    working_dir: str | None = None,
+    confirmed: bool = False,
 ) -> str:
     """Execute a shell command and return its output."""
-    is_safe, reason = is_command_safe(command)
+    is_safe, reason = is_command_safe(command, confirmed=confirmed)
     if not is_safe:
         logger.warning("Blocked command: %s (%s)", command, reason)
         return f"Command blocked for safety: {reason}"
@@ -86,7 +91,7 @@ async def run_command(
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             return f"Command timed out after {timeout}s: {command}"
 

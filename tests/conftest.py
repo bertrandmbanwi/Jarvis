@@ -1,8 +1,7 @@
 """Shared pytest fixtures for JARVIS tests."""
-import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

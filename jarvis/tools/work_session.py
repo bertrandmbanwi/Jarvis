@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -17,6 +17,7 @@ from typing import Optional
 from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.work_session")
+# Claude Code sessions are launched with fixed argv, never shell=True.
 
 SESSION_STATE_DIR = settings.DATA_DIR / "sessions"
 SESSION_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,7 +26,7 @@ ACTIVE_SESSION_FILE = SESSION_STATE_DIR / "active_session.json"
 WORK_SESSION_TIMEOUT = 300
 
 
-def _find_claude_binary() -> Optional[str]:
+def _find_claude_binary() -> str | None:
     """Locate the claude CLI binary on the system."""
     candidates = [
         shutil.which("claude"),
@@ -74,11 +75,7 @@ def is_casual_question(text: str) -> bool:
     ]
 
     import re
-    for pattern in casual_patterns:
-        if re.search(pattern, text_lower):
-            return True
-
-    return False
+    return any(re.search(pattern, text_lower) for pattern in casual_patterns)
 
 
 class WorkSession:
@@ -107,7 +104,7 @@ class WorkSession:
         self.project_name = project_name
         self.session_id = f"{project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self._is_initialized = False
-        self._process: Optional[subprocess.Popen] = None
+        self._process: subprocess.Popen | None = None
 
         if not Path(self.working_dir).is_dir():
             raise ValueError(f"Working directory does not exist: {self.working_dir}")
@@ -215,7 +212,7 @@ class WorkSession:
             )
             return output
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "WorkSession.send() timed out after %ds: session_id=%s",
                 WORK_SESSION_TIMEOUT, self.session_id,
@@ -223,8 +220,8 @@ class WorkSession:
             try:
                 if process:
                     process.kill()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to kill timed-out Claude Code process: %s", e)
             return f"Error: Claude Code task timed out after {WORK_SESSION_TIMEOUT} seconds."
         except FileNotFoundError:
             return "Error: Claude Code binary not found or not executable."
@@ -257,7 +254,7 @@ class WorkSession:
             return None
 
         try:
-            with open(ACTIVE_SESSION_FILE, "r") as f:
+            with open(ACTIVE_SESSION_FILE) as f:
                 data = json.load(f)
 
             session = WorkSession(

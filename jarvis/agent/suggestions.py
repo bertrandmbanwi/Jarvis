@@ -13,12 +13,9 @@ Suggestion priority order:
     5. Lint issues (basic file checks)
     6. Quality improvements from QA results
 """
-import asyncio
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 
 from jarvis.agent.qa_agent import QAResult
 
@@ -57,8 +54,8 @@ def suggest_followup(
     task_type: str,
     task_description: str,
     working_dir: str,
-    qa_result: Optional[QAResult] = None,
-) -> Optional[Suggestion]:
+    qa_result: QAResult | None = None,
+) -> Suggestion | None:
     """
     Generate a proactive follow-up suggestion based on task and project state.
 
@@ -103,7 +100,7 @@ def suggest_followup(
 
     # Priority 4: QA noted quality improvements
     if qa_result and qa_result.issues:
-        quality_suggestion = _check_quality_issues(qa_result)
+        quality_suggestion = _check_quality_issues(qa_result.issues)
         if quality_suggestion:
             return quality_suggestion
 
@@ -132,7 +129,7 @@ def _is_web_project(path: str) -> bool:
         return False
 
 
-def _check_missing_favicon(working_dir: str) -> Optional[Suggestion]:
+def _check_missing_favicon(working_dir: str) -> Suggestion | None:
     """
     Check if web project is missing a favicon.
 
@@ -167,7 +164,7 @@ def _check_missing_favicon(working_dir: str) -> Optional[Suggestion]:
         return None
 
 
-def _check_missing_tests(working_dir: str) -> Optional[Suggestion]:
+def _check_missing_tests(working_dir: str) -> Suggestion | None:
     """
     Check if project is missing test files or directory.
 
@@ -219,7 +216,7 @@ def _check_missing_tests(working_dir: str) -> Optional[Suggestion]:
         return None
 
 
-def _check_missing_readme(working_dir: str) -> Optional[Suggestion]:
+def _check_missing_readme(working_dir: str) -> Suggestion | None:
     """
     Check if project is missing a README.md file.
 
@@ -254,7 +251,7 @@ def _check_missing_readme(working_dir: str) -> Optional[Suggestion]:
         return None
 
 
-def _check_quality_issues(qa_result: Optional[list[str]]) -> Optional[Suggestion]:
+def _check_quality_issues(qa_result: list[str] | None) -> Suggestion | None:
     """
     Check if QA results suggest quality improvements.
 
@@ -286,7 +283,7 @@ def _check_quality_issues(qa_result: Optional[list[str]]) -> Optional[Suggestion
     return None
 
 
-def _check_missing_gitignore(working_dir: str) -> Optional[Suggestion]:
+def _check_missing_gitignore(working_dir: str) -> Suggestion | None:
     """
     Check if project is missing a .gitignore file.
 
@@ -339,13 +336,7 @@ def _has_tests(working_dir: str) -> bool:
                 return True
 
         test_file_patterns = [".test.", ".spec.", "_test.", "_spec."]
-        if any(
-            any(pattern in f for pattern in test_file_patterns)
-            for f in entries
-        ):
-            return True
-
-        return False
+        return bool(any(any(pattern in f for pattern in test_file_patterns) for f in entries))
 
     except OSError:
         return False
@@ -375,9 +366,9 @@ def _is_python_project(path: str) -> bool:
 async def suggest_task_followup(
     completed_task: str,
     task_result: str,
-    working_dir: Optional[str] = None,
-    qa_issues: Optional[list[str]] = None,
-) -> Optional[str]:
+    working_dir: str | None = None,
+    qa_issues: list[str] | None = None,
+) -> str | None:
     """
     Suggest a follow-up action after task completion.
 

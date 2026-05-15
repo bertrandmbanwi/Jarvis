@@ -1,15 +1,20 @@
 """Multi-backend LLM engine with three-tier Claude API and Ollama fallback."""
-import httpx
 import json
 import logging
 import time
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
+from typing import Any, TypedDict, cast
+
+import httpx
 
 from jarvis.config import settings
 from jarvis.core.hardening import (
-    retry_with_backoff, API_RETRY_POLICY,
-    claude_circuit, ollama_circuit,
-    classify_error, user_friendly_error, sanitize_user_input,
+    API_RETRY_POLICY,
+    classify_error,
+    claude_circuit,
+    retry_with_backoff,
+    sanitize_user_input,
+    user_friendly_error,
 )
 from jarvis.core.perf import perf_tracker
 
@@ -18,7 +23,13 @@ logger = logging.getLogger("jarvis.llm")
 _anthropic_client = None
 _anthropic_available = False
 
-TIER_CONFIG = {
+class TierConfig(TypedDict):
+    model: str
+    max_tokens: int
+    temperature: float
+
+
+TIER_CONFIG: dict[str, TierConfig] = {
     "fast": {
         "model": settings.CLAUDE_FAST_MODEL,
         "max_tokens": settings.CLAUDE_FAST_MAX_TOKENS,
@@ -72,14 +83,14 @@ class JarvisLLM:
 
     def __init__(
         self,
-        system_prompt: str = None,
+        system_prompt: str | None = None,
     ):
         self._static_system_prompt = system_prompt
         self.active_backend = "initializing"
         self._ollama_client = httpx.AsyncClient(timeout=120.0)
         self._ollama_base_url = settings.OLLAMA_BASE_URL.rstrip("/")
 
-        self._session_costs = {
+        self._session_costs: dict[str, Any] = {
             "total_input_tokens": 0,
             "total_output_tokens": 0,
             "total_cache_read_tokens": 0,
@@ -124,7 +135,7 @@ class JarvisLLM:
             return False
 
         try:
-            resp = await client.messages.create(
+            await client.messages.create(
                 model=settings.CLAUDE_FAST_MODEL,
                 max_tokens=10,
                 messages=[{"role": "user", "content": "ping"}],
@@ -158,11 +169,11 @@ class JarvisLLM:
     async def chat(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
-        system_prompt_override: Optional[str] = None,
-        max_tokens_override: Optional[int] = None,
-        temperature_override: Optional[float] = None,
+        system_prompt_override: str | None = None,
+        max_tokens_override: int | None = None,
+        temperature_override: float | None = None,
     ) -> str:
         """Send message and get complete response. Routes to Claude or Ollama with fallback."""
         if self.active_backend == "claude":
@@ -187,7 +198,7 @@ class JarvisLLM:
     async def chat_stream(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
     ) -> AsyncGenerator[str, None]:
         """Stream response tokens one at a time."""
@@ -212,10 +223,10 @@ class JarvisLLM:
         user_message: str,
         tools: list[dict],
         tool_executor,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
         max_iterations: int = 10,
-        system_prompt_override: Optional[str] = None,
+        system_prompt_override: str | None = None,
     ) -> tuple[str, list[dict]]:
         """Run agentic tool-use loop and return (final_response, tool_calls_log)."""
         client = _get_anthropic_client()
@@ -228,7 +239,7 @@ class JarvisLLM:
 
         messages = self._build_claude_messages(user_message, conversation_history)
 
-        tool_calls_log = []
+        tool_calls_log: list[dict[str, Any]] = []
         iteration = 0
 
         while iteration < max_iterations:
@@ -345,10 +356,10 @@ class JarvisLLM:
         user_message: str,
         tools: list[dict],
         tool_executor,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
         max_iterations: int = 10,
-        system_prompt_override: Optional[str] = None,
+        system_prompt_override: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Run tool-use loop non-streaming, then stream final response."""
         client = _get_anthropic_client()
@@ -462,11 +473,11 @@ class JarvisLLM:
     async def _chat_claude(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
-        system_prompt_override: Optional[str] = None,
-        max_tokens_override: Optional[int] = None,
-        temperature_override: Optional[float] = None,
+        system_prompt_override: str | None = None,
+        max_tokens_override: int | None = None,
+        temperature_override: float | None = None,
     ) -> str:
         """Send message to Claude API with circuit breaker and retry logic."""
         if not claude_circuit.allow_request():
@@ -509,7 +520,7 @@ class JarvisLLM:
                 context=f"Claude chat ({tier})",
             )
             claude_circuit.record_success()
-        except Exception as e:
+        except Exception:
             claude_circuit.record_failure()
             raise
 
@@ -530,7 +541,7 @@ class JarvisLLM:
     async def _stream_claude(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
     ) -> AsyncGenerator[str, None]:
         """Stream response tokens from Claude API."""
@@ -542,8 +553,6 @@ class JarvisLLM:
         messages = self._build_claude_messages(user_message, conversation_history)
 
         start = time.time()
-        total_input = 0
-        total_output = 0
 
         async with client.messages.stream(
             model=config["model"],
@@ -567,10 +576,10 @@ class JarvisLLM:
     def _build_claude_messages(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
     ) -> list[dict]:
         """Build message list for Claude API."""
-        messages = []
+        messages: list[dict[str, str]] = []
         if conversation_history:
             recent = conversation_history[-settings.MAX_CONTEXT_MESSAGES:]
             for msg in recent:
@@ -588,7 +597,7 @@ class JarvisLLM:
     async def _chat_ollama(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
     ) -> str:
         """Send message to Ollama and return response."""
         messages = self._build_ollama_messages(user_message, conversation_history)
@@ -608,8 +617,9 @@ class JarvisLLM:
                 },
             )
             resp.raise_for_status()
-            data = resp.json()
-            content = data.get("message", {}).get("content", "")
+            data = cast(dict[str, Any], resp.json())
+            message = data.get("message", {})
+            content = message.get("content", "") if isinstance(message, dict) else ""
             self._session_costs["request_count"] += 1
             self._session_costs["requests_by_tier"]["ollama"] += 1
             logger.info("Ollama response: %d chars", len(content))
@@ -624,7 +634,7 @@ class JarvisLLM:
     async def _stream_ollama(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream response tokens from Ollama."""
         messages = self._build_ollama_messages(user_message, conversation_history)
@@ -657,22 +667,22 @@ class JarvisLLM:
     def _build_ollama_messages(
         self,
         user_message: str,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
     ) -> list[dict]:
         """Build message list for Ollama API."""
-        messages = [{"role": "system", "content": self.system_prompt}]
+        messages: list[dict[str, str]] = [{"role": "system", "content": self.system_prompt}]
         if conversation_history:
             recent = conversation_history[-settings.MAX_CONTEXT_MESSAGES:]
             messages.extend(recent)
         messages.append({"role": "user", "content": user_message})
         return messages
 
-    def _track_usage(self, usage, model: str, tier: str, elapsed: float, user_preview: str = ""):
+    def _track_usage(self, usage: Any, model: str, tier: str, elapsed: float, user_preview: str = ""):
         """Record token usage and cost."""
-        input_tokens = getattr(usage, "input_tokens", 0)
-        output_tokens = getattr(usage, "output_tokens", 0)
-        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-        cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+        cache_creation = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
 
         pricing = settings.CLAUDE_PRICING.get(model, {})
         if pricing:

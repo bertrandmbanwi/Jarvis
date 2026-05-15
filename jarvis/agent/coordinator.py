@@ -25,13 +25,12 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 logger = logging.getLogger("jarvis.agent.coordinator")
 
 
-class AgentType(str, Enum):
+class AgentType(StrEnum):
     """Specialized agent profiles for task routing."""
     RESEARCHER = "researcher"
     CODER = "coder"
@@ -333,7 +332,7 @@ def _build_profiles() -> dict[AgentType, AgentProfile]:
         AgentType.GENERALIST: (_GENERALIST_PROMPT, "Generalist Agent"),
     }
 
-    profiles = {}
+    profiles: dict[AgentType, AgentProfile] = {}
     for agent_type, (prompt, name) in prompts.items():
         profiles[agent_type] = AgentProfile(
             agent_type=agent_type,
@@ -391,7 +390,7 @@ def classify_subtask(description: str) -> AgentType:
             if keyword in desc_lower:
                 scores[agent_type] += 1
 
-    best_type = max(scores, key=scores.get)
+    best_type = max(scores, key=lambda agent_type: scores[agent_type])
     best_score = scores[best_type]
 
     if best_score == 0:
@@ -463,7 +462,7 @@ class AgentCoordinator:
     """Coordinates multiple specialized agents for complex task execution."""
 
     def __init__(self):
-        self.profiles = _build_profiles()
+        self.profiles: dict[AgentType, AgentProfile] = _build_profiles()
         self._active_tasks: list[AgentTask] = []
         self._execution_history: list[AgentTask] = []
         self.max_parallel = 3
@@ -541,7 +540,7 @@ class AgentCoordinator:
         group_indices: list[int],
         subtasks: list,
         execute_fn,
-    ) -> list[tuple[int, str, Optional[str]]]:
+    ) -> list[tuple[int, str, str | None]]:
         """Execute a group of subtasks in parallel."""
         sem = asyncio.Semaphore(self.max_parallel)
 

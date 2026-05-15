@@ -6,8 +6,7 @@ and keyword matching. Templates can be selected based on the request type and
 scoring mechanism, enabling consistent and repeatable prompt patterns.
 """
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Dict, List
+from dataclasses import dataclass
 
 logger = logging.getLogger("jarvis.agent.templates")
 
@@ -16,9 +15,9 @@ logger = logging.getLogger("jarvis.agent.templates")
 class PromptTemplate:
     """Represents a single prompt template with metadata and format string."""
     task_type: str
-    keywords: List[str]
+    keywords: list[str]
     template_format: str
-    acceptance_criteria: List[str]
+    acceptance_criteria: list[str]
     description: str = ""
 
     def score_match(self, request_text: str) -> float:
@@ -56,7 +55,7 @@ class Improvement:
 
 
 # Template library initialized with common task types
-TEMPLATES: Dict[str, PromptTemplate] = {
+TEMPLATES: dict[str, PromptTemplate] = {
     "landing_page": PromptTemplate(
         task_type="landing_page",
         keywords=["landing", "page", "website", "design", "hero", "conversion"],
@@ -342,7 +341,7 @@ Versioning: {versioning}
 }
 
 
-def get_template(task_type: str, request_text: str = "") -> Optional[PromptTemplate]:
+def get_template(task_type: str, request_text: str = "") -> PromptTemplate | None:
     """
     Get a template by task type, optionally scoring by request text.
 
@@ -371,7 +370,7 @@ def get_template(task_type: str, request_text: str = "") -> Optional[PromptTempl
     return best_match if best_score > 0.0 else None
 
 
-def get_template_names() -> List[str]:
+def get_template_names() -> list[str]:
     """Get list of all available template names."""
     return list(TEMPLATES.keys())
 
@@ -422,7 +421,7 @@ def register_template(template: PromptTemplate) -> None:
     logger.info("Registered template: %s", template.task_type)
 
 
-def list_templates() -> Dict[str, str]:
+def list_templates() -> dict[str, str]:
     """
     List all available templates with descriptions.
 

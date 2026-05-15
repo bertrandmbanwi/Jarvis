@@ -1,9 +1,9 @@
 """Persistent logging of API usage costs to JSON files."""
 import json
 import logging
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, cast
 
 from jarvis.config import settings
 
@@ -20,12 +20,12 @@ def _today_file() -> Path:
     return _cost_log_dir() / f"{date.today().isoformat()}.json"
 
 
-def _load_day(file_path: Path) -> dict:
+def _load_day(file_path: Path) -> dict[str, Any]:
     """Load a day's cost data from file."""
 
     if file_path.exists():
         try:
-            return json.loads(file_path.read_text())
+            return cast(dict[str, Any], json.loads(file_path.read_text()))
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to read cost log %s: %s", file_path, e)
     return {

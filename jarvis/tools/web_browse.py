@@ -27,7 +27,8 @@ def _is_url_safe(url: str) -> tuple[bool, str]:
     parsed = urlparse(url)
     hostname = parsed.hostname or ""
 
-    blocked_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
+    # Explicit blocklist, not a bind address.
+    blocked_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}  # nosec
     if hostname.lower() in blocked_hosts:
         return False, f"Blocked: requests to {hostname} not allowed"
 
@@ -37,7 +38,7 @@ def _is_url_safe(url: str) -> tuple[bool, str]:
 
     try:
         resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        for family, _, _, _, addr in resolved:
+        for _family, _, _, _, addr in resolved:
             ip = ipaddress.ip_address(addr[0])
             if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
                 return False, f"Blocked: {hostname} resolves to private/reserved IP {ip}"
@@ -148,7 +149,7 @@ async def fetch_page_links(url: str, max_links: int = 20) -> str:
     links = []
 
     for a_tag in soup.find_all("a", href=True):
-        href = a_tag["href"]
+        href = str(a_tag.get("href", ""))
         text = a_tag.get_text(strip=True)[:80]
 
         if href.startswith("/"):

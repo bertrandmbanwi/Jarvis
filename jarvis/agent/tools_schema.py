@@ -8,13 +8,26 @@ The TOOL_REGISTRY maps tool names to their async callable implementations.
 The TOOL_SCHEMAS list is passed directly to Claude's API.
 """
 import logging
-from jarvis.tools import mac_control, shell, filesystem, screen, web_search, web_browse
-from jarvis.tools import browser_agent, claude_code, chrome_extension, calendar_email, weather, notes_access
-from jarvis.core import profile
-from jarvis.agent import planner as _planner_module
-from jarvis.agent import learning as _learning_module
-from jarvis.core import proactive as _proactive_module
+
 from jarvis.agent import coordinator as _coordinator_module
+from jarvis.agent import learning as _learning_module
+from jarvis.agent import planner as _planner_module
+from jarvis.core import proactive as _proactive_module
+from jarvis.core import profile
+from jarvis.tools import (
+    browser_agent,
+    calendar_email,
+    chrome_extension,
+    claude_code,
+    filesystem,
+    mac_control,
+    notes_access,
+    screen,
+    shell,
+    weather,
+    web_browse,
+    web_search,
+)
 
 logger = logging.getLogger("jarvis.agent.tools_schema")
 
@@ -198,7 +211,7 @@ async def _get_agent_status() -> str:
     lines.append(f"  Active tasks: {status['active_tasks']}")
     lines.append(f"  Total tasks executed: {status['total_executed']}")
     lines.append("  Agent profiles:")
-    for name, agent in status["agents"].items():
+    for _name, agent in status["agents"].items():
         if agent["total_tasks"] > 0:
             lines.append(
                 f"    {agent['display_name']}: "
@@ -720,7 +733,11 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "write_file",
-        "description": "Write text content to a file. Creates the file if it does not exist.",
+        "description": (
+            "Write text content to a file. Creates the file if it does not exist. "
+            "For existing files, set overwrite=true only after reading the target "
+            "or receiving explicit user confirmation."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -731,6 +748,11 @@ TOOL_SCHEMAS = [
                 "content": {
                     "type": "string",
                     "description": "Text content to write to the file",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Allow replacing an existing file after confirmation or prior read.",
+                    "default": False,
                 },
             },
             "required": ["path", "content"],
@@ -890,6 +912,14 @@ TOOL_SCHEMAS = [
                 "command": {
                     "type": "string",
                     "description": "The shell command to execute",
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true only when the user explicitly confirmed this exact "
+                        "sensitive command. Required for rm, sudo, kill, killall, and diskutil."
+                    ),
+                    "default": False,
                 },
             },
             "required": ["command"],
@@ -1769,9 +1799,9 @@ TOOL_SCHEMAS = [
     {
         "name": "send_email",
         "description": (
-            "Send an email via macOS Mail.app. Composes and sends immediately. "
-            "IMPORTANT: Always confirm the recipient and content with the user "
-            "before sending. Use when the user explicitly asks to send an email."
+            "Compose an email via macOS Mail.app. By default this opens a visible draft. "
+            "Set confirmed=true only after the user explicitly confirms the exact "
+            "recipient, subject, and body; then it sends immediately."
         ),
         "input_schema": {
             "type": "object",
@@ -1795,6 +1825,11 @@ TOOL_SCHEMAS = [
                 "bcc": {
                     "type": "string",
                     "description": "BCC recipients (optional, comma-separated)",
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "description": "True only after explicit user confirmation of the exact email.",
+                    "default": False,
                 },
             },
             "required": ["to", "subject", "body"],

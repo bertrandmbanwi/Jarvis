@@ -1,11 +1,11 @@
 """Browser automation via Playwright and Claude Computer Use API."""
 import asyncio
 import base64
+import contextlib
 import logging
 import os
-import time
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 logger = logging.getLogger("jarvis.tools.browser_agent")
 
@@ -148,10 +148,8 @@ class BrowserAgent:
             logger.warning("Error during browser shutdown: %s", e)
 
         if self._playwright:
-            try:
+            with contextlib.suppress(Exception):
                 await self._playwright.stop()
-            except Exception:
-                pass
 
         self._page = None
         self._context = None
@@ -299,7 +297,7 @@ class BrowserAgent:
         except Exception as e:
             return f"Navigation failed: {str(e)[:200]}"
 
-    async def run_task(self, task: str, start_url: Optional[str] = None) -> str:
+    async def run_task(self, task: str, start_url: str | None = None) -> str:
         """Execute a multi-step browser task using Claude Computer Use.
 
         Args:
@@ -323,7 +321,7 @@ class BrowserAgent:
         finally:
             self._task_running = False
 
-    async def _run_computer_use_loop(self, task: str, start_url: Optional[str] = None) -> str:
+    async def _run_computer_use_loop(self, task: str, start_url: str | None = None) -> str:
         """Core loop: screenshot, send to Claude, execute action, repeat; handles rate limits."""
         import anthropic
 
@@ -387,7 +385,7 @@ class BrowserAgent:
             f"DOWNLOADS: {DOWNLOAD_DIR}\n"
         )
 
-        messages = [
+        messages: list[Any] = [
             {
                 "role": "user",
                 "content": [
@@ -406,7 +404,8 @@ class BrowserAgent:
         ]
 
         step = 0
-        actions_taken = []
+        actions_taken: list[str] = []
+        client_any: Any = client
 
         while step < MAX_STEPS:
             step += 1
@@ -426,7 +425,7 @@ class BrowserAgent:
             response = None
             for attempt in range(max_retries + 1):
                 try:
-                    response = await client.beta.messages.create(
+                    response = await client_any.beta.messages.create(
                         model=COMPUTER_USE_MODEL,
                         max_tokens=1024,
                         system=system_prompt,
@@ -473,7 +472,7 @@ class BrowserAgent:
             for block in assistant_content:
                 if block.type == "tool_use":
                     tool_input = block.input
-                    action = tool_input.get("action", "screenshot")
+                    action = str(tool_input.get("action", "screenshot"))
 
                     logger.info("Browser agent action: %s (params: %s)",
                                 action, {k: v for k, v in tool_input.items() if k != "action"})
@@ -516,7 +515,7 @@ class BrowserAgent:
         return summary
 
 
-_browser_agent: Optional[BrowserAgent] = None
+_browser_agent: BrowserAgent | None = None
 
 
 def _get_browser_agent() -> BrowserAgent:
@@ -535,7 +534,7 @@ async def browse_web(task: str, url: str = "") -> str:
     return result
 
 
-async def browser_navigate(url: str) -> list:
+async def browser_navigate(url: str) -> list[dict[str, Any]]:
     """Navigate the browser to a specific URL and return screenshot."""
     agent = _get_browser_agent()
     ok = await agent._ensure_ready()
@@ -545,7 +544,9 @@ async def browser_navigate(url: str) -> list:
     result = await agent.navigate(url)
     screenshot_b64 = await agent.take_screenshot()
 
-    content = [{"type": "text", "text": f"{result}\nHere is what the browser is currently showing:"}]
+    content: list[dict[str, Any]] = [
+        {"type": "text", "text": f"{result}\nHere is what the browser is currently showing:"}
+    ]
     if screenshot_b64:
         content.append({
             "type": "image",
@@ -561,7 +562,7 @@ async def browser_navigate(url: str) -> list:
     return content
 
 
-async def browser_screenshot() -> list:
+async def browser_screenshot() -> list[dict[str, Any]]:
     """Take a screenshot of the current browser state."""
     agent = _get_browser_agent()
     if not agent._initialized or not agent._is_page_alive():
@@ -603,7 +604,7 @@ async def sync_browser_sessions(domains: str = "") -> str:
     return await sync_chrome_cookies(agent._context, domains=domain_list)
 
 
-async def get_browser_state() -> list:
+async def get_browser_state() -> list[dict[str, Any]]:
     """Get the current state of the browser: tabs, active URL, and screenshot."""
     agent = _get_browser_agent()
     if not agent._initialized or not agent._context:
@@ -620,10 +621,8 @@ async def get_browser_state() -> list:
 
     title = ""
     if agent._page and not agent._page.is_closed():
-        try:
+        with contextlib.suppress(Exception):
             title = await agent._page.title()
-        except Exception:
-            pass
 
     active_info = f"Active tab: {agent._page.url}" if agent._page else "No active tab"
     if title:
@@ -631,7 +630,7 @@ async def get_browser_state() -> list:
 
     screenshot_b64 = await agent.take_screenshot()
 
-    content = [
+    content: list[dict[str, Any]] = [
         {"type": "text", "text": f"{tabs_text}\n\n{active_info}\n\nCurrent view:"},
     ]
     if screenshot_b64:
@@ -647,7 +646,7 @@ async def get_browser_state() -> list:
     return content
 
 
-async def browser_switch_tab(tab_number: int) -> list:
+async def browser_switch_tab(tab_number: int) -> list[dict[str, Any]]:
     """Switch to a different browser tab by its number (1-based).
 
     Use get_browser_state first to see which tabs are open.
@@ -666,7 +665,7 @@ async def browser_switch_tab(tab_number: int) -> list:
     await agent._page.bring_to_front()
 
     screenshot_b64 = await agent.take_screenshot()
-    content = [
+    content: list[dict[str, Any]] = [
         {"type": "text", "text": f"Switched to tab {tab_number}: {agent._page.url}"},
     ]
     if screenshot_b64:
@@ -692,10 +691,7 @@ async def browser_upload_file(file_path: str, selector: str = "") -> str:
         return f"Error: file not found: {file_path}"
 
     try:
-        if selector:
-            file_input = agent._page.locator(selector)
-        else:
-            file_input = agent._page.locator('input[type="file"]').first
+        file_input = agent._page.locator(selector) if selector else agent._page.locator('input[type="file"]').first
 
         await file_input.set_input_files(file_path)
         filename = os.path.basename(file_path)

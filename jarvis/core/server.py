@@ -7,23 +7,23 @@ import asyncio
 import logging
 import os
 import time
-from contextlib import asynccontextmanager
-from typing import List
+from contextlib import asynccontextmanager, suppress
+from typing import Annotated
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, Request
+from fastapi import Depends, FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from jarvis.config import settings
-from jarvis.core.brain import JarvisBrain
-from jarvis.core import cost_tracker
-from jarvis.core import auth
+from jarvis.core import auth, cost_tracker
 from jarvis.core import profile as user_profile
+from jarvis.core.brain import JarvisBrain
 from jarvis.core.settings_api import settings_router
 from jarvis.tools import chrome_extension
 
 logger = logging.getLogger("jarvis.server")
+EMPTY_CHUNK = ""
 
 # Global brain instance
 brain = JarvisBrain()
@@ -33,7 +33,7 @@ _speaker = None
 _listener = None
 
 # Desktop overlay WebSocket clients (lightweight, no auth required for localhost)
-_overlay_clients: List[WebSocket] = []
+_overlay_clients: list[WebSocket] = []
 _overlay_state: str = "idle"  # idle, listening, thinking, speaking
 _overlay_text: str = ""  # latest assistant response text for overlay display
 _overlay_user_text: str = ""  # latest user utterance for overlay display
@@ -108,7 +108,7 @@ class ConnectionManager:
     """
 
     def __init__(self):
-        self.active: List[WebSocket] = []
+        self.active: list[WebSocket] = []
         self._clients: dict[WebSocket, ClientInfo] = {}
 
     async def connect(self, ws: WebSocket):
@@ -257,7 +257,7 @@ async def broadcast_voice_interaction(user_text: str, response: str):
     await asyncio.sleep(0.02)
 
     await ws_manager.broadcast_json({
-        "token": "",
+        "token": EMPTY_CHUNK,
         "done": True,
         "full_response": response,
         "backend": brain.llm.active_backend,
@@ -411,7 +411,6 @@ async def _deliver_proactive_suggestion(suggestion):
     Optionally speaks it aloud via TTS if the suggestion is marked as spoken
     and a voice speaker is available.
     """
-    from jarvis.core.proactive import Suggestion
 
     if not ws_manager.active:
         logger.debug("No WebSocket clients for proactive suggestion; skipping.")
@@ -480,12 +479,8 @@ async def lifespan(app: FastAPI):
         shutdown_event.set()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with suppress(NotImplementedError):
             loop.add_signal_handler(sig, _signal_handler, sig)
-        except NotImplementedError:
-            # Windows does not support add_signal_handler; fall through
-            # to uvicorn's default handler.
-            pass
 
     yield
 
@@ -520,7 +515,7 @@ app.add_middleware(
     allow_origin_regex=r"https://.*\.trycloudflare\.com",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["authorization", "content-type", "x-requested-with"],
+    allow_headers=["authorization", "content-type", "x-requested-with", "x-jarvis-client"],
 )
 
 
@@ -550,21 +545,17 @@ _CSRF_EXEMPT_PATHS = {"/auth/login", "/auth/status", "/auth/logout", "/voice/tra
 @app.middleware("http")
 async def csrf_protection(request: Request, call_next):
     """Require X-JARVIS-Client header on state-changing requests from non-local origins."""
-    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
-        if request.url.path not in _CSRF_EXEMPT_PATHS:
-            client_host = request.client.host if request.client else ""
-            if not auth.is_local_request(client_host):
-                jarvis_header = request.headers.get("x-jarvis-client", "")
-                if not jarvis_header:
-                    return JSONResponse(
-                        status_code=403,
-                        content={"error": "Missing X-JARVIS-Client header. CSRF protection."},
-                    )
+    if request.method in ("POST", "PUT", "DELETE", "PATCH") and request.url.path not in _CSRF_EXEMPT_PATHS:
+        client_host = request.client.host if request.client else ""
+        if not auth.is_local_request(client_host):
+            jarvis_header = request.headers.get("x-jarvis-client", "")
+            if not jarvis_header:
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "Missing X-JARVIS-Client header. CSRF protection."},
+                )
     return await call_next(request)
 
-
-# Mount settings API router (configuration, status, integration tests)
-app.include_router(settings_router)
 
 _startup_pin = auth.initialize_pin()
 
@@ -605,6 +596,11 @@ async def require_auth(request: Request) -> bool:
 
     from fastapi import HTTPException
     raise HTTPException(status_code=401, detail="Authentication required. Please log in with your PIN.")
+
+
+# Mount settings API router after auth is defined so configuration reads/writes
+# use the same local-bypass / remote-token policy as the rest of the API.
+app.include_router(settings_router, dependencies=[Depends(require_auth)])
 
 
 @app.post("/auth/login")
@@ -795,9 +791,9 @@ async def health_ping():
 @app.get("/health", dependencies=[Depends(require_auth)])
 async def health():
     """Simple health check for monitoring."""
+    from jarvis.core.cache import tool_cache
     from jarvis.core.hardening import get_health_report
     from jarvis.core.perf import perf_tracker
-    from jarvis.core.cache import tool_cache
     return {
         "healthy": brain.llm.active_backend != "none",
         "backend": brain.llm.active_backend,
@@ -1081,15 +1077,14 @@ async def _get_whisper_model():
 
 
 @app.post("/voice/transcribe", dependencies=[Depends(require_auth)])
-async def transcribe_audio(audio: UploadFile = File(...)):
+async def transcribe_audio(audio: Annotated[UploadFile, File(...)]):
     """Transcribe uploaded audio from the browser microphone.
 
     Accepts WebM/WAV/OGG audio files from MediaRecorder.
     Returns the transcribed text.
     """
     import tempfile
-    import subprocess
-    import numpy as np
+
 
     model = await _get_whisper_model()
     if model is None:
@@ -1107,14 +1102,14 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             content={"error": f"Unsupported audio format: {audio.content_type}. Accepted: webm, wav, ogg, mp3, mp4."},
         )
 
-    MAX_AUDIO_SIZE = 25 * 1024 * 1024  # 25 MB
+    max_audio_size = 25 * 1024 * 1024  # 25 MB
     suffix = ".webm" if "webm" in (audio.content_type or "") else ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         content = await audio.read()
-        if len(content) > MAX_AUDIO_SIZE:
+        if len(content) > max_audio_size:
             return JSONResponse(
                 status_code=413,
-                content={"error": f"Audio file too large (max {MAX_AUDIO_SIZE // 1024 // 1024} MB)."},
+                content={"error": f"Audio file too large (max {max_audio_size // 1024 // 1024} MB)."},
             )
         tmp.write(content)
         tmp_path = tmp.name
@@ -1164,10 +1159,8 @@ async def transcribe_audio(audio: UploadFile = File(...)):
     finally:
         import os
         for p in [tmp_path, tmp_path + ".wav"]:
-            try:
+            with suppress(OSError):
                 os.unlink(p)
-            except OSError:
-                pass
 
 
 @app.websocket("/ws")
@@ -1255,7 +1248,7 @@ async def websocket_chat(websocket: WebSocket):
 
             complete = "".join(full_response)
             await websocket.send_json({
-                "token": "",
+                "token": EMPTY_CHUNK,
                 "done": True,
                 "full_response": complete,
                 "backend": brain.llm.active_backend,
@@ -1266,19 +1259,19 @@ async def websocket_chat(websocket: WebSocket):
                 try:
                     requesting_ws = websocket
 
-                    async def on_audio_ready(envelope, duration, audio_b64=None):
+                    async def on_audio_ready(envelope, duration, audio_b64=None, target_ws=requesting_ws):
                         await broadcast_voice_state(
                             True,
                             amplitude_envelope=envelope,
                             audio_duration=duration,
                             audio_base64=audio_b64,
-                            target_ws=requesting_ws,
+                            target_ws=target_ws,
                         )
 
-                    async def on_audio_chunk(chunk_b64, idx, is_last, env, dur):
+                    async def on_audio_chunk(chunk_b64, idx, is_last, env, dur, target_ws=requesting_ws):
                         await broadcast_voice_chunk(
                             chunk_b64, idx, is_last, env, dur,
-                            target_ws=requesting_ws,
+                            target_ws=target_ws,
                         )
 
                     await _speaker.speak(
@@ -1349,14 +1342,12 @@ async def websocket_overlay(websocket: WebSocket):
     logger.info("Desktop overlay connected. Sending current state: %s", _overlay_state)
 
     # Send current state immediately on connect
-    try:
+    with suppress(Exception):
         await websocket.send_json({
             "state": _overlay_state,
             "text": _overlay_text,
             "userText": _overlay_user_text,
         })
-    except Exception:
-        pass
 
     try:
         while True:
@@ -1364,8 +1355,8 @@ async def websocket_overlay(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         logger.info("Desktop overlay disconnected.")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Desktop overlay receive loop ended: %s", e)
     finally:
         if websocket in _overlay_clients:
             _overlay_clients.remove(websocket)

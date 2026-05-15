@@ -11,8 +11,6 @@ and collecting suggestions for continuous improvement.
 import logging
 import sqlite3
 from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
 from jarvis.config import settings
 
@@ -119,8 +117,8 @@ class DispatchRegistry:
     def register(
         self,
         project_name: str,
-        project_path: Optional[str] = None,
-        prompt: Optional[str] = None
+        project_path: str | None = None,
+        prompt: str | None = None
     ) -> int:
         """
         Register a new dispatch.
@@ -142,7 +140,7 @@ class DispatchRegistry:
             VALUES (?, ?, ?, 'pending')
             """, (project_name, project_path, prompt))
 
-            dispatch_id = cursor.lastrowid
+            dispatch_id = int(cursor.lastrowid or -1)
             conn.commit()
             conn.close()
 
@@ -159,8 +157,8 @@ class DispatchRegistry:
         self,
         dispatch_id: int,
         status: str,
-        response: Optional[str] = None,
-        summary: Optional[str] = None
+        response: str | None = None,
+        summary: str | None = None
     ) -> bool:
         """
         Update dispatch status and optionally response/summary.
@@ -203,7 +201,7 @@ class DispatchRegistry:
             logger.error("Failed to update dispatch status: %s", e)
             return False
 
-    def get_most_recent(self) -> Optional[dict]:
+    def get_most_recent(self) -> dict | None:
         """
         Get the most recently updated dispatch.
 
@@ -261,7 +259,7 @@ class DispatchRegistry:
             logger.error("Failed to get active dispatches: %s", e)
             return []
 
-    def get_by_name(self, name: str) -> Optional[dict]:
+    def get_by_name(self, name: str) -> dict | None:
         """
         Get a dispatch by project name (fuzzy match, returns most recent).
 
@@ -447,7 +445,7 @@ class SuccessTracker:
     def log_task(
         self,
         task_type: str,
-        prompt: Optional[str] = None,
+        prompt: str | None = None,
         success: bool = True,
         retry_count: int = 0,
         duration_seconds: float = 0.0,
@@ -473,7 +471,7 @@ class SuccessTracker:
             VALUES (?, ?, ?, ?, ?)
             """, (task_type, prompt, success, retry_count, duration_seconds))
 
-            task_id = cursor.lastrowid
+            task_id = int(cursor.lastrowid or -1)
             conn.commit()
             conn.close()
 
@@ -489,7 +487,7 @@ class SuccessTracker:
     def log_usage(
         self,
         action_type: str,
-        keyword: Optional[str] = None,
+        keyword: str | None = None,
     ) -> bool:
         """Log usage pattern for an action.
 
@@ -563,7 +561,7 @@ class SuccessTracker:
             VALUES (?, ?, 0)
             """, (task_id, suggestion))
 
-            suggestion_id = cursor.lastrowid
+            suggestion_id = int(cursor.lastrowid or -1)
             conn.commit()
             conn.close()
 
@@ -602,7 +600,7 @@ class SuccessTracker:
             logger.error("Failed to mark suggestion as accepted: %s", e)
             return False
 
-    def get_success_rate(self, task_type: Optional[str] = None) -> float:
+    def get_success_rate(self, task_type: str | None = None) -> float:
         """Get success rate for tasks.
 
         Args:
@@ -634,7 +632,7 @@ class SuccessTracker:
 
             total, successes = row
             successes = successes or 0
-            return (successes / total) * 100
+            return float((successes / total) * 100)
         except Exception as e:
             logger.error("Failed to get success rate: %s", e)
             return 0.0
@@ -668,7 +666,7 @@ class SuccessTracker:
             logger.error("Failed to get top actions: %s", e)
             return []
 
-    def get_avg_duration(self, task_type: Optional[str] = None) -> float:
+    def get_avg_duration(self, task_type: str | None = None) -> float:
         """Get average task duration.
 
         Args:

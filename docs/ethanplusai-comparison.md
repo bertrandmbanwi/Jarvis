@@ -5,7 +5,7 @@
 
 ## TL;DR
 
-Our Jarvis is architecturally stronger: modular codebase, 86+ tools, multi-tier LLM routing, production-grade hardening, local-first voice, and enterprise UI. However, **ethanplusai has built several quality-of-life and continuous-improvement systems that we lack entirely**. These are the gaps worth closing.
+Our Jarvis is architecturally stronger: modular codebase, 93 registered tools, multi-tier LLM routing, production-grade hardening, local-first voice, and enterprise UI. However, **ethanplusai has built several quality-of-life and continuous-improvement systems that we should continue hardening**. These are the gaps worth closing.
 
 ---
 
@@ -21,7 +21,7 @@ ethanplusai ships 5 test files covering:
 - End-to-end pipeline integration tests
 - Browser automation tests
 
-**Our gap:** Zero automated tests. We enforce 80% coverage in our `.claude/rules/` but have no test files to back it up.
+**Our gap:** We now have a pytest suite, but coverage should keep expanding around integration-heavy paths such as browser automation, settings, memory persistence, and multi-agent execution.
 
 **Priority:** HIGH. This is the single biggest gap. Without tests, every change to the agent system, tool registry, or memory layer is a manual verification exercise.
 
@@ -203,7 +203,7 @@ These are areas where our Jarvis is clearly superior:
 | Dimension | Our Advantage |
 |-----------|--------------|
 | **Architecture** | Modular 52-file package vs. monolithic 2600-line server.py |
-| **Tools** | 86+ tools with safety guards vs. ~15-20 actions |
+| **Tools** | 93 registered tools with safety guards vs. ~15-20 actions |
 | **LLM Routing** | 3-tier (Haiku/Sonnet/Opus) with cost optimization vs. single model |
 | **Voice** | Local-first (Moonshine + Whisper + Kokoro) vs. cloud-only (Fish Audio) |
 | **Security** | PIN auth, rate limiting, circuit breakers, input validation vs. none |

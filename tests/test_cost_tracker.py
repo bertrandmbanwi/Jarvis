@@ -1,17 +1,16 @@
 """Tests for JARVIS cost tracking module."""
-from datetime import date, datetime, timedelta
-from pathlib import Path
 import json
+from datetime import date, timedelta
 
 import pytest
 
 from jarvis.core.cost_tracker import (
-    log_request,
-    get_today_summary,
-    get_month_summary,
     _load_day,
     _save_day,
     _today_file,
+    get_month_summary,
+    get_today_summary,
+    log_request,
 )
 
 
@@ -219,7 +218,7 @@ class TestLogRequest:
 
     def test_log_request_caps_requests_list(self, cost_tracker_setup):
         """Requests list should be capped at 500."""
-        for i in range(600):
+        for _i in range(600):
             log_request(
                 model="claude-haiku",
                 tier="fast",

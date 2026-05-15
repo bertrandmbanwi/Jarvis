@@ -11,11 +11,10 @@ and adapt to preferences over time.
 """
 import logging
 import time
-from typing import Optional
 
+from jarvis.memory import sqlite_store
 from jarvis.memory.facts import FactStore
 from jarvis.memory.preferences import PreferenceTracker
-from jarvis.memory import sqlite_store
 
 logger = logging.getLogger("jarvis.memory")
 
@@ -83,7 +82,7 @@ class MemoryStore:
             self._client = None
             self._collection = None
 
-    def add(self, text: str, metadata: Optional[dict] = None):
+    def add(self, text: str, metadata: dict | None = None):
         """Add a memory entry to both ChromaDB and SQLite."""
         self._counter += 1
         doc_id = f"mem_{self._counter}_{int(time.time())}"
@@ -118,9 +117,9 @@ class MemoryStore:
         try:
             sqlite_store.remember(
                 content=text,
-                category=metadata.get("type", "general") if metadata else "general",
+                mem_type=metadata.get("type", "general") if metadata else "general",
                 source="conversation",
-                importance=0.5,
+                importance=5,
             )
         except Exception as e:
             logger.debug("SQLite memory write failed (non-critical): %s", e)
@@ -134,7 +133,7 @@ class MemoryStore:
                     n_results=min(top_k, max(self._collection.count(), 1)),
                 )
                 documents = results.get("documents", [[]])[0]
-                return documents
+                return [str(doc) for doc in documents]
             except Exception as e:
                 logger.warning("ChromaDB search failed: %s", e)
 
@@ -168,7 +167,13 @@ class MemoryStore:
 
         return "\n\n".join(parts)
 
-    def process_exchange(self, user_message: str, assistant_response: str, tier: str = "", tool_calls: list[str] = None):
+    def process_exchange(
+        self,
+        user_message: str,
+        assistant_response: str,
+        tier: str = "",
+        tool_calls: list[str] | None = None,
+    ):
         """Process an exchange for fact extraction and preference learning."""
         try:
             new_facts = self.facts.extract_from_exchange(user_message, assistant_response)
@@ -190,9 +195,9 @@ class MemoryStore:
         try:
             sqlite_store.remember(
                 content=f"User said: {user_message}",
-                category="exchange",
+                mem_type="exchange",
                 source="conversation",
-                importance=0.4,
+                importance=4,
             )
         except Exception as e:
             logger.debug("SQLite exchange store failed (non-critical): %s", e)

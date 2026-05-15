@@ -1,16 +1,19 @@
 """JARVIS Web Search: free web search using DuckDuckGo (no API key required)."""
 import asyncio
 import logging
-from typing import Optional
+from typing import Any
 
 logger = logging.getLogger("jarvis.tools.web_search")
+DDGS: Any = None
 
 try:
-    from ddgs import DDGS
+    import ddgs as _ddgs
+    DDGS = _ddgs.DDGS
     HAS_DDG = True
 except ImportError:
     try:
-        from duckduckgo_search import DDGS
+        import duckduckgo_search as _duckduckgo_search
+        DDGS = _duckduckgo_search.DDGS
         HAS_DDG = True
     except ImportError:
         HAS_DDG = False

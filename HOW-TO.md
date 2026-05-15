@@ -75,7 +75,7 @@ COST_MONTHLY_ALERT=60.00
 
 # Optional: port overrides
 API_PORT=8741               # Backend API server
-UI_PORT=3741                # Next.js dev server (proxied to 3000)
+UI_PORT=3000                # Next.js dev server
 
 # Optional: Ollama configuration
 OLLAMA_BASE_URL=http://localhost:11434
@@ -308,7 +308,7 @@ Jarvis/
 
 ## Tool Categories
 
-JARVIS has 109+ tools organized into these categories:
+JARVIS has 93 registered tools organized into these categories:
 
 | Category | Examples |
 |----------|---------|
@@ -479,4 +479,4 @@ The overlay only builds on macOS. Check that `desktop-overlay/build-overlay.sh` 
 Adjust `COST_DAILY_ALERT` in `.env`. Set `PREFER_CLAUDE=false` to default to local Ollama. The System tab in the UI shows real-time cost tracking.
 
 **Port conflicts:**
-JARVIS uses ports 3000 (UI) and 8741 (API). If something else is using those ports, JARVIS will attempt to kill orphaned processes on startup. You can override with `API_PORT` and `UI_PORT` in `.env`.
+JARVIS uses ports 3000 (UI) and 8741 (API) by default. If something else is using those ports, JARVIS will attempt to kill orphaned processes on startup. You can override both with `API_PORT` and `UI_PORT` in `.env`.

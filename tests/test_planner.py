@@ -1,15 +1,14 @@
 """Tests for JARVIS task planner module."""
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from jarvis.agent.planner import (
     TaskPlanner,
-    needs_decomposition_heuristic,
-    _has_sequence_markers,
     _count_action_verbs,
     _has_compound_actions,
+    _has_sequence_markers,
+    needs_decomposition_heuristic,
 )
 
 
