@@ -13,9 +13,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
-from typing import Optional
+from enum import StrEnum
 from uuid import uuid4
 
 from jarvis.config import settings
@@ -26,7 +24,7 @@ PLANS_DIR = settings.DATA_DIR / "plans"
 PLANS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class SubtaskStatus(str, Enum):
+class SubtaskStatus(StrEnum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -91,6 +89,8 @@ class TaskPlan:
     created_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
     status: str = "active"  # active, completed, failed, cancelled
+    _experiment_id: str = ""
+    _experiment_template_version: str = ""
 
     @property
     def total(self) -> int:
@@ -108,7 +108,7 @@ class TaskPlan:
         return sum(1 for s in self.subtasks if s.status == SubtaskStatus.FAILED)
 
     @property
-    def current_subtask(self) -> Optional[Subtask]:
+    def current_subtask(self) -> Subtask | None:
         """Get the currently in-progress subtask, or the next pending one."""
         for s in self.subtasks:
             if s.status == SubtaskStatus.IN_PROGRESS:
@@ -189,11 +189,11 @@ class TaskTracker:
     """Manages active and historical task plans."""
 
     def __init__(self):
-        self._active_plan: Optional[TaskPlan] = None
+        self._active_plan: TaskPlan | None = None
         self._plan_history: list[dict] = []
 
     @property
-    def active_plan(self) -> Optional[TaskPlan]:
+    def active_plan(self) -> TaskPlan | None:
         return self._active_plan
 
     def create_plan(

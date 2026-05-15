@@ -5,15 +5,14 @@ This module provides tools to randomly assign template versions for the same tas
 track which version was used, and calculate success rates per version.
 """
 
+import logging
+import math
+import secrets
 import sqlite3
 import uuid
-import logging
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional, Dict, Tuple, List
 from datetime import datetime
-import random
-import math
+from pathlib import Path
 
 import yaml
 
@@ -35,9 +34,9 @@ class PromptTemplate:
     version: str
     file_path: Path
     description: str
-    sections: List[Dict[str, str]]
-    success_rate: Optional[float] = None
-    raw_data: Dict = field(default_factory=dict)
+    sections: list[dict[str, str]]
+    success_rate: float | None = None
+    raw_data: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -48,7 +47,7 @@ class VersionStats:
     total_tasks: int
     passed: int
     failed: int
-    confidence_interval: Tuple[float, float]
+    confidence_interval: tuple[float, float]
 
 
 class ABTester:
@@ -79,7 +78,7 @@ class ABTester:
         conn.commit()
         conn.close()
 
-    def _discover_versions(self, task_type: str) -> List[PromptTemplate]:
+    def _discover_versions(self, task_type: str) -> list[PromptTemplate]:
         """
         Discover all available template versions for a task type.
 
@@ -89,7 +88,7 @@ class ABTester:
         Returns:
             List of PromptTemplate objects
         """
-        templates = []
+        templates: list[PromptTemplate] = []
         template_file = TEMPLATES_DIR / f"{task_type}.yaml"
 
         if not template_file.exists():
@@ -97,7 +96,7 @@ class ABTester:
             return templates
 
         try:
-            with open(template_file, 'r') as f:
+            with open(template_file) as f:
                 data = yaml.safe_load(f)
 
             if not data:
@@ -119,7 +118,7 @@ class ABTester:
 
         return templates
 
-    def select_template(self, task_type: str) -> Tuple[Optional[PromptTemplate], str]:
+    def select_template(self, task_type: str) -> tuple[PromptTemplate | None, str]:
         """
         Select a template version for a task, randomly assigning if multiple versions exist.
 
@@ -135,7 +134,7 @@ class ABTester:
             logger.error(f"No templates found for task_type: {task_type}")
             return None, ''
 
-        selected = random.choice(versions)
+        selected = secrets.choice(versions)
         experiment_id = str(uuid.uuid4())
 
         conn = sqlite3.connect(DB_PATH)
@@ -184,7 +183,7 @@ class ABTester:
 
         logger.info(f"Recorded result for experiment {experiment_id}: success={success}")
 
-    def get_version_stats(self, task_type: str) -> Dict[str, VersionStats]:
+    def get_version_stats(self, task_type: str) -> dict[str, VersionStats]:
         """
         Get statistics for all versions of a task type.
 
@@ -237,7 +236,7 @@ class ABTester:
 
         return stats
 
-    def promote_winner(self, task_type: str) -> Optional[str]:
+    def promote_winner(self, task_type: str) -> str | None:
         """
         Identify and promote the winning template version.
 
@@ -292,7 +291,7 @@ class ABTester:
         return None
 
     @staticmethod
-    def _wilson_interval(successes: int, total: int, z: float = 1.96) -> Tuple[float, float]:
+    def _wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
         """
         Calculate Wilson score confidence interval for success rate.
 

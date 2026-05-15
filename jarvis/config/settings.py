@@ -281,9 +281,9 @@ MAX_RECORDING_DURATION = 30
 FOLLOWUP_SPEECH_SPIKE_THRESHOLD = 150
 FOLLOWUP_SUSTAINED_FRAMES = 3
 
-API_HOST = os.getenv("API_HOST", "0.0.0.0")
+API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("API_PORT", "8741"))
-UI_PORT = int(os.getenv("UI_PORT", "3741"))
+UI_PORT = int(os.getenv("UI_PORT", "3000"))
 
 CHROMA_PERSIST_DIR = str(MEMORY_DIR / "chroma")
 MEMORY_COLLECTION = "jarvis_conversations"

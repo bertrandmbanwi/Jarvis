@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import os
-import signal
 import sys
 
 from jarvis.config import settings
@@ -54,7 +53,7 @@ async def run_voice_mode():
         return
 
     listener_ok = listener.initialize()
-    speaker_ok = speaker.initialize()
+    speaker.initialize()
 
     listener.set_speaking(True)
     await speaker.speak("JARVIS online. All systems operational. How can I help you?")
@@ -162,6 +161,7 @@ async def run_text_mode():
 async def run_server_mode():
     """Run JARVIS as API server."""
     import uvicorn
+
     from jarvis.core.server import app
 
     ssl_certfile = os.environ.get("JARVIS_TLS_CERT")
@@ -184,7 +184,16 @@ async def run_server_mode():
 async def run_full():
     """Run API server and voice listener concurrently."""
     import uvicorn
-    from jarvis.core.server import app, brain, broadcast_voice_interaction, broadcast_voice_state, broadcast_voice_chunk, broadcast_overlay_state, set_voice_components
+
+    from jarvis.core.server import (
+        app,
+        brain,
+        broadcast_overlay_state,
+        broadcast_voice_chunk,
+        broadcast_voice_interaction,
+        broadcast_voice_state,
+        set_voice_components,
+    )
     from jarvis.voice.listener import VoiceListener
     from jarvis.voice.speaker import VoiceSpeaker
 
@@ -212,7 +221,7 @@ async def run_full():
         await asyncio.sleep(2)
 
         listener_ok = listener.initialize()
-        speaker_ok = speaker.initialize()
+        speaker.initialize()
 
         set_voice_components(speaker, listener)
 
@@ -256,7 +265,7 @@ async def run_full():
             Returns True for complex tasks that involve planning or multi-step execution.
             Returns False for chat, greetings, quick lookups (these respond fast enough inline).
             """
-            from jarvis.core.brain import _select_tier, _is_chat_only
+            from jarvis.core.brain import _is_chat_only, _select_tier
             tier = _select_tier(text)
             # Fast-tier chat is already quick; no need for async
             if tier == "fast" and _is_chat_only(text):
@@ -276,9 +285,7 @@ async def run_full():
                 if signal in text_lower:
                     return True
             # Deep tier always gets async treatment
-            if tier == "deep":
-                return True
-            return False
+            return tier == "deep"
 
         async def _run_async_task(text: str):
             """Run brain.process in background; speak result when done."""
@@ -313,8 +320,8 @@ async def run_full():
                     "Let me handle that.",
                     "I'll get right on it, sir.",
                 ]
-                import random
-                ack = random.choice(ack_phrases)
+                import secrets
+                ack = secrets.choice(ack_phrases)
                 await speaker.speak(ack)
                 listener.set_speaking(False)
                 await broadcast_overlay_state("thinking", user_text=text)

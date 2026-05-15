@@ -6,7 +6,6 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger("jarvis.core.perf")
 
@@ -164,7 +163,7 @@ class PerfTracker:
                     "suggestion": self._suggest_fix(bucket),
                 })
 
-        bottlenecks.sort(key=lambda b: b["avg_s"], reverse=True)
+        bottlenecks.sort(key=lambda b: float(str(b["avg_s"])), reverse=True)
         return bottlenecks[:5]
 
     def _suggest_fix(self, bucket: LatencyBucket) -> str:
@@ -194,8 +193,8 @@ class PerfTracker:
             from jarvis.core.cache import tool_cache
             stats = tool_cache.get_stats()
             cache_info = f", cache: {stats['hit_rate_pct']}% hit rate"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Cache stats unavailable for perf summary: %s", e)
 
         return (
             f"Perf: {self._request_count} requests, "

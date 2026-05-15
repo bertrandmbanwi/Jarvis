@@ -8,14 +8,13 @@ feedback loop from task execution through analysis and template updates.
 import json
 import logging
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, cast
 
-from jarvis.config import settings
 from jarvis.agent.ab_testing import ABTester
 from jarvis.agent.template_evolution import TemplateEvolver
-from jarvis.agent.templates import get_template, fill_template
+from jarvis.agent.templates import get_template
+from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.agent.evolution_pipeline")
 
@@ -61,14 +60,14 @@ class EvolutionPipeline:
         self.evolver = TemplateEvolver(learning_loop=learning_loop)
         self.learning_loop = learning_loop
 
-        self._active_experiments: Dict[str, ExperimentStatus] = {}
-        self._evolution_history: List[EvolutionCycle] = []
-        self._template_versions: Dict[str, str] = {}
-        self._success_tracker: Dict[str, dict] = {}
+        self._active_experiments: dict[str, ExperimentStatus] = {}
+        self._evolution_history: list[EvolutionCycle] = []
+        self._template_versions: dict[str, str] = {}
+        self._success_tracker: dict[str, dict[str, Any]] = {}
 
         self._load_pipeline_state()
 
-    def run_evolution_cycle(self, task_type: str) -> Optional[str]:
+    def run_evolution_cycle(self, task_type: str) -> str | None:
         """
         Check if evolution is warranted and create new template version.
 
@@ -113,7 +112,7 @@ class EvolutionPipeline:
 
         self._save_pipeline_state()
 
-        return new_version
+        return str(new_version)
 
     def on_task_complete(
         self,
@@ -181,7 +180,7 @@ class EvolutionPipeline:
         self,
         task_type: str,
         request_text: str = "",
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Get the currently active template for a task type.
 
@@ -201,20 +200,20 @@ class EvolutionPipeline:
                 logger.warning("No template found for task_type: %s", task_type)
                 return None
 
-            return template.template_format
+            return str(template.template_format)
 
         except Exception as e:
             logger.error("Failed to get active template: %s", e)
             return None
 
-    def get_pipeline_status(self) -> Dict:
+    def get_pipeline_status(self) -> dict:
         """
         Get comprehensive status of pipeline, experiments, and evolution.
 
         Returns:
             Dict with active experiments, evolution history, and versions
         """
-        status = {
+        status: dict[str, Any] = {
             "timestamp": time.time(),
             "active_experiments": {},
             "success_rates": {},
@@ -236,8 +235,7 @@ class EvolutionPipeline:
             }
 
         try:
-            from jarvis.agent.ab_testing import PromptTemplate as ABTemplate
-            for task_type in set(t for t in self._template_versions.keys()):
+            for task_type in set(t for t in self._template_versions):
                 versions = self.ab_tester._discover_versions(task_type)
                 if versions:
                     stats = self.ab_tester.get_version_stats(task_type)
@@ -269,7 +267,7 @@ class EvolutionPipeline:
 
         return status
 
-    def _compute_pipeline_health(self) -> Dict:
+    def _compute_pipeline_health(self) -> dict:
         """
         Compute overall health metrics for the pipeline.
 
@@ -309,8 +307,8 @@ class EvolutionPipeline:
             return
 
         try:
-            with open(PIPELINE_STATE_FILE, 'r') as f:
-                state = json.load(f)
+            with open(PIPELINE_STATE_FILE) as f:
+                state = cast(dict[str, Any], json.load(f))
 
             self._template_versions = state.get("template_versions", {})
             self._success_tracker = state.get("success_tracker", {})

@@ -4,7 +4,7 @@
 # Usage: ./capture.sh [JARVIS_URL]
 set -euo pipefail
 
-URL="${1:-http://localhost:8080}"
+URL="${1:-http://localhost:3000}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Capturing JARVIS screenshots from ${URL} ..."

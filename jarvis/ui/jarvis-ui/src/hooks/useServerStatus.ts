@@ -2,17 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ServerStatus } from "@/lib/types";
-
-function getApiBaseUrl(): string {
-  if (typeof window === "undefined") return "http://localhost:8741";
-  const port = window.location.port;
-  const hostname = window.location.hostname;
-  const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
-  if ((!port || port === "443" || port === "80") && !isLocal) {
-    return `${window.location.origin}/jarvis-api`;
-  }
-  return `${window.location.protocol}//${hostname}:8741`;
-}
+import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 const STATUS_URL = `${getApiBaseUrl()}/`;
 const POLL_INTERVAL_MS = 10000;
 
@@ -22,10 +12,7 @@ export function useServerStatus(authToken?: string | null) {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const headers: Record<string, string> = {};
-      if (authToken) {
-        headers["Authorization"] = `Bearer ${authToken}`;
-      }
+      const headers = jarvisHeaders(authToken);
       const resp = await fetch(STATUS_URL, { headers });
       if (resp.ok) {
         const data = await resp.json();

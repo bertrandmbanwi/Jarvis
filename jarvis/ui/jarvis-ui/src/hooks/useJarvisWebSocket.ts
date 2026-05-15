@@ -5,32 +5,7 @@ import {
   ConnectionStatus, ChatMessage, CostSummary, WSMessage,
   ProactiveSuggestion, PlanState, PlanSubtask, ConnectedDevice,
 } from "@/lib/types";
-
-function isTunnelMode(): boolean {
-  if (typeof window === "undefined") return false;
-  const port = window.location.port;
-  const hostname = window.location.hostname;
-  const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
-  return (!port || port === "443" || port === "80") && !isLocal;
-}
-
-function getWsUrl(): string {
-  if (typeof window === "undefined") return "ws://localhost:8741/ws";
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const host = window.location.hostname;
-  if (isTunnelMode()) {
-    return `${proto}//${host}/jarvis-ws`;
-  }
-  return `${proto}//${host}:8741/ws`;
-}
-
-function getApiBaseUrl(): string {
-  if (typeof window === "undefined") return "http://localhost:8741";
-  if (isTunnelMode()) {
-    return `${window.location.origin}/jarvis-api`;
-  }
-  return `${window.location.protocol}//${window.location.hostname}:8741`;
-}
+import { getApiBaseUrl, getWsUrl, jarvisHeaders } from "@/lib/apiBase";
 
 const JARVIS_WS_URL = getWsUrl();
 const RECONNECT_DELAY_MS = 3000;
@@ -795,10 +770,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
   const clearMessages = useCallback(() => {
     setMessages([]);
     const clearUrl = `${getApiBaseUrl()}/clear`;
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers["Authorization"] = `Bearer ${authToken}`;
-    }
+    const headers = jarvisHeaders(authToken);
     fetch(clearUrl, { method: "POST", headers }).catch(() => {});
   }, [authToken]);
 

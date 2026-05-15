@@ -15,8 +15,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <!-- UPDATE THIS PATH to match your JARVIS install location -->
-        <string>cd ~/Jarvis && ./start.sh full</string>
+        <string>cd /Users/bertrandmbanwi/Documents/Jarvis &amp;&amp; ./start.sh full</string>
     </array>
 
     <!-- Start automatically when the user logs in -->
@@ -44,7 +43,7 @@
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
-        <string>/Users/becs</string>
+        <string>/Users/bertrandmbanwi</string>
     </dict>
 
     <!-- Limit resource usage -->

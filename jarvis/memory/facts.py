@@ -26,8 +26,6 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
 from jarvis.config import settings
 
@@ -288,7 +286,7 @@ class FactStore:
 
         return facts
 
-    def search(self, query: str, category: Optional[str] = None, limit: int = 10) -> list[Fact]:
+    def search(self, query: str, category: str | None = None, limit: int = 10) -> list[Fact]:
         """Search facts by keyword or category."""
         query_lower = query.lower()
         results = []
@@ -386,7 +384,7 @@ class FactStore:
 
     def get_stats(self) -> dict:
         """Get fact store statistics."""
-        by_category = {}
+        by_category: dict[str, int] = {}
         for fact in self._facts.values():
             cat = fact.category
             by_category[cat] = by_category.get(cat, 0) + 1

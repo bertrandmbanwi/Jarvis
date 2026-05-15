@@ -15,9 +15,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
-from jarvis.config import settings
 from jarvis.core.llm import JarvisLLM
 
 logger = logging.getLogger("jarvis.qa")
@@ -113,7 +111,7 @@ class QAAgent:
                 ),
                 timeout=VERIFY_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("QA verification timed out after %d seconds", VERIFY_TIMEOUT)
             return QAResult(
                 passed=False,
@@ -138,7 +136,7 @@ class QAAgent:
         issues: list[str],
         llm: JarvisLLM,
         executor,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
     ) -> dict:
         """
@@ -180,7 +178,7 @@ class QAAgent:
                     "attempt": attempt,
                 }
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Retry attempt %d timed out", attempt)
                 if attempt == MAX_RETRIES:
                     return {
@@ -213,7 +211,7 @@ class QAAgent:
         task_result: str,
         llm: JarvisLLM,
         executor,
-        conversation_history: Optional[list[dict]] = None,
+        conversation_history: list[dict] | None = None,
         tier: str = "brain",
     ) -> tuple[str, QAResult]:
         """
@@ -344,9 +342,9 @@ class QAAgent:
         except json.JSONDecodeError as e:
             logger.warning("Failed to parse QA JSON response: %s. Raw: %s", e, response[:200])
             return QAResult(
-                passed=True,
-                issues=[],
-                summary="Verification result unclear; treating as passed",
+                passed=False,
+                issues=["QA response was not valid JSON"],
+                summary="Verification result unclear; retry or manual review required",
                 attempt=1,
             )
         except Exception as e:

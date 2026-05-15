@@ -17,6 +17,19 @@ VENV_DIR="${SCRIPT_DIR}/.venv"
 UI_DIR="${SCRIPT_DIR}/jarvis/ui/jarvis-ui"
 MODE="${1:-full}"
 
+read_env_value() {
+    local key="$1"
+    if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+        grep -E "^${key}=" "${SCRIPT_DIR}/.env" | tail -1 | cut -d= -f2- || true
+    fi
+}
+
+API_PORT="${API_PORT:-$(read_env_value API_PORT)}"
+API_PORT="${API_PORT:-8741}"
+UI_PORT="${UI_PORT:-$(read_env_value UI_PORT)}"
+UI_PORT="${UI_PORT:-3000}"
+NEXT_FALLBACK_PORT=$((UI_PORT + 1))
+
 # Track child PIDs for cleanup
 UI_PID=""
 NEXTJS_PID=""
@@ -43,8 +56,8 @@ cleanup() {
         echo "Stopping Cloudflare Tunnel..."
         kill "${TUNNEL_PID}" 2>/dev/null || true
     fi
-    # Final sweep: kill anything still holding ports 3000 and 3001
-    for pid in $(lsof -ti :3000,:3001 2>/dev/null || true); do
+    # Final sweep: kill anything still holding the UI ports
+    for pid in $(lsof -ti :"${UI_PORT}",:"${NEXT_FALLBACK_PORT}" 2>/dev/null || true); do
         kill "${pid}" 2>/dev/null || true
     done
     if [[ -n "${OVERLAY_PID}" ]] && kill -0 "${OVERLAY_PID}" 2>/dev/null; then
@@ -190,19 +203,19 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
             (cd "${UI_DIR}" && npm install)
         fi
 
-        # Kill any orphaned processes on ports 3000/3001 from a previous run
+        # Kill any orphaned processes on the configured UI ports from a previous run
         # lsof can return multiple PIDs (one per line), so iterate over each
         while IFS= read -r pid; do
             if [[ -n "${pid}" ]]; then
-                echo "Port 3000/3001 in use (PID: ${pid}). Killing orphaned process..."
+                echo "Port ${UI_PORT}/${NEXT_FALLBACK_PORT} in use (PID: ${pid}). Killing orphaned process..."
                 kill "${pid}" 2>/dev/null || true
             fi
-        done < <(lsof -ti :3000,:3001 2>/dev/null || true)
+        done < <(lsof -ti :"${UI_PORT}",:"${NEXT_FALLBACK_PORT}" 2>/dev/null || true)
         # Give the OS a moment to release the port
         sleep 1
 
-        echo "Starting JARVIS UI on http://0.0.0.0:3000 ..."
-        (cd "${UI_DIR}" && npm run dev -- --hostname 0.0.0.0 --port 3000) &
+        echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} ..."
+        (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
         UI_PID=$!
         # Give the dev server a moment to start
         sleep 3
@@ -212,7 +225,7 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
 fi
 
 # Start Cloudflare Tunnel for mobile/remote access (if cloudflared is installed).
-# The tunnel exposes the Next.js UI (port 3000) over HTTPS. API and WebSocket
+# The tunnel exposes the Next.js UI over HTTPS. API and WebSocket
 # requests from the phone are proxied through Next.js rewrites, so only one
 # tunnel is needed. The tunnel URL is printed to the console.
 if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
@@ -220,7 +233,7 @@ if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${MODE}" == "full" || "${MODE}" ==
     echo "Starting Cloudflare Tunnel..."
     TUNNEL_LOG="${SCRIPT_DIR}/data/logs/cloudflared.log"
     mkdir -p "$(dirname "${TUNNEL_LOG}")"
-    cloudflared tunnel --url http://localhost:3000 --no-autoupdate 2>"${TUNNEL_LOG}" &
+    cloudflared tunnel --url "http://localhost:${UI_PORT}" --no-autoupdate 2>"${TUNNEL_LOG}" &
     TUNNEL_PID=$!
     # Wait for cloudflared to print the tunnel URL (usually takes 3-5 seconds)
     echo "Waiting for tunnel URL..."
@@ -245,7 +258,7 @@ if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${MODE}" == "full" || "${MODE}" ==
     done
     if [[ -z "${TUNNEL_URL:-}" ]]; then
         echo "Warning: Could not get tunnel URL. Check ${TUNNEL_LOG} for details."
-        echo "  JARVIS still works locally at http://localhost:3000"
+        echo "  JARVIS still works locally at http://localhost:${UI_PORT}"
     fi
 fi
 

@@ -1,10 +1,8 @@
 """JARVIS File System Tools: safe file operations for managing files and folders."""
 import logging
-import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.filesystem")
 
@@ -74,7 +72,7 @@ async def read_file(path: str, max_lines: int = 100) -> str:
         if size > 1_000_000:
             return f"File too large to read ({_format_size(size)}). Use a specific tool or command."
 
-        with open(target, "r", encoding="utf-8", errors="replace") as f:
+        with open(target, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
 
         if len(lines) > max_lines:
@@ -86,7 +84,7 @@ async def read_file(path: str, max_lines: int = 100) -> str:
         return f"Error reading file: {e}"
 
 
-async def write_file(path: str, content: str) -> str:
+async def write_file(path: str, content: str, overwrite: bool = False) -> str:
     """Write content to a file (creates or overwrites)."""
     safe, reason = _is_path_safe(path)
     if not safe:
@@ -95,6 +93,11 @@ async def write_file(path: str, content: str) -> str:
     try:
         target = Path(path).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not overwrite:
+            return (
+                f"File already exists: {target}. "
+                "Pass overwrite=true only after reading the file or receiving explicit user confirmation."
+            )
 
         with open(target, "w", encoding="utf-8") as f:
             f.write(content)
@@ -222,8 +225,9 @@ async def get_file_info(path: str) -> str:
 
 def _format_size(size: int) -> str:
     """Convert bytes to human-readable format (B, KB, MB, GB, TB)."""
+    size_float = float(size)
     for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+        if size_float < 1024:
+            return f"{size_float:.1f} {unit}"
+        size_float /= 1024
+    return f"{size_float:.1f} TB"

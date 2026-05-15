@@ -1,18 +1,21 @@
 """JARVIS Screen Tools: screen capture and OCR using screencapture and Vision framework."""
 import asyncio
+import contextlib
 import logging
-import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any
+
+from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.tools.screen")
 
 
-async def capture_screen(output_path: Optional[str] = None, region: Optional[str] = None) -> str:
+async def capture_screen(output_path: str | None = None, region: str | None = None) -> str:
     """Capture a screenshot of the current screen."""
     if output_path is None:
-        output_path = tempfile.mktemp(suffix=".png")
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            output_path = tmp.name
 
     try:
         cmd = ["screencapture", "-x"]
@@ -38,10 +41,11 @@ async def capture_screen(output_path: Optional[str] = None, region: Optional[str
         return f"Error capturing screen: {e}"
 
 
-async def capture_window(output_path: Optional[str] = None) -> str:
+async def capture_window(output_path: str | None = None) -> str:
     """Capture just the frontmost window."""
     if output_path is None:
-        output_path = tempfile.mktemp(suffix=".png")
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            output_path = tmp.name
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -76,19 +80,16 @@ async def read_screen_text() -> str:
         return "OCR failed: no text extraction method available. Install tesseract: brew install tesseract"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             Path(screenshot_path).unlink()
-        except Exception:
-            pass
 
 
-async def _ocr_with_vision_framework(image_path: str) -> Optional[str]:
+async def _ocr_with_vision_framework(image_path: str) -> str | None:
     """Use macOS Vision framework for OCR."""
     try:
-        import objc
-        from Quartz import CIImage
-        from Foundation import NSURL
         import Vision
+        from Foundation import NSURL
+        from Quartz import CIImage
 
         url = NSURL.fileURLWithPath_(image_path)
         ci_image = CIImage.imageWithContentsOfURL_(url)
@@ -123,7 +124,7 @@ async def _ocr_with_vision_framework(image_path: str) -> Optional[str]:
         return None
 
 
-async def _ocr_with_tesseract(image_path: str) -> Optional[str]:
+async def _ocr_with_tesseract(image_path: str) -> str | None:
     """Fallback OCR using Tesseract."""
     try:
         process = await asyncio.create_subprocess_exec(
@@ -144,7 +145,7 @@ async def _ocr_with_tesseract(image_path: str) -> Optional[str]:
         return None
 
 
-async def analyze_screen(question: Optional[str] = None) -> str:
+async def analyze_screen(question: str | None = None) -> str:
     """Capture the screen and analyze it with Claude's vision API.
 
     Takes a screenshot, sends it to Claude with the optional question,
@@ -164,16 +165,15 @@ async def analyze_screen(question: Optional[str] = None) -> str:
 
         prompt = question or "Describe what you see on the screen. Focus on the active application, any important content, and what the user appears to be working on."
 
-        # Use the LLM module to analyze the image with Claude vision
-        from jarvis.core.llm import JarvisLLM
-        llm = JarvisLLM()
-        if not llm._anthropic:
-            llm._init_anthropic()
-
-        if not llm._anthropic:
+        if not settings.ANTHROPIC_API_KEY:
             return "Vision analysis unavailable: Claude API not configured."
 
-        response = llm._anthropic.messages.create(
+        import anthropic
+        client: Any = anthropic.AsyncAnthropic(
+            api_key=settings.ANTHROPIC_API_KEY,
+            timeout=120.0,
+        )
+        response = await client.messages.create(
             model=settings.CLAUDE_FAST_MODEL,
             max_tokens=300,
             messages=[
@@ -198,17 +198,15 @@ async def analyze_screen(question: Optional[str] = None) -> str:
         )
 
         if response.content and len(response.content) > 0:
-            return response.content[0].text
+            return str(getattr(response.content[0], "text", ""))
         return "I captured the screen but couldn't analyze it."
 
     except Exception as e:
         logger.error("Screen analysis failed: %s", e)
         return f"Screen analysis error: {e}"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             Path(screenshot_path).unlink()
-        except Exception:
-            pass
 
 
 async def get_screen_size() -> str:
