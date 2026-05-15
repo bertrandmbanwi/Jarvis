@@ -4,15 +4,12 @@ import time
 import pytest
 
 from jarvis.memory.facts import (
-    FactStore,
     Fact,
-    MIN_CONFIDENCE,
-    DAILY_CONFIDENCE_DECAY,
+    FactStore,
 )
 from jarvis.memory.preferences import (
-    PreferenceTracker,
     InteractionPattern,
-    DECAY_RATE,
+    PreferenceTracker,
 )
 
 
@@ -340,7 +337,7 @@ class TestInteractionPattern:
     def test_pattern_weighted_score(self):
         """Weighted score should combine frequency and recency."""
         pattern = InteractionPattern(name="test", category="topic")
-        for i in range(5):
+        for _i in range(5):
             pattern.record()
         score = pattern.weighted_score
         assert score > 0
@@ -412,9 +409,9 @@ class TestPreferenceTracker:
     def test_get_top_tools(self):
         """Should identify top tools."""
         tracker = PreferenceTracker()
-        for i in range(3):
+        for _i in range(3):
             tracker.record_request("search", tier="fast", tool_calls=["search_web"])
-        for i in range(2):
+        for _i in range(2):
             tracker.record_request("read", tier="fast", tool_calls=["read_file"])
         tools = tracker.get_top_tools(limit=3)
         assert tools[0][0] == "search_web"
@@ -422,7 +419,6 @@ class TestPreferenceTracker:
     def test_get_active_hours(self):
         """Should identify active usage hours."""
         tracker = PreferenceTracker()
-        from datetime import datetime
         # Simulate activity at 14:00
         # This is mocked in real scenario
         tracker.record_request("test", tier="fast")
@@ -441,7 +437,7 @@ class TestPreferenceTracker:
     def test_get_context_string(self):
         """Should generate preference context string."""
         tracker = PreferenceTracker()
-        for i in range(3):
+        for _i in range(3):
             tracker.record_request("weather forecast", tier="fast")
         context = tracker.get_context_string()
         if context:

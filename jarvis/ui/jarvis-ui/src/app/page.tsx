@@ -176,7 +176,7 @@ export default function Page() {
 
       <PlanProgress plan={activePlan} />
 
-      <SettingsPanel />
+      <SettingsPanel authToken={authState.token} />
     </div>
   );
 }

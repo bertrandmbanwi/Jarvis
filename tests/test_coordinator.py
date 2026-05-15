@@ -1,14 +1,13 @@
 """Tests for JARVIS multi-agent coordinator module."""
-import pytest
 
 from jarvis.agent.coordinator import (
-    AgentType,
+    AgentCoordinator,
     AgentProfile,
     AgentTask,
+    AgentType,
     classify_subtask,
     classify_subtasks_batch,
     find_parallel_groups,
-    AgentCoordinator,
 )
 
 
@@ -27,7 +26,7 @@ class TestAgentType:
 
     def test_agent_type_string_conversion(self):
         """Agent types should convert to strings."""
-        assert str(AgentType.RESEARCHER) == "AgentType.RESEARCHER"
+        assert str(AgentType.RESEARCHER) == "researcher"
         assert AgentType.RESEARCHER.value == "researcher"
 
 
@@ -353,7 +352,7 @@ class TestAgentCoordinator:
     def test_profiles_have_system_prompts(self):
         """All profiles should have meaningful system prompts."""
         coord = AgentCoordinator()
-        for agent_type, profile in coord.profiles.items():
+        for _agent_type, profile in coord.profiles.items():
             assert len(profile.system_prompt) > 50
             assert "Address" in profile.system_prompt or "specialty" in profile.system_prompt
 
@@ -391,7 +390,7 @@ class TestCoordinatorIntegration:
 
     def test_routing_keywords_coverage(self):
         """All agent types should have routing keywords."""
-        coord = AgentCoordinator()
+        AgentCoordinator()
         from jarvis.agent.coordinator import _ROUTING_KEYWORDS
         for agent_type in AgentType:
             if agent_type != AgentType.GENERALIST:

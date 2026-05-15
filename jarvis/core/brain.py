@@ -3,37 +3,43 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
+from jarvis.agent.coordinator import AgentCoordinator, AgentType
+from jarvis.agent.evolution_pipeline import EvolutionPipeline
+from jarvis.agent.executor import AgentExecutor
+from jarvis.agent.learning import LearningLoop
+from jarvis.agent.planner import TaskPlanner
+from jarvis.agent.suggestions import suggest_followup, suggest_task_followup
+from jarvis.agent.task_tracker import SubtaskStatus, TaskPlan
+from jarvis.agent.tools_schema import (
+    TOOL_SCHEMAS,
+    get_tool_names,
+    set_active_coordinator,
+    set_active_learning,
+    set_active_memory,
+    set_active_planner,
+    set_active_proactive,
+)
 from jarvis.config import settings
+from jarvis.core.dispatch_registry import DispatchRegistry, SuccessTracker
+from jarvis.core.hardening import sanitize_user_input
 from jarvis.core.llm import JarvisLLM
-from jarvis.memory.store import MemoryStore
+from jarvis.core.monitor import ConversationMonitor
+from jarvis.core.perf import estimate_request_cost, estimate_tokens, perf_tracker
+from jarvis.core.proactive import ProactiveEngine
 from jarvis.memory.conversation_store import (
     ConversationTurn,
-    initialize as init_conversation_store,
     load_conversation,
-    save_turn,
     prune_old_turns,
+    save_turn,
+)
+from jarvis.memory.conversation_store import (
     clear_conversation as clear_conversation_db,
 )
-from jarvis.agent.executor import AgentExecutor
-from jarvis.agent.planner import TaskPlanner
-from jarvis.agent.task_tracker import SubtaskStatus
-from jarvis.agent.tools_schema import (
-    set_active_planner, set_active_learning, set_active_proactive,
-    set_active_coordinator, set_active_memory, TOOL_SCHEMAS, get_tool_names,
+from jarvis.memory.conversation_store import (
+    initialize as init_conversation_store,
 )
-from jarvis.agent.learning import LearningLoop
-from jarvis.agent.coordinator import AgentCoordinator, AgentType
-from jarvis.core.proactive import ProactiveEngine
-from jarvis.core.hardening import sanitize_user_input
-from jarvis.core.perf import perf_tracker, estimate_tokens, estimate_request_cost
-from jarvis.core.dispatch_registry import DispatchRegistry, SuccessTracker
-from jarvis.core.monitor import ConversationMonitor
-from jarvis.agent.suggestions import suggest_followup, suggest_task_followup
-from jarvis.agent.evolution_pipeline import EvolutionPipeline
+from jarvis.memory.store import MemoryStore
 from jarvis.tools.work_session import WorkSession
 
 MAX_CONVERSATION_TURNS = 100
@@ -83,10 +89,7 @@ def _is_single_chat(text: str) -> bool:
     text_clean = text.strip().lower()
     if not text_clean:
         return True  # Empty fragments are not actionable
-    for pattern in _CHAT_ONLY_PATTERNS:
-        if re.match(pattern, text_clean, re.IGNORECASE):
-            return True
-    return False
+    return any(re.match(pattern, text_clean, re.IGNORECASE) for pattern in _CHAT_ONLY_PATTERNS)
 
 
 def _is_chat_only(text: str) -> bool:
@@ -127,10 +130,7 @@ _JARVIS_SHUTDOWN_PATTERNS = [
 def _is_jarvis_shutdown(text: str) -> bool:
     """Check if the user wants to shut down JARVIS (not the computer)."""
     text_clean = text.strip().lower()
-    for pattern in _JARVIS_SHUTDOWN_PATTERNS:
-        if re.search(pattern, text_clean):
-            return True
-    return False
+    return any(re.search(pattern, text_clean) for pattern in _JARVIS_SHUTDOWN_PATTERNS)
 
 
 def _select_tier(text: str) -> str:
@@ -142,9 +142,9 @@ def _select_tier(text: str) -> str:
 
     # Short messages with no action verbs and no question words that imply lookup
     # are likely conversational; use fast tier to save cost
-    _LOOKUP_WORDS = {"weather", "time", "news", "price", "stock", "email", "note", "calendar", "remind"}
+    lookup_words = {"weather", "time", "news", "price", "stock", "email", "note", "calendar", "remind"}
     if len(text_lower) < 60:
-        has_lookup = any(w in text_lower for w in _LOOKUP_WORDS)
+        has_lookup = any(w in text_lower for w in lookup_words)
         if not has_lookup:
             from jarvis.agent.planner import _count_action_verbs
             if _count_action_verbs(text_lower) == 0:
@@ -197,23 +197,23 @@ class JarvisBrain:
     """Central orchestrator for LLM, memory, agent, and response generation."""
 
     def __init__(self):
-        self.llm = JarvisLLM()
-        self.memory = MemoryStore()
-        self.agent = AgentExecutor()
-        self.planner = TaskPlanner()
-        self.learning = LearningLoop()
-        self.coordinator = AgentCoordinator()
-        self.proactive = ProactiveEngine()
-        self.dispatch = DispatchRegistry()
-        self.monitor = ConversationMonitor()
-        self.success_tracker = SuccessTracker()
-        self.evolution = EvolutionPipeline()
-        self.work_session: Optional[WorkSession] = None
+        self.llm: JarvisLLM = JarvisLLM()
+        self.memory: MemoryStore = MemoryStore()
+        self.agent: AgentExecutor = AgentExecutor()
+        self.planner: TaskPlanner = TaskPlanner()
+        self.learning: LearningLoop = LearningLoop()
+        self.coordinator: AgentCoordinator = AgentCoordinator()
+        self.proactive: ProactiveEngine = ProactiveEngine()
+        self.dispatch: DispatchRegistry = DispatchRegistry()
+        self.monitor: ConversationMonitor = ConversationMonitor()
+        self.success_tracker: SuccessTracker = SuccessTracker()
+        self.evolution: EvolutionPipeline = EvolutionPipeline()
+        self.work_session: WorkSession | None = None
         self.conversation: list[ConversationTurn] = []
         self._initialized = False
         self._shutdown_requested = False
         self._on_plan_progress = None  # Callback for broadcasting plan progress via WebSocket
-        self._last_plan = None
+        self._last_plan: TaskPlan | None = None
         self._current_request_id: str = ""  # Correlation ID for the current request
 
     async def initialize(self) -> bool:
@@ -409,13 +409,13 @@ class JarvisBrain:
             # Async follow-up suggestions (richer, checks project files)
             try:
                 async_suggestion = await suggest_task_followup(
-                    task_type="build",
-                    task_description=user_input[:200],
+                    completed_task=user_input[:200],
+                    task_result=response[:1000],
                     working_dir=str(settings.JARVIS_HOME),
                 )
-                if async_suggestion and async_suggestion.text:
-                    response += f"\n\n{async_suggestion.text}"
-                    logger.info("Async follow-up appended: %s", async_suggestion.action_type)
+                if async_suggestion:
+                    response += f"\n\n{async_suggestion}"
+                    logger.info("Async follow-up appended.")
             except Exception as e:
                 logger.debug("Async suggestion failed (non-critical): %s", e)
 
@@ -526,13 +526,13 @@ class JarvisBrain:
 
         if not plan:
             logger.info("Planning failed; falling back to direct agent execution.")
-            return await self.agent.execute(user_input, history, tier=tier)
+            return str(await self.agent.execute(user_input, history, tier=tier))
 
         subtask_dicts = [s.to_dict() for s in plan.subtasks]
         self.coordinator.route_subtasks(subtask_dicts)
 
         agent_assignments = {}
-        for sd, subtask in zip(subtask_dicts, plan.subtasks):
+        for sd, subtask in zip(subtask_dicts, plan.subtasks, strict=False):
             agent_type = sd.get("agent_type", "generalist")
             agent_assignments[subtask.id] = agent_type
 
@@ -605,15 +605,15 @@ class JarvisBrain:
 
                     prior_context = plan.context_for_subtask(st_id)
                     profile = self.coordinator.get_profile(agent_type)
+                    tools = self.coordinator.get_tools_for_agent(agent_type, TOOL_SCHEMAS)
 
                     return await self.agent.execute_subtask(
-                        subtask_description=(
-                            f"[Agent: {profile.display_name}]\n"
-                            f"{st_obj.description}"
-                        ),
+                        subtask_description=st_obj.description,
                         prior_context=prior_context,
                         conversation_history=history,
                         tier=tier,
+                        tools=tools,
+                        system_prompt_override=profile.system_prompt,
                     )
 
                 results = await self.coordinator.execute_parallel_group(
@@ -651,7 +651,7 @@ class JarvisBrain:
         try:
             dispatch_id = self.dispatch.register(
                 project_name=plan.goal_summary[:100],
-                original_prompt=user_input[:500],
+                prompt=user_input[:500],
             )
             self.dispatch.update_status(
                 dispatch_id,
@@ -734,7 +734,8 @@ class JarvisBrain:
             agent_type = AgentType(agent_type_str)
         except ValueError:
             agent_type = AgentType.GENERALIST
-        profile = self.coordinator.get_profile(agent_type)
+            profile = self.coordinator.get_profile(agent_type)
+            tools = self.coordinator.get_tools_for_agent(agent_type, TOOL_SCHEMAS)
 
         prior_context = plan.context_for_subtask(subtask.id)
 
@@ -742,13 +743,12 @@ class JarvisBrain:
         while attempt <= max_retries:
             try:
                 result = await self.agent.execute_subtask(
-                    subtask_description=(
-                        f"[Agent: {profile.display_name}]\n"
-                        f"{subtask.description}"
-                    ),
+                    subtask_description=subtask.description,
                     prior_context=prior_context,
                     conversation_history=history,
                     tier=tier,
+                    tools=tools,
+                    system_prompt_override=profile.system_prompt,
                 )
                 self.planner.tracker.complete_subtask(subtask.id, result)
                 self.coordinator._record_agent_stats(agent_type, True, 0.0)
@@ -817,14 +817,14 @@ class JarvisBrain:
             f"The user asked: \"{user_input}\"\n\n"
             f"I completed the following steps:\n\n"
             + "\n\n".join(results_text) +
-            f"\n\nPlease provide a cohesive, natural response to the user "
-            f"that summarizes what was accomplished. Be conversational, not "
-            f"a dry list. If any steps failed, mention what went wrong and "
-            f"what was still accomplished."
+            "\n\nPlease provide a cohesive, natural response to the user "
+            "that summarizes what was accomplished. Be conversational, not "
+            "a dry list. If any steps failed, mention what went wrong and "
+            "what was still accomplished."
         )
 
         try:
-            return await self.llm.chat(
+            return str(await self.llm.chat(
                 summary_prompt,
                 tier="fast",
                 system_prompt_override=(
@@ -832,7 +832,7 @@ class JarvisBrain:
                     "of a multi-step task you just completed. Be concise, warm, and "
                     "conversational. Address the user as 'sir'."
                 ),
-            )
+            ))
         except Exception as e:
             logger.warning("Plan summary generation failed: %s", e)
             # Fallback: just concatenate the results

@@ -1,6 +1,6 @@
 name: Build Task Template
 version: v1
-task_type: fullstack_app
+task_type: build
 keywords:
   - app
   - application

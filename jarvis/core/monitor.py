@@ -16,7 +16,6 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 logger = logging.getLogger("jarvis.monitor")
 
@@ -357,7 +356,7 @@ class ConversationMonitor:
         Returns:
             Dict mapping category to count
         """
-        counts = {}
+        counts: dict[str, int] = {}
         for issue in self.issues:
             counts[issue.category] = counts.get(issue.category, 0) + 1
         return counts

@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
+const path = require("path");
+const apiPort = process.env.JARVIS_API_PORT || process.env.API_PORT || "8741";
+
 const nextConfig = {
+  outputFileTracingRoot: path.join(__dirname),
   // Transpile Three.js for SSR compatibility
   transpilePackages: ["three"],
   // Disable SSR for the entire app since it's a local client-side UI
@@ -19,13 +23,13 @@ const nextConfig = {
     return [
       {
         source: "/jarvis-api/:path*",
-        destination: "http://127.0.0.1:8741/:path*",
+        destination: `http://127.0.0.1:${apiPort}/:path*`,
       },
       {
         // WebSocket endpoint: the Next.js dev server proxies upgrade
         // requests through rewrites, so this handles ws:// connections too.
         source: "/jarvis-ws",
-        destination: "http://127.0.0.1:8741/ws",
+        destination: `http://127.0.0.1:${apiPort}/ws`,
       },
     ];
   },

@@ -9,15 +9,15 @@ import json
 import logging
 import sqlite3
 import time
-from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any
 
 import yaml
 
+from jarvis.agent.templates import PromptTemplate
 from jarvis.config import settings
-from jarvis.agent.templates import PromptTemplate, register_template
 
 logger = logging.getLogger("jarvis.agent.template_evolution")
 
@@ -27,7 +27,7 @@ TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 EVOLUTION_LOG = settings.DATA_DIR / "learning" / "template_evolution.json"
 EVOLUTION_LOG.parent.mkdir(parents=True, exist_ok=True)
 
-FAILURE_PATTERNS: Dict[str, dict] = {
+FAILURE_PATTERNS: dict[str, dict] = {
     "import": {
         "keywords": ["import", "modulenotfound", "importerror"],
         "target_sections": ["imports", "dependencies"],
@@ -66,9 +66,9 @@ class FailureAnalysis:
     """Analysis of failures for a specific task type."""
     task_type: str
     total_failures: int
-    common_issues: List[str]
-    failure_patterns: Dict[str, int]
-    suggested_improvements: List[str]
+    common_issues: list[str]
+    failure_patterns: dict[str, int]
+    suggested_improvements: list[str]
 
 
 @dataclass
@@ -91,10 +91,10 @@ class TemplateEvolver:
             learning_loop: Optional LearningLoop instance for failure data
         """
         self.learning_loop = learning_loop
-        self._evolution_history: List[dict] = []
+        self._evolution_history: list[dict] = []
         self._load_evolution_history()
 
-    def analyze_failures(self, task_type: str) -> Optional[FailureAnalysis]:
+    def analyze_failures(self, task_type: str) -> FailureAnalysis | None:
         """
         Analyze failures for a task type using experiments database.
 
@@ -127,8 +127,8 @@ class TemplateEvolver:
                 logger.debug("No failures recorded for task_type: %s", task_type)
                 return None
 
-            pattern_counts: Dict[str, int] = defaultdict(int)
-            common_issues: List[str] = []
+            pattern_counts: dict[str, int] = defaultdict(int)
+            common_issues: list[str] = []
 
             if self.learning_loop:
                 try:
@@ -150,7 +150,7 @@ class TemplateEvolver:
 
             suggested = [
                 FAILURE_PATTERNS[p]["fix"]
-                for p in pattern_counts.keys()
+                for p in pattern_counts
                 if p in FAILURE_PATTERNS
             ]
 
@@ -166,7 +166,7 @@ class TemplateEvolver:
             logger.error("Failed to analyze failures for %s: %s", task_type, e)
             return None
 
-    def suggest_improvements(self, task_type: str) -> List[Improvement]:
+    def suggest_improvements(self, task_type: str) -> list[Improvement]:
         """
         Generate improvement suggestions for a template.
 
@@ -183,9 +183,9 @@ class TemplateEvolver:
         if not analysis or not analysis.failure_patterns:
             return []
 
-        improvements: List[Improvement] = []
+        improvements: list[Improvement] = []
 
-        for pattern_name, count in analysis.failure_patterns.items():
+        for pattern_name, _count in analysis.failure_patterns.items():
             if pattern_name not in FAILURE_PATTERNS:
                 continue
 
@@ -208,9 +208,9 @@ class TemplateEvolver:
     def create_new_version(
         self,
         task_type: str,
-        improvements: List[Improvement],
-        base_template: Optional[PromptTemplate] = None,
-    ) -> Optional[str]:
+        improvements: list[Improvement],
+        base_template: PromptTemplate | None = None,
+    ) -> str | None:
         """
         Create a new template version with suggested improvements.
 
@@ -230,7 +230,7 @@ class TemplateEvolver:
             version_num = 1
             if template_file.exists():
                 try:
-                    with open(template_file, 'r') as f:
+                    with open(template_file) as f:
                         data = yaml.safe_load(f)
                     version_str = data.get("version", "v1")
                     version_num = int(version_str.lstrip('v')) + 1
@@ -239,7 +239,7 @@ class TemplateEvolver:
 
             new_version = f"v{version_num}"
 
-            template_data = {
+            template_data: dict[str, Any] = {
                 "name": task_type,
                 "version": new_version,
                 "task_type": task_type,
@@ -289,7 +289,7 @@ class TemplateEvolver:
         self,
         task_type: str,
         min_failures: int = 5,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Check if evolution is warranted and create new version if so.
 
@@ -352,7 +352,7 @@ class TemplateEvolver:
         version_info = []
         for yaml_file in yaml_files:
             try:
-                with open(yaml_file, 'r') as f:
+                with open(yaml_file) as f:
                     data = yaml.safe_load(f)
                 task_type = data.get("task_type", yaml_file.stem)
                 version = data.get("version", "unknown")
@@ -390,7 +390,7 @@ class TemplateEvolver:
         self,
         task_type: str,
         new_version: str,
-        improvements: List[Improvement],
+        improvements: list[Improvement],
     ) -> None:
         """
         Record evolution event for historical tracking.
@@ -427,7 +427,7 @@ class TemplateEvolver:
             return
 
         try:
-            with open(EVOLUTION_LOG, 'r') as f:
+            with open(EVOLUTION_LOG) as f:
                 self._evolution_history = json.load(f)
         except Exception as e:
             logger.debug("Could not load evolution history: %s", e)

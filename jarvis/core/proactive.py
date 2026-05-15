@@ -2,14 +2,14 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Callable, Optional
+from enum import StrEnum
 
 logger = logging.getLogger("jarvis.core.proactive")
 
 
-class SuggestionCategory(str, Enum):
+class SuggestionCategory(StrEnum):
     """Categories of proactive suggestions."""
     CALENDAR = "calendar"
     EMAIL = "email"
@@ -50,7 +50,7 @@ class ProactiveEngine:
     def __init__(self):
         self._enabled = True
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
         self._category_enabled: dict[SuggestionCategory, bool] = {cat: True for cat in SuggestionCategory}
         self._intervals: dict[SuggestionCategory, int] = dict(DEFAULT_INTERVALS)
@@ -58,7 +58,7 @@ class ProactiveEngine:
         self._last_suggestion: dict[SuggestionCategory, float] = {cat: 0.0 for cat in SuggestionCategory}
         self._alerted_events: set[str] = set()
         self._greeting_sent_today: str = ""
-        self._on_suggestion: Optional[Callable] = None
+        self._on_suggestion: Callable | None = None
         self._conversation_active = False
         self._last_interaction: float = 0.0
 
@@ -123,9 +123,8 @@ class ProactiveEngine:
             try:
                 if self._enabled and not self._conversation_active:
                     await self._run_checks()
-                elif self._conversation_active:
-                    if time.time() - self._last_interaction > 300:
-                        self._conversation_active = False
+                elif self._conversation_active and time.time() - self._last_interaction > 300:
+                    self._conversation_active = False
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -175,8 +174,7 @@ class ProactiveEngine:
             return
 
         # Parse events to find ones starting soon
-        now = time.time()
-        lines = [l.strip() for l in events_text.strip().split("\n") if l.strip()]
+        lines = [line.strip() for line in events_text.strip().split("\n") if line.strip()]
 
         for line in lines:
             # Each line format: "Title | DateTime - DateTime | Calendar: Name"
@@ -229,8 +227,9 @@ class ProactiveEngine:
                         break  # Successfully parsed, no need to try other formats
                     except ValueError:
                         continue
-            except Exception:
+            except Exception as e:
                 # If we can't parse the time, skip this event
+                logger.debug("Calendar reminder parse skipped: %s", e)
                 continue
 
     async def _check_email(self):
@@ -238,7 +237,7 @@ class ProactiveEngine:
         try:
             from jarvis.tools.calendar_email import get_unread_count
             unread_text = await asyncio.wait_for(get_unread_count(), timeout=8.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("Email check timed out (Mail app not responding).")
             return
         except Exception as e:
@@ -314,14 +313,14 @@ class ProactiveEngine:
             from jarvis.tools.calendar_email import get_upcoming_events
             events = await get_upcoming_events(days=1)
             if "No events found" not in events:
-                event_lines = [l for l in events.strip().split("\n") if l.strip()]
+                event_lines = [line for line in events.strip().split("\n") if line.strip()]
                 count = len(event_lines)
                 if count == 1:
                     parts.append("You have 1 event on your calendar today.")
                 else:
                     parts.append(f"You have {count} events on your calendar today.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Morning briefing calendar lookup failed: %s", e)
 
         # Check email (with timeout guard; AppleScript Mail can hang)
         try:
@@ -333,12 +332,12 @@ class ProactiveEngine:
                     total = int(count_str)
                     if total > 0:
                         parts.append(f"You have {total} unread emails.")
-                except (ValueError, IndexError):
-                    pass
-        except asyncio.TimeoutError:
+                except (ValueError, IndexError) as e:
+                    logger.debug("Could not parse unread email count: %s", e)
+        except TimeoutError:
             logger.debug("Email check timed out during morning briefing.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Morning briefing email lookup failed: %s", e)
 
         if not parts:
             return "Your schedule looks clear today."

@@ -12,7 +12,6 @@ Provides async access to Apple Notes with:
 import asyncio
 import logging
 import re
-from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.notes")
 
@@ -56,10 +55,10 @@ async def _run_notes_script(script: str, timeout: float = DEFAULT_TIMEOUT) -> st
                 raise RuntimeError(f"Notes.app script error: {error_msg}")
 
             return stdout.decode("utf-8").strip()
-        except asyncio.TimeoutError:
+        except TimeoutError as err:
             proc.kill()
             await proc.wait()
-            raise TimeoutError(f"Notes.app script timed out after {timeout}s")
+            raise TimeoutError(f"Notes.app script timed out after {timeout}s") from err
     except Exception as e:
         logger.error("Failed to run Notes script: %s", e)
         raise
@@ -172,7 +171,7 @@ end tell
         return []
 
 
-async def read_note(title_match: str) -> Optional[dict]:
+async def read_note(title_match: str) -> dict | None:
     """
     Read a single note by partial title match.
 
@@ -323,10 +322,7 @@ async def create_note(
     """
     try:
         # Convert markdown checklists to HTML if present
-        if "[" in body and "]" in body:
-            converted_body = _body_to_html(body)
-        else:
-            converted_body = body
+        converted_body = _body_to_html(body) if "[" in body and "]" in body else body
 
         # Escape quotes for AppleScript
         safe_title = title.replace('"', '\\"')

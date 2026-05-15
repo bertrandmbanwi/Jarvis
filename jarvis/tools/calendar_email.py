@@ -1,10 +1,7 @@
 """AppleScript-based access to macOS Calendar.app and Mail.app."""
-import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Optional
 
-from jarvis.tools.mac_control import run_applescript, _escape_applescript
+from jarvis.tools.mac_control import _escape_applescript, run_applescript
 
 logger = logging.getLogger("jarvis.tools.calendar_email")
 
@@ -111,10 +108,7 @@ async def create_calendar_event(
         set evtEnd to evtStart + (1 * hours)
         '''
 
-    if calendar_name:
-        cal_target = f'calendar "{cal_safe}"'
-    else:
-        cal_target = 'first calendar'
+    cal_target = f'calendar "{cal_safe}"' if calendar_name else 'first calendar'
 
     script = f'''
     tell application "Calendar"
@@ -319,8 +313,9 @@ async def send_email(
     body: str,
     cc: str = "",
     bcc: str = "",
+    confirmed: bool = False,
 ) -> str:
-    """Compose and send an email via Mail.app."""
+    """Compose an email via Mail.app, sending only after explicit confirmation."""
     subject_safe = _escape_applescript(subject)
     body_safe = _escape_applescript(body)
     to_safe = _escape_applescript(to)
@@ -345,9 +340,17 @@ async def send_email(
             if addr:
                 bcc_recipients += f'make new bcc recipient at end of bcc recipients with properties {{address:"{addr}"}}\n'
 
+    visible = "false" if confirmed else "true"
+    send_line = "send newMessage" if confirmed else ""
+    result_line = (
+        f'return "Email sent to {to_safe} with subject: {subject_safe}"'
+        if confirmed
+        else f'return "Email draft opened for {to_safe} with subject: {subject_safe}"'
+    )
+
     script = f'''
     tell application "Mail"
-        set newMessage to make new outgoing message with properties {{subject:"{subject_safe}", content:"{body_safe}", visible:false}}
+        set newMessage to make new outgoing message with properties {{subject:"{subject_safe}", content:"{body_safe}", visible:{visible}}}
 
         tell newMessage
             {to_recipients}
@@ -355,17 +358,17 @@ async def send_email(
             {bcc_recipients}
         end tell
 
-        send newMessage
+        {send_line}
     end tell
 
-    return "Email sent to {to_safe} with subject: {subject_safe}"
+    {result_line}
     '''
 
     result = await run_applescript(script)
     if result.startswith("Error:"):
         return f"Could not send email: {result}. Make sure Mail.app is configured with an outgoing mail account."
 
-    logger.info("Email sent to %s: '%s'", to, subject[:50])
+    logger.info("Email %s to %s: '%s'", "sent" if confirmed else "drafted", to, subject[:50])
     return result
 
 

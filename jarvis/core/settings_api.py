@@ -7,13 +7,12 @@ All endpoints validate input and reject attempts to execute arbitrary code.
 Only safe configuration keys are allowed for updates.
 """
 import logging
-import os
 import time
-from pathlib import Path
-from typing import Optional
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel, Field
 
 from jarvis.config import settings
 
@@ -37,6 +36,7 @@ SAFE_CONFIG_KEYS = {
     "STT_ENGINE",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
+    "OLLAMA_FAST_MODEL",
     "PREFER_CLAUDE",
     "API_HOST",
     "API_PORT",
@@ -45,6 +45,76 @@ SAFE_CONFIG_KEYS = {
 
 # Start time for uptime calculation
 _startup_time = time.time()
+
+
+class TestApiRequest(BaseModel):
+    api_key: str | None = Field(default=None, max_length=512)
+
+
+class TestOllamaRequest(BaseModel):
+    base_url: str | None = Field(default=None, max_length=300)
+
+
+def _normalize_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize settings values before writing them to .env."""
+    normalized: dict[str, Any] = {}
+
+    for key, value in raw_updates.items():
+        if value is None:
+            value = ""
+
+        if isinstance(value, str):
+            value = value.strip()
+            if "\n" in value or "\r" in value or "\x00" in value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid value for {key}: newlines and NUL bytes are not allowed.",
+                )
+
+        if key in {"API_PORT", "UI_PORT"}:
+            try:
+                port = int(value)
+            except (TypeError, ValueError) as err:
+                raise HTTPException(status_code=400, detail=f"{key} must be a port number.") from err
+            if not 1 <= port <= 65535:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 65535.")
+            normalized[key] = port
+        elif key in {"COST_DAILY_ALERT", "COST_MONTHLY_ALERT", "COST_DEEP_PREMIUM_LIMIT"}:
+            try:
+                amount = float(value)
+            except (TypeError, ValueError) as err:
+                raise HTTPException(status_code=400, detail=f"{key} must be numeric.") from err
+            if amount < 0:
+                raise HTTPException(status_code=400, detail=f"{key} cannot be negative.")
+            normalized[key] = amount
+        elif key == "TTS_SPEED":
+            try:
+                speed = float(value)
+            except (TypeError, ValueError) as err:
+                raise HTTPException(status_code=400, detail="TTS_SPEED must be numeric.") from err
+            if not 0.5 <= speed <= 2.0:
+                raise HTTPException(status_code=400, detail="TTS_SPEED must be between 0.5 and 2.0.")
+            normalized[key] = speed
+        elif key == "PREFER_CLAUDE":
+            if isinstance(value, bool):
+                normalized[key] = value
+            elif str(value).lower() in {"true", "1", "yes", "on"}:
+                normalized[key] = True
+            elif str(value).lower() in {"false", "0", "no", "off"}:
+                normalized[key] = False
+            else:
+                raise HTTPException(status_code=400, detail="PREFER_CLAUDE must be boolean.")
+        else:
+            normalized[key] = value
+
+    return normalized
+
+
+def _env_value(value: Any) -> str:
+    """Serialize a validated value for a simple KEY=value .env file."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 @settings_router.get("")
@@ -76,12 +146,15 @@ async def get_settings() -> dict:
             "prefer_claude": settings.PREFER_CLAUDE,
             "ollama_url": settings.OLLAMA_BASE_URL,
             "ollama_model": settings.OLLAMA_MODEL,
+            "ollama_fast_model": settings.OLLAMA_FAST_MODEL,
         },
     }
 
 
 @settings_router.post("/test-api")
-async def test_anthropic_api(api_key: Optional[str] = None) -> dict:
+async def test_anthropic_api(
+    body: Annotated[TestApiRequest | None, Body()] = None,
+) -> dict:
     """
     Test if Anthropic API key is valid.
 
@@ -91,7 +164,7 @@ async def test_anthropic_api(api_key: Optional[str] = None) -> dict:
     Returns:
         Dict with valid (bool), model (str), error (str|null)
     """
-    key_to_test = api_key or settings.ANTHROPIC_API_KEY
+    key_to_test = (body.api_key if body else None) or settings.ANTHROPIC_API_KEY
 
     if not key_to_test:
         return {"valid": False, "model": None, "error": "No API key provided"}
@@ -123,17 +196,21 @@ async def test_anthropic_api(api_key: Optional[str] = None) -> dict:
 
 
 @settings_router.post("/test-ollama")
-async def test_ollama() -> dict:
+async def test_ollama(
+    body: Annotated[TestOllamaRequest | None, Body()] = None,
+) -> dict:
     """
     Test if Ollama is reachable and list available models.
 
     Returns:
         Dict with valid (bool), models (list[str]), error (str|null)
     """
+    base_url = ((body.base_url if body else None) or settings.OLLAMA_BASE_URL).rstrip("/")
+
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(
-                f"{settings.OLLAMA_BASE_URL}/api/tags",
+                f"{base_url}/api/tags",
             )
             response.raise_for_status()
 
@@ -175,16 +252,16 @@ async def get_status() -> dict:
                 f"{settings.OLLAMA_BASE_URL}/api/tags",
             )
             ollama_valid = response.status_code == 200
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Ollama status check failed: %s", e)
 
     # Count memory entries (approximate)
     memory_count = 0
     try:
         if settings.MEMORY_DIR.exists():
             memory_count = len(list(settings.MEMORY_DIR.glob("*")))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Memory directory count failed: %s", e)
 
     uptime = time.time() - _startup_time
 
@@ -199,7 +276,9 @@ async def get_status() -> dict:
 
 
 @settings_router.post("/update")
-async def update_settings(updates: dict) -> dict:
+async def update_settings(
+    body: Annotated[dict[str, Any] | None, Body()] = None,
+) -> dict:
     """
     Update JARVIS settings and write to .env file.
 
@@ -209,6 +288,9 @@ async def update_settings(updates: dict) -> dict:
     Returns:
         Dict with success (bool), updated (list[str]), error (str|null)
     """
+    body = body or {}
+    updates = body.get("updates", body)
+
     if not updates:
         return {"success": True, "updated": [], "error": None}
 
@@ -221,13 +303,15 @@ async def update_settings(updates: dict) -> dict:
             detail=f"Cannot update these keys: {unsafe_keys}",
         )
 
+    updates = _normalize_updates(updates)
+
     try:
         env_path = settings.JARVIS_HOME / ".env"
 
         # Read existing .env
         env_content = {}
         if env_path.exists():
-            with open(env_path, "r") as f:
+            with open(env_path) as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#"):
@@ -239,7 +323,7 @@ async def update_settings(updates: dict) -> dict:
         # Update with new values
         updated = []
         for key, value in updates.items():
-            env_content[key] = str(value)
+            env_content[key] = _env_value(value)
             updated.append(key)
 
         # Write back to .env
@@ -262,4 +346,4 @@ async def update_settings(updates: dict) -> dict:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to update settings: {str(e)}",
-        )
+        ) from e

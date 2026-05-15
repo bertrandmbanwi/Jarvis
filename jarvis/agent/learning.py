@@ -26,10 +26,8 @@ Data sources:
 import json
 import logging
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
 from jarvis.config import settings
 
@@ -320,7 +318,7 @@ class LearningLoop:
             return []
 
         recent = self._failure_log[-50:]
-        error_keywords = Counter()
+        error_keywords: Counter[str] = Counter()
         for entry in recent:
             error = entry.get("error", "").lower()
             for keyword in self._extract_error_keywords(error):
@@ -464,7 +462,7 @@ class LearningLoop:
         for pf in plan_files:
             try:
                 data = json.loads(pf.read_text(encoding="utf-8"))
-                plan_id = data.get("plan_id", "")
+                data.get("plan_id", "")
                 already_recorded = any(
                     p.goal_summary == data.get("goal_summary", "")
                     and abs(p.timestamp - data.get("completed_at", 0)) < 1.0

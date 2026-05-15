@@ -77,7 +77,7 @@ export default function PlanProgress({ plan, onCollapse }: PlanProgressProps) {
       const items = listRef.current.querySelectorAll("[data-subtask]");
       items[activeIdx]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
-  }, [plan?.subtasks, collapsed]);
+  }, [plan, collapsed]);
 
   const handleToggle = useCallback(() => {
     setCollapsed((prev) => !prev);

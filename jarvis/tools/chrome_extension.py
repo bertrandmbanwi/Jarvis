@@ -1,15 +1,15 @@
 """WebSocket bridge to JARVIS Chrome Extension for DOM-based browser automation."""
 
 import asyncio
-import json
+import contextlib
 import logging
 import uuid
-from typing import Optional
+from typing import Any, cast
 
 logger = logging.getLogger("jarvis.tools.chrome_extension")
 
-_extension_ws = None
-_pending_commands: dict[str, asyncio.Future] = {}
+_extension_ws: Any | None = None
+_pending_commands: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
 COMMAND_TIMEOUT = 15.0
 
@@ -25,7 +25,7 @@ def clear_extension_ws():
     """Clear the extension WebSocket reference on disconnect."""
     global _extension_ws
     _extension_ws = None
-    for cmd_id, future in _pending_commands.items():
+    for _cmd_id, future in _pending_commands.items():
         if not future.done():
             future.set_exception(ConnectionError("Chrome extension disconnected."))
     _pending_commands.clear()
@@ -37,7 +37,7 @@ def is_extension_connected() -> bool:
     return _extension_ws is not None
 
 
-async def handle_extension_message(data: dict):
+async def handle_extension_message(data: dict[str, Any]) -> None:
     """Handle incoming message from the Chrome extension."""
     msg_type = data.get("type")
 
@@ -67,19 +67,20 @@ async def handle_extension_message(data: dict):
 
     elif msg_type == "ping":
         if _extension_ws:
-            try:
+            with contextlib.suppress(Exception):
                 await _extension_ws.send_json({"type": "pong"})
-            except Exception:
-                pass
 
 
-async def _send_command(action: str, **params) -> dict:
+async def _send_command(action: str, **params: Any) -> dict[str, Any]:
     """Send a command to the Chrome extension and wait for the response."""
     if not is_extension_connected():
         raise ConnectionError(
             "Chrome extension is not connected. "
             "Install and enable the JARVIS Browser Bridge extension in Chrome."
         )
+    ws = _extension_ws
+    if ws is None:
+        raise ConnectionError("Chrome extension disconnected before command could be sent.")
 
     cmd_id = f"cmd_{uuid.uuid4().hex[:12]}"
     command = {
@@ -94,20 +95,20 @@ async def _send_command(action: str, **params) -> dict:
     _pending_commands[cmd_id] = future
 
     try:
-        await _extension_ws.send_json(command)
+        await ws.send_json(command)
         result = await asyncio.wait_for(future, timeout=COMMAND_TIMEOUT)
-        return result
-    except asyncio.TimeoutError:
+        return cast(dict[str, Any], result)
+    except TimeoutError as err:
         _pending_commands.pop(cmd_id, None)
         raise TimeoutError(
             f"Chrome extension command '{action}' timed out after {COMMAND_TIMEOUT}s."
-        )
+        ) from err
     except Exception:
         _pending_commands.pop(cmd_id, None)
         raise
 
 
-async def chrome_navigate(url: str, tab_id: int = None, new_tab: bool = False) -> str:
+async def chrome_navigate(url: str, tab_id: int | None = None, new_tab: bool = False) -> str:
     """Navigate a Chrome tab to a URL; avoids navigating JARVIS UI tabs."""
     try:
         if not tab_id and not new_tab:
@@ -155,7 +156,7 @@ async def chrome_navigate(url: str, tab_id: int = None, new_tab: bool = False) -
         if new_tab:
             result = await _send_command("new_tab", url=url)
         else:
-            params = {"url": url}
+            params: dict[str, object] = {"url": url}
             if tab_id:
                 params["tabId"] = tab_id
             result = await _send_command("navigate", **params)
@@ -172,7 +173,7 @@ async def chrome_navigate(url: str, tab_id: int = None, new_tab: bool = False) -
 async def chrome_click(selector: str = "", text: str = "", index: int = 0) -> str:
     """Click an element in the active Chrome tab by selector or text."""
     try:
-        target = {}
+        target: dict[str, object] = {}
         if selector:
             target["selector"] = selector
         if text:
@@ -259,7 +260,7 @@ async def chrome_find_elements(selector: str = "", text: str = "", limit: int = 
             for i, el in enumerate(elements):
                 tag = el.get("tag", "?")
                 el_text = el.get("text", "")[:60]
-                sel = el.get("selector", "")
+                el.get("selector", "")
                 href = el.get("href", "")
                 visible = "visible" if el.get("visible") else "hidden"
 
@@ -276,7 +277,7 @@ async def chrome_find_elements(selector: str = "", text: str = "", limit: int = 
         return f"Error: {e}"
 
 
-async def chrome_screenshot() -> list:
+async def chrome_screenshot() -> list[dict[str, Any]]:
     """Take a screenshot of the active Chrome tab using captureVisibleTab API."""
     try:
         result = await _send_command("screenshot")

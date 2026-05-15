@@ -47,7 +47,7 @@ A Manifest V3 Chrome extension that gives JARVIS direct control over your browse
 A full Playwright-driven Chromium browser that JARVIS controls autonomously for complex multi-step workflows. Fill forms, click buttons, log into sites, apply to jobs, download files. Persistent browser profile means sessions and cookies survive restarts. The Chrome extension handles lightweight tab operations; Playwright handles deep page automation.
 
 **macOS System Control**
-109+ tools across 15 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, read Gmail, manage Apple Notes, and delegate coding tasks via Claude Code CLI.
+93 registered tools across 15 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, read Gmail, manage Apple Notes, and delegate coding tasks via Claude Code CLI.
 
 **Multi-Agent Coordination**
 Complex requests are automatically decomposed into subtasks by the planner agent, then executed in parallel or sequence by specialized executor agents. The QA agent verifies task quality, and the UI shows real-time plan progress with per-subtask status.
@@ -130,7 +130,7 @@ For the full setup guide including environment variables, launch modes, mobile a
                        +--------+--------+
                                 |
                      +----------+----------+
-                     |  Tool Registry (109+) |
+                     |  Tool Registry (93)   |
                      |  macOS, Files, Web,   |
                      |  Browser, Shell, ...  |
                      +----------+-----------+

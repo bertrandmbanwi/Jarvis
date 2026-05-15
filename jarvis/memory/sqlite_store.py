@@ -12,10 +12,6 @@ All functions handle exceptions gracefully with logging.
 import asyncio
 import logging
 import sqlite3
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
 from jarvis.config import settings
 
@@ -132,7 +128,7 @@ def init_db() -> None:
 def remember(
     content: str,
     mem_type: str,
-    source: Optional[str] = None,
+    source: str | None = None,
     importance: int = 5
 ) -> int:
     """
@@ -156,7 +152,7 @@ def remember(
         VALUES (?, ?, ?, ?)
         """, (content, mem_type, source, importance))
 
-        mem_id = cursor.lastrowid
+        mem_id = int(cursor.lastrowid or -1)
 
         # Add to FTS5 index
         cursor.execute("""
@@ -197,7 +193,7 @@ def recall(query: str, limit: int = 10) -> list[dict]:
         FROM memories m
         JOIN memories_fts ON m.id = memories_fts.rowid
         WHERE memories_fts MATCH ?
-        ORDER BY memories_fts.rank DESC, m.importance DESC
+        ORDER BY memories_fts.rank ASC, m.importance DESC
         LIMIT ?
         """, (query, limit))
 
@@ -271,12 +267,12 @@ def get_important_memories(limit: int = 10) -> list[dict]:
 
 def create_task(
     title: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     priority: int = 3,
-    due_date: Optional[str] = None,
-    due_time: Optional[str] = None,
-    project: Optional[str] = None,
-    tags: Optional[str] = None
+    due_date: str | None = None,
+    due_time: str | None = None,
+    project: str | None = None,
+    tags: str | None = None
 ) -> int:
     """
     Create a new task.
@@ -303,7 +299,7 @@ def create_task(
         VALUES (?, ?, ?, ?, ?, ?, ?, 'open')
         """, (title, description, priority, due_date, due_time, project, tags))
 
-        task_id = cursor.lastrowid
+        task_id = int(cursor.lastrowid or -1)
 
         # Add to FTS5 index
         cursor.execute("""
@@ -320,7 +316,7 @@ def create_task(
         return -1
 
 
-def get_open_tasks(project: Optional[str] = None) -> list[dict]:
+def get_open_tasks(project: str | None = None) -> list[dict]:
     """
     Get open tasks, optionally filtered by project.
 
@@ -405,7 +401,7 @@ def search_tasks(query: str, limit: int = 10) -> list[dict]:
         FROM tasks t
         JOIN tasks_fts ON t.id = tasks_fts.rowid
         WHERE tasks_fts MATCH ?
-        ORDER BY tasks_fts.rank DESC, t.priority DESC
+        ORDER BY tasks_fts.rank ASC, t.priority DESC
         LIMIT ?
         """, (query, limit))
 
@@ -419,9 +415,9 @@ def search_tasks(query: str, limit: int = 10) -> list[dict]:
 
 def create_note(
     content: str,
-    title: Optional[str] = None,
-    topic: Optional[str] = None,
-    tags: Optional[str] = None
+    title: str | None = None,
+    topic: str | None = None,
+    tags: str | None = None
 ) -> int:
     """
     Create a new note.
@@ -444,7 +440,7 @@ def create_note(
         VALUES (?, ?, ?, ?)
         """, (content, title, topic, tags))
 
-        note_id = cursor.lastrowid
+        note_id = int(cursor.lastrowid or -1)
 
         # Add to FTS5 index
         cursor.execute("""
@@ -484,7 +480,7 @@ def search_notes(query: str, limit: int = 10) -> list[dict]:
         FROM notes n
         JOIN notes_fts ON n.id = notes_fts.rowid
         WHERE notes_fts MATCH ?
-        ORDER BY notes_fts.rank DESC, n.created_at DESC
+        ORDER BY notes_fts.rank ASC, n.created_at DESC
         LIMIT ?
         """, (query, limit))
 
@@ -579,10 +575,11 @@ Return only valid JSON array."""
                     if isinstance(fact, str):
                         remember(fact, "extracted", "haiku_extraction", importance=6)
                 logger.debug("Extracted %d facts from exchange", len(facts))
-                return facts
+                return [fact for fact in facts if isinstance(fact, str)]
         except json.JSONDecodeError:
             logger.debug("Could not parse facts JSON from Haiku response")
             return []
+        return []
     except Exception as e:
         logger.error("Failed to extract memories: %s", e)
         return []

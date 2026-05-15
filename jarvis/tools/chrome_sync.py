@@ -1,13 +1,12 @@
 """Extract and inject Chrome cookies into Playwright browser context via macOS Keychain."""
 
+import contextlib
 import logging
 import os
 import platform
 import shutil
-import sqlite3
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("jarvis.tools.chrome_sync")
 
@@ -54,7 +53,7 @@ DEFAULT_SYNC_DOMAINS = [
 ]
 
 
-def _get_chrome_cookie_db() -> Optional[Path]:
+def _get_chrome_cookie_db() -> Path | None:
     """Locate Chrome's Cookies database file on macOS."""
     if platform.system() != "Darwin":
         logger.warning("Chrome cookie sync is only supported on macOS.")
@@ -80,7 +79,8 @@ def _read_raw_cookies(
     if not _pycookiecheat_available:
         return []
 
-    tmp_db = tempfile.mktemp(suffix=".db")
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_db = tmp.name
     try:
         shutil.copy2(str(db_path), tmp_db)
     except (PermissionError, OSError) as e:
@@ -132,10 +132,8 @@ def _read_raw_cookies(
             logger.debug("No cookies for %s: %s", domain, e)
             continue
 
-    try:
+    with contextlib.suppress(OSError):
         os.unlink(tmp_db)
-    except OSError:
-        pass
 
     logger.info(
         "Extracted %d cookies from Chrome for %d domain(s).",
