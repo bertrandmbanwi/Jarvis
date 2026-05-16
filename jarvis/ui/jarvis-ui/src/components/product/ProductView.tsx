@@ -8,9 +8,20 @@ interface WorkflowAction {
   type: string;
   title: string;
   prompt?: string;
+  message?: string;
   provider?: string;
   calendar_id?: string;
+  timezone?: string;
+  location?: string;
+  notes?: string;
+  start?: string;
+  end?: string;
+  start_date?: string;
+  end_date?: string;
+  attendees?: string[] | string;
+  mailbox?: string;
   days?: number;
+  count?: number;
   requires_approval?: boolean;
 }
 
@@ -42,6 +53,17 @@ interface WorkflowRun {
   dry_run: boolean;
   started_at: number;
   action_results?: Array<{ title?: string; status?: string; response?: string; message?: string }>;
+}
+
+interface WorkflowApproval {
+  id: string;
+  workflow_name: string;
+  title: string;
+  action_type: string;
+  message: string;
+  status: string;
+  response?: string;
+  created_at: number;
 }
 
 interface TeamMember {
@@ -109,6 +131,35 @@ const emptyCalendar: CalendarState = {
   },
 };
 
+const defaultBuilderAction = (type: string, id = `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`): WorkflowAction => {
+  if (type === "calendar_brief") {
+    return { id, type, title: "Read calendar", days: 1, count: 10 };
+  }
+  if (type === "email_digest") {
+    return { id, type, title: "Check mail", mailbox: "INBOX", count: 5 };
+  }
+  if (type === "notification") {
+    return { id, type, title: "Notify", message: "Workflow step completed." };
+  }
+  if (type === "create_calendar_event") {
+    return {
+      id,
+      type,
+      title: "Create event",
+      provider: "",
+      start: "",
+      end: "",
+      timezone: "America/Chicago",
+      attendees: "",
+      requires_approval: true,
+    };
+  }
+  if (type === "wait_for_approval") {
+    return { id, type, title: "Approval", requires_approval: true };
+  }
+  return { id, type: "prompt", title: "Run prompt", prompt: "Summarize what needs attention and suggest next steps." };
+};
+
 export default function ProductView({ authToken }: ProductViewProps) {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -118,11 +169,10 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [message, setMessage] = useState("");
   const [customName, setCustomName] = useState("Quick Workflow");
-  const [customPrompt, setCustomPrompt] = useState("Summarize what needs attention and suggest next steps.");
   const [triggerMode, setTriggerMode] = useState("manual");
   const [dailyTime, setDailyTime] = useState("08:30");
-  const [includeCalendarBrief, setIncludeCalendarBrief] = useState(false);
-  const [workflowCalendarProvider, setWorkflowCalendarProvider] = useState("");
+  const [builderActions, setBuilderActions] = useState<WorkflowAction[]>([defaultBuilderAction("prompt", "prompt-initial")]);
+  const [approvals, setApprovals] = useState<WorkflowApproval[]>([]);
   const [memberName, setMemberName] = useState("Operator");
   const [memberEmail, setMemberEmail] = useState("");
   const [memberRole, setMemberRole] = useState("member");
@@ -155,6 +205,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         teamData,
         calendarData,
         schedulerData,
+        approvalData,
       ] = await Promise.all([
         api("/workflows/templates"),
         api("/workflows"),
@@ -162,6 +213,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         api("/team"),
         api("/calendar/connections"),
         api("/workflows/scheduler/status"),
+        api("/workflows/approvals?status=pending&limit=8"),
       ]);
       setTemplates(templateData.templates || []);
       setWorkflows(workflowData.workflows || []);
@@ -169,6 +221,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
       setMembers(teamData.members || []);
       setCalendar({ ...emptyCalendar, ...calendarData });
       setScheduler(schedulerData);
+      setApprovals(approvalData.approvals || []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load product data.");
     }
@@ -194,25 +247,32 @@ export default function ProductView({ authToken }: ProductViewProps) {
     const trigger = triggerMode === "schedule"
       ? { type: "schedule", rrule: `FREQ=DAILY;BYHOUR=${hour || 8};BYMINUTE=${minute || 0}` }
       : { type: "manual" };
-    const actions: WorkflowAction[] = [];
-    if (includeCalendarBrief) {
-      actions.push({
-        type: "calendar_brief",
-        title: "Read calendar",
-        provider: workflowCalendarProvider || undefined,
-        days: 1,
-      });
-    }
-    actions.push({ type: "prompt", title: "Run prompt", prompt: customPrompt });
+    const actions = builderActions.map((action) => ({
+      ...action,
+      provider: action.provider || undefined,
+      attendees: typeof action.attendees === "string"
+        ? action.attendees.split(",").map((value) => value.trim()).filter(Boolean)
+        : action.attendees,
+      requires_approval: action.type === "create_calendar_event" || action.type === "wait_for_approval"
+        ? action.requires_approval !== false
+        : Boolean(action.requires_approval),
+    }));
+    const permissions = Array.from(new Set(actions.flatMap((action) => {
+      if (action.type === "calendar_brief") return ["calendar:read"];
+      if (action.type === "create_calendar_event") return ["calendar:read", "calendar:write"];
+      if (action.type === "email_digest") return ["mail:read"];
+      if (action.type === "notification") return ["system:notify"];
+      return ["llm:chat"];
+    })));
     await api("/workflows", {
       method: "POST",
       body: JSON.stringify({
         name: customName,
-        description: customPrompt.slice(0, 180),
+        description: actions.map((action) => action.title).join(" -> ").slice(0, 180),
         trigger,
         actions,
         tags: triggerMode === "schedule" ? ["scheduled"] : ["manual"],
-        permissions: includeCalendarBrief ? ["calendar:read", "llm:chat"] : ["llm:chat"],
+        permissions,
       }),
     });
     setMessage("Workflow created.");
@@ -225,6 +285,55 @@ export default function ProductView({ authToken }: ProductViewProps) {
       body: JSON.stringify({ dry_run: dryRun }),
     });
     setMessage(dryRun ? "Dry run recorded." : `Workflow ran: ${data.run?.status || "complete"}.`);
+    await loadData();
+  }
+
+  function updateBuilderAction(index: number, updates: Partial<WorkflowAction>) {
+    setBuilderActions((current) => current.map((action, actionIndex) => (
+      actionIndex === index ? { ...action, ...updates } : action
+    )));
+  }
+
+  function changeBuilderActionType(index: number, type: string) {
+    setBuilderActions((current) => current.map((action, actionIndex) => (
+      actionIndex === index ? { ...defaultBuilderAction(type), id: action.id } : action
+    )));
+  }
+
+  function addBuilderAction(type: string) {
+    setBuilderActions((current) => [...current, defaultBuilderAction(type)]);
+  }
+
+  function removeBuilderAction(index: number) {
+    setBuilderActions((current) => current.length === 1 ? current : current.filter((_, actionIndex) => actionIndex !== index));
+  }
+
+  function moveBuilderAction(index: number, direction: -1 | 1) {
+    setBuilderActions((current) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.length) return current;
+      const next = [...current];
+      const [item] = next.splice(index, 1);
+      next.splice(nextIndex, 0, item);
+      return next;
+    });
+  }
+
+  async function approveWorkflowApproval(id: string) {
+    const data = await api(`/workflows/approvals/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ actor: "local-owner" }),
+    });
+    setMessage(data.response || "Approval completed.");
+    await loadData();
+  }
+
+  async function rejectWorkflowApproval(id: string) {
+    await api(`/workflows/approvals/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ actor: "local-owner" }),
+    });
+    setMessage("Approval rejected.");
     await loadData();
   }
 
@@ -353,8 +462,8 @@ export default function ProductView({ authToken }: ProductViewProps) {
             </section>
 
             <section className="jarvis-card">
-              <div className="jarvis-card-header">New Prompt Workflow</div>
-              <div className="grid grid-cols-1 lg:grid-cols-[0.65fr_1fr] gap-3">
+              <div className="jarvis-card-header">Workflow Builder</div>
+              <div className="grid grid-cols-1 lg:grid-cols-[0.7fr_1fr] gap-3">
                 <div className="space-y-3">
                   <label className="block">
                     <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Name</span>
@@ -379,43 +488,56 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       />
                     </label>
                   </div>
-                  <label className="flex items-center gap-2 rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-2">
-                    <input
-                      type="checkbox"
-                      checked={includeCalendarBrief}
-                      onChange={(event) => setIncludeCalendarBrief(event.target.checked)}
-                    />
-                    <span className="text-2xs text-jarvis-text/60 uppercase tracking-wider">Calendar Brief</span>
-                  </label>
-                  <label className="block">
-                    <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Calendar Source</span>
-                    <select
-                      className="jarvis-input mt-1"
-                      value={workflowCalendarProvider}
-                      disabled={!includeCalendarBrief}
-                      onChange={(event) => setWorkflowCalendarProvider(event.target.value)}
-                    >
-                      <option value="">Local</option>
-                      {Object.entries(calendar.providers)
-                        .filter(([, details]) => details.oauth_required)
-                        .map(([provider, details]) => (
-                          <option key={provider} value={provider}>{details.name}</option>
-                        ))}
-                    </select>
-                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {["prompt", "calendar_brief", "email_digest", "create_calendar_event", "notification", "wait_for_approval"].map((type) => (
+                      <button
+                        key={type}
+                        className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-2 py-2 rounded-md"
+                        onClick={() => addBuilderAction(type)}
+                      >
+                        + {type.replaceAll("_", " ")}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={createCustomWorkflow}>
+                    Save Workflow
+                  </button>
                 </div>
-                <label className="block">
-                  <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Prompt</span>
-                  <textarea
-                    className="jarvis-input mt-1 min-h-32 resize-none"
-                    value={customPrompt}
-                    onChange={(event) => setCustomPrompt(event.target.value)}
-                  />
-                </label>
+                <div className="space-y-3">
+                  {builderActions.map((action, index) => (
+                    <div key={action.id || index} className="rounded-md border border-white/[0.05] bg-white/[0.02] p-3 space-y-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="jarvis-badge">Step {index + 1}</span>
+                          <select className="jarvis-input max-w-56" value={action.type} onChange={(event) => changeBuilderActionType(index, event.target.value)}>
+                            <option value="prompt">Prompt</option>
+                            <option value="calendar_brief">Calendar brief</option>
+                            <option value="email_digest">Email digest</option>
+                            <option value="create_calendar_event">Create event</option>
+                            <option value="notification">Notification</option>
+                            <option value="wait_for_approval">Approval gate</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button className="jarvis-btn-ghost text-2xs px-2 py-1 rounded-md" onClick={() => moveBuilderAction(index, -1)}>Up</button>
+                          <button className="jarvis-btn-ghost text-2xs px-2 py-1 rounded-md" onClick={() => moveBuilderAction(index, 1)}>Down</button>
+                          <button className="jarvis-btn-ghost text-2xs px-2 py-1 rounded-md" onClick={() => removeBuilderAction(index)}>Remove</button>
+                        </div>
+                      </div>
+                      <label className="block">
+                        <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Title</span>
+                        <input className="jarvis-input mt-1" value={action.title} onChange={(event) => updateBuilderAction(index, { title: event.target.value })} />
+                      </label>
+                      <ActionFields
+                        action={action}
+                        index={index}
+                        calendar={calendar}
+                        updateAction={updateBuilderAction}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-              <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md mt-3" onClick={createCustomWorkflow}>
-                Save Workflow
-              </button>
             </section>
 
             <section className="jarvis-card">
@@ -494,6 +616,36 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={addMember}>
                   Save Member
                 </button>
+              </div>
+            </section>
+
+            <section className="jarvis-card">
+              <div className="jarvis-card-header">Approval Queue</div>
+              <div className="space-y-3">
+                {approvals.length === 0 ? (
+                  <p className="text-sm text-jarvis-text-dim/45">No pending approvals.</p>
+                ) : approvals.map((approval) => (
+                  <div key={approval.id} className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs text-jarvis-text/70">{approval.workflow_name}</div>
+                        <div className="text-2xs text-jarvis-text-dim/45">
+                          {approval.title || approval.action_type} · {new Date(approval.created_at * 1000).toLocaleString()}
+                        </div>
+                      </div>
+                      <span className="jarvis-badge">{approval.status}</span>
+                    </div>
+                    <div className="text-xs text-jarvis-text-dim/55">{approval.message}</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => approveWorkflowApproval(approval.id)}>
+                        Approve
+                      </button>
+                      <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => rejectWorkflowApproval(approval.id)}>
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </section>
 
@@ -598,6 +750,165 @@ export default function ProductView({ authToken }: ProductViewProps) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ActionFields({
+  action,
+  index,
+  calendar,
+  updateAction,
+}: {
+  action: WorkflowAction;
+  index: number;
+  calendar: CalendarState;
+  updateAction: (index: number, updates: Partial<WorkflowAction>) => void;
+}) {
+  const providerSelect = (
+    <label className="block">
+      <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Provider</span>
+      <select
+        className="jarvis-input mt-1"
+        value={action.provider || ""}
+        onChange={(event) => updateAction(index, { provider: event.target.value })}
+      >
+        <option value="">Local</option>
+        {Object.entries(calendar.providers)
+          .filter(([, details]) => details.oauth_required)
+          .map(([provider, details]) => (
+            <option key={provider} value={provider}>{details.name}</option>
+          ))}
+      </select>
+    </label>
+  );
+
+  if (action.type === "prompt") {
+    return (
+      <label className="block">
+        <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Prompt</span>
+        <textarea
+          className="jarvis-input mt-1 min-h-28 resize-none"
+          value={action.prompt || ""}
+          onChange={(event) => updateAction(index, { prompt: event.target.value })}
+        />
+      </label>
+    );
+  }
+
+  if (action.type === "calendar_brief") {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        {providerSelect}
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Days</span>
+          <input
+            className="jarvis-input mt-1"
+            type="number"
+            min={1}
+            max={14}
+            value={action.days || 1}
+            onChange={(event) => updateAction(index, { days: Number.parseInt(event.target.value, 10) || 1 })}
+          />
+        </label>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Limit</span>
+          <input
+            className="jarvis-input mt-1"
+            type="number"
+            min={1}
+            max={50}
+            value={action.count || 10}
+            onChange={(event) => updateAction(index, { count: Number.parseInt(event.target.value, 10) || 10 })}
+          />
+        </label>
+      </div>
+    );
+  }
+
+  if (action.type === "email_digest") {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Mailbox</span>
+          <input className="jarvis-input mt-1" value={action.mailbox || "INBOX"} onChange={(event) => updateAction(index, { mailbox: event.target.value })} />
+        </label>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Count</span>
+          <input
+            className="jarvis-input mt-1"
+            type="number"
+            min={1}
+            max={25}
+            value={action.count || 5}
+            onChange={(event) => updateAction(index, { count: Number.parseInt(event.target.value, 10) || 5 })}
+          />
+        </label>
+      </div>
+    );
+  }
+
+  if (action.type === "notification") {
+    return (
+      <label className="block">
+        <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Message</span>
+        <input className="jarvis-input mt-1" value={action.message || ""} onChange={(event) => updateAction(index, { message: event.target.value })} />
+      </label>
+    );
+  }
+
+  if (action.type === "create_calendar_event") {
+    const attendees = Array.isArray(action.attendees) ? action.attendees.join(", ") : action.attendees || "";
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          {providerSelect}
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Start</span>
+            <input className="jarvis-input mt-1" type="datetime-local" value={action.start || ""} onChange={(event) => updateAction(index, { start: event.target.value })} />
+          </label>
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">End</span>
+            <input className="jarvis-input mt-1" type="datetime-local" value={action.end || ""} onChange={(event) => updateAction(index, { end: event.target.value })} />
+          </label>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Calendar ID</span>
+            <input className="jarvis-input mt-1" value={action.calendar_id || ""} onChange={(event) => updateAction(index, { calendar_id: event.target.value })} />
+          </label>
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Timezone</span>
+            <input className="jarvis-input mt-1" value={action.timezone || calendar.policy.timezone} onChange={(event) => updateAction(index, { timezone: event.target.value })} />
+          </label>
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Location</span>
+            <input className="jarvis-input mt-1" value={action.location || ""} onChange={(event) => updateAction(index, { location: event.target.value })} />
+          </label>
+        </div>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Attendees</span>
+          <input className="jarvis-input mt-1" value={attendees} onChange={(event) => updateAction(index, { attendees: event.target.value })} />
+        </label>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Notes</span>
+          <textarea className="jarvis-input mt-1 min-h-20 resize-none" value={action.notes || ""} onChange={(event) => updateAction(index, { notes: event.target.value })} />
+        </label>
+        <label className="flex items-center gap-2 rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-2">
+          <input
+            type="checkbox"
+            checked={action.requires_approval !== false}
+            onChange={(event) => updateAction(index, { requires_approval: event.target.checked })}
+          />
+          <span className="text-2xs text-jarvis-text/60 uppercase tracking-wider">Require Approval</span>
+        </label>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-xs text-jarvis-text-dim/55">
+      {action.requires_approval === false ? "Approval disabled" : "Approval required"}
     </div>
   );
 }

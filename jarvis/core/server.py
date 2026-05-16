@@ -856,6 +856,11 @@ class WorkflowRunRequest(BaseModel):
     dry_run: bool = False
 
 
+class WorkflowApprovalRequest(BaseModel):
+    actor: str = "local-owner"
+    note: str = ""
+
+
 class SchedulerRunRequest(BaseModel):
     dry_run: bool = True
 
@@ -1227,6 +1232,31 @@ async def list_workflow_runs(workflow_id: str = "", limit: int = 50):
     """List workflow execution history."""
     runs = workflows.list_runs(workflow_id=workflow_id, limit=limit)
     return {"runs": runs, "count": len(runs)}
+
+
+@app.get("/workflows/approvals", dependencies=[Depends(require_auth)])
+async def list_workflow_approvals(status: str = "pending", limit: int = 50):
+    """List workflow approvals waiting for a user decision."""
+    approvals = workflows.list_approvals(status=status, limit=limit)
+    return {"approvals": approvals, "count": len(approvals)}
+
+
+@app.post("/workflows/approvals/{approval_id}/approve", dependencies=[Depends(require_auth)])
+async def approve_workflow_approval(approval_id: str, request: WorkflowApprovalRequest):
+    """Approve a pending workflow action and execute supported actions."""
+    approval = await workflows.approve_approval(approval_id, actor=request.actor, note=request.note)
+    if approval is None:
+        return JSONResponse(status_code=404, content={"error": "Approval not found."})
+    return approval
+
+
+@app.post("/workflows/approvals/{approval_id}/reject", dependencies=[Depends(require_auth)])
+async def reject_workflow_approval(approval_id: str, request: WorkflowApprovalRequest):
+    """Reject a pending workflow action."""
+    approval = workflows.reject_approval(approval_id, actor=request.actor, note=request.note)
+    if approval is None:
+        return JSONResponse(status_code=404, content={"error": "Approval not found."})
+    return approval
 
 
 @app.get("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])

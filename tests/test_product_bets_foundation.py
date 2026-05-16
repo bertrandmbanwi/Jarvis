@@ -12,6 +12,7 @@ from jarvis.tools import calendar_email, mac_control
 def product_bet_files(tmp_path, monkeypatch):
     monkeypatch.setattr(workflows, "WORKFLOWS_FILE", tmp_path / "workflows.json")
     monkeypatch.setattr(workflows, "WORKFLOW_RUNS_FILE", tmp_path / "workflow_runs.json")
+    monkeypatch.setattr(workflows, "WORKFLOW_APPROVALS_FILE", tmp_path / "workflow_approvals.json")
     monkeypatch.setattr(team, "TEAM_FILE", tmp_path / "team.json")
     monkeypatch.setattr(calendar_accounts, "CALENDAR_STATE_FILE", tmp_path / "calendar_state.json")
 
@@ -329,6 +330,57 @@ async def test_calendar_event_action_requires_approval_by_default(product_bet_fi
 
     assert approved_run is not None
     assert approved_run["action_results"][0]["response"] == "created:Planning"
+
+
+@pytest.mark.asyncio
+async def test_calendar_event_approval_queue_executes_after_approval(product_bet_files, monkeypatch):
+    async def fake_create_event(**kwargs) -> str:
+        return f"created:{kwargs['title']}:{kwargs['start_date']}"
+
+    monkeypatch.setattr(calendar_email, "create_calendar_event", fake_create_event)
+    workflow = workflows.create_workflow(
+        name="Queued write",
+        actions=[{"type": "create_calendar_event", "title": "Planning", "start_date": "May 20, 2026 9:00 AM"}],
+    )
+
+    run = await workflows.run_workflow(workflow["id"])
+
+    assert run is not None
+    result = run["action_results"][0]
+    assert result["status"] == "approval_required"
+    assert result["approval_id"]
+    pending = workflows.list_approvals()
+    assert len(pending) == 1
+    assert pending[0]["run_id"] == run["id"]
+
+    approved = await workflows.approve_approval(result["approval_id"], actor="Operator", note="Looks right")
+
+    assert approved is not None
+    assert approved["status"] == "approved"
+    assert approved["execution_status"] == "completed"
+    assert approved["response"] == "created:Planning:May 20, 2026 9:00 AM"
+    assert workflows.list_approvals() == []
+
+
+def test_workflow_approval_queue_can_reject_pending_action(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Human gate",
+        actions=[{"type": "wait_for_approval", "title": "Confirm"}],
+    )
+
+    approval = workflows._record_approval(
+        workflow=workflow,
+        run_id="run-1",
+        action=workflow["actions"][0],
+        message="Needs a decision.",
+        triggered_by="test",
+    )
+    rejected = workflows.reject_approval(approval["id"], actor="Operator", note="Not now")
+
+    assert rejected is not None
+    assert rejected["status"] == "rejected"
+    assert rejected["note"] == "Not now"
+    assert workflows.list_approvals() == []
 
 
 @pytest.mark.asyncio
