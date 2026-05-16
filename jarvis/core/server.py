@@ -93,6 +93,32 @@ def set_voice_components(speaker, listener=None):
                 type(listener).__name__ if listener else None)
 
 
+async def _activate_voice_from_overlay(websocket: WebSocket) -> None:
+    """Start one microphone capture from the desktop overlay hotkey."""
+    if _speaker:
+        with suppress(Exception):
+            _speaker.stop_speaking()
+
+    if _listener is None or not hasattr(_listener, "request_activation"):
+        await websocket.send_json({
+            "activationAccepted": False,
+            "error": "Voice listener is not ready.",
+        })
+        await broadcast_overlay_state("idle")
+        return
+
+    with suppress(Exception):
+        _listener.set_speaking(False, open_followup=False)
+
+    accepted = bool(_listener.request_activation())
+    await websocket.send_json({"activationAccepted": accepted})
+
+    if accepted:
+        await broadcast_overlay_state("listening", text="", user_text="")
+    else:
+        await broadcast_overlay_state("idle")
+
+
 class ClientInfo:
     """Metadata about a connected WebSocket client."""
 
@@ -1507,8 +1533,12 @@ async def websocket_overlay(websocket: WebSocket):
 
     try:
         while True:
-            # Keep connection alive; overlay is read-only but we need to consume pings
-            await websocket.receive_text()
+            data = await websocket.receive_json()
+            command = data.get("command") or data.get("type")
+            if command == "activate_voice":
+                await _activate_voice_from_overlay(websocket)
+            elif command == "ping":
+                await websocket.send_json({"pong": True})
     except WebSocketDisconnect:
         logger.info("Desktop overlay disconnected.")
     except Exception as e:

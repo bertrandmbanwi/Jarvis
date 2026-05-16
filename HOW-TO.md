@@ -41,7 +41,7 @@ echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' > .env
 ./start.sh full
 ```
 
-JARVIS will be available at **http://localhost:3000** in your browser.
+JARVIS opens the dashboard automatically at **http://localhost:3000**. You can activate voice by saying "Hey JARVIS", pressing **Control+Option+J** from anywhere on macOS, or using the browser mic.
 
 ## Environment Variables (.env)
 
@@ -109,6 +109,8 @@ The full startup sequence brings up six components in order:
 
 The script also handles cleanup of orphaned processes from previous runs, installs missing dependencies (python-multipart, Playwright Chromium, PyYAML), and sets up a persistent browser profile.
 
+Set `JARVIS_OPEN_DASHBOARD=false` in `.env` if you want the dashboard server to start without opening a browser window.
+
 ## Chrome Extension (Browser Bridge)
 
 The Chrome extension gives JARVIS direct control over your browser tabs, navigation, page content, forms, and screenshots.
@@ -159,6 +161,7 @@ The desktop overlay is a native Swift application that shows JARVIS' state as a 
 - User utterance text (what you said)
 - JARVIS response text (what it is saying)
 - Color-coded status dot matching the current state
+- Global hotkey activation: **Control+Option+J** starts one microphone capture without opening the browser mic
 
 ### Building Manually
 

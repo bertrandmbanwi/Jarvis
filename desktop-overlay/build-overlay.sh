@@ -38,7 +38,7 @@ mkdir -p "$MACOS_DIR"
 
 # Compile Swift file
 echo -e "${YELLOW}Compiling Swift code...${NC}"
-swiftc -framework Cocoa -framework WebKit -O \
+swiftc -framework Cocoa -framework WebKit -framework Carbon -O \
     -o "${MACOS_DIR}/${APP_NAME}" \
     "${SCRIPT_DIR}/JarvisOverlay.swift"
 
