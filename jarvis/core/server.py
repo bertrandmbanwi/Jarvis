@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from jarvis.config import settings
 from jarvis.core import (
     anthropic_batch,
+    app_lifecycle,
     auth,
     calendar_accounts,
     calendar_oauth,
@@ -910,6 +911,19 @@ class SchedulerRunRequest(BaseModel):
     dry_run: bool = True
 
 
+class LifecycleLaunchAgentRequest(BaseModel):
+    load: bool = False
+    unload: bool = False
+    dry_run: bool = False
+
+
+class LifecycleControlRequest(BaseModel):
+    mode: str = "full"
+    dry_run: bool = False
+    delay_seconds: float = 0.75
+    force_after_seconds: float = 8.0
+
+
 class TeamMemberRequest(BaseModel):
     name: str
     email: str = ""
@@ -1076,6 +1090,46 @@ async def status():
         memory_stats=brain.memory.get_stats(),
         conversation_turns=len(brain.conversation),
         session_cost=brain.llm.get_cost_summary(),
+    )
+
+
+@app.get("/app/lifecycle/status", dependencies=[Depends(require_auth)])
+async def app_lifecycle_status():
+    """Return diagnostics for the local app wrapper, runtime file, and launch agent."""
+    return app_lifecycle.get_status()
+
+
+@app.post("/app/lifecycle/launch-agent/install", dependencies=[Depends(require_auth)])
+async def app_lifecycle_install_launch_agent(request: LifecycleLaunchAgentRequest):
+    """Install the per-user macOS LaunchAgent for JARVIS."""
+    return app_lifecycle.install_launch_agent(load=request.load, dry_run=request.dry_run)
+
+
+@app.post("/app/lifecycle/launch-agent/uninstall", dependencies=[Depends(require_auth)])
+async def app_lifecycle_uninstall_launch_agent(request: LifecycleLaunchAgentRequest):
+    """Remove the per-user macOS LaunchAgent for JARVIS."""
+    return app_lifecycle.uninstall_launch_agent(unload=request.unload, dry_run=request.dry_run)
+
+
+@app.post("/app/lifecycle/restart", dependencies=[Depends(require_auth)])
+async def app_lifecycle_restart(request: LifecycleControlRequest):
+    """Schedule a restart of the JARVIS app wrapper."""
+    if request.mode not in {"text", "voice", "server", "full"}:
+        return JSONResponse(status_code=400, content={"error": "Invalid launch mode."})
+    return app_lifecycle.restart_app(
+        mode=request.mode,
+        dry_run=request.dry_run,
+        delay_seconds=request.delay_seconds,
+    )
+
+
+@app.post("/app/lifecycle/quit", dependencies=[Depends(require_auth)])
+async def app_lifecycle_quit(request: LifecycleControlRequest):
+    """Schedule a clean JARVIS quit, with a fallback hard stop if the wrapper stalls."""
+    return app_lifecycle.quit_app(
+        dry_run=request.dry_run,
+        delay_seconds=request.delay_seconds,
+        force_after_seconds=request.force_after_seconds,
     )
 
 

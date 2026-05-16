@@ -340,6 +340,41 @@ interface SchedulerStatus {
   due_count: number;
 }
 
+interface LifecycleProcess {
+  pid?: number | null;
+  running: boolean;
+}
+
+interface AppLifecycleStatus {
+  status: string;
+  platform: string;
+  is_macos: boolean;
+  jarvis_home: string;
+  runtime: {
+    status: string;
+    mode?: string;
+    started_at?: number | null;
+    updated_at?: number | null;
+    age_seconds?: number | null;
+    launcher_running?: boolean;
+    state_file_exists?: boolean;
+  };
+  ports: { api: number; ui: number };
+  processes: Record<string, LifecycleProcess>;
+  app_bundles: Array<{ scope: string; path: string; installed: boolean }>;
+  launch_agent: {
+    label: string;
+    path: string;
+    installed: boolean;
+    loaded: boolean;
+  };
+  controls?: {
+    can_quit: boolean;
+    can_restart: boolean;
+    restart_strategy: string;
+  };
+}
+
 interface CalendarPreviewEvent {
   id?: string;
   title?: string;
@@ -440,6 +475,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [calendar, setCalendar] = useState<CalendarState>(emptyCalendar);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
+  const [lifecycle, setLifecycle] = useState<AppLifecycleStatus | null>(null);
   const [message, setMessage] = useState("");
   const [workflowPackageText, setWorkflowPackageText] = useState("");
   const [customName, setCustomName] = useState("Quick Workflow");
@@ -498,6 +534,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         calendarData,
         schedulerData,
         approvalData,
+        lifecycleData,
       ] = await Promise.all([
         api("/workflows/templates"),
         api("/workflows"),
@@ -507,6 +544,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         api("/calendar/connections"),
         api("/workflows/scheduler/status"),
         api("/workflows/approvals?status=pending&limit=8"),
+        api("/app/lifecycle/status"),
       ]);
       setTemplates(templateData.templates || []);
       setWorkflows(workflowData.workflows || []);
@@ -516,6 +554,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
       setCalendar({ ...emptyCalendar, ...calendarData });
       setScheduler(schedulerData);
       setApprovals(approvalData.approvals || []);
+      setLifecycle(lifecycleData || null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load product data.");
     }
@@ -988,6 +1027,46 @@ export default function ProductView({ authToken }: ProductViewProps) {
     });
     setMessage("Calendar policy saved.");
     await loadData();
+  }
+
+  async function refreshLifecycle() {
+    const data = await api("/app/lifecycle/status");
+    setLifecycle(data || null);
+    setMessage("App lifecycle refreshed.");
+  }
+
+  async function installLaunchAgent() {
+    await api("/app/lifecycle/launch-agent/install", {
+      method: "POST",
+      body: JSON.stringify({ dry_run: false }),
+    });
+    setMessage("Launch agent installed for this checkout.");
+    await refreshLifecycle();
+  }
+
+  async function uninstallLaunchAgent() {
+    await api("/app/lifecycle/launch-agent/uninstall", {
+      method: "POST",
+      body: JSON.stringify({ unload: true, dry_run: false }),
+    });
+    setMessage("Launch agent removed.");
+    await refreshLifecycle();
+  }
+
+  async function restartJarvis() {
+    const data = await api("/app/lifecycle/restart", {
+      method: "POST",
+      body: JSON.stringify({ mode: lifecycle?.runtime.mode || "full", dry_run: false }),
+    });
+    setMessage(data.message || "JARVIS restart scheduled.");
+  }
+
+  async function quitJarvis() {
+    const data = await api("/app/lifecycle/quit", {
+      method: "POST",
+      body: JSON.stringify({ dry_run: false, force_after_seconds: 8 }),
+    });
+    setMessage(data.message || "JARVIS quit scheduled.");
   }
 
   return (
@@ -1553,6 +1632,57 @@ export default function ProductView({ authToken }: ProductViewProps) {
 
           <div className="space-y-5">
             <section className="jarvis-card">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="jarvis-card-header mb-0">App Lifecycle</div>
+                <span className={`status-dot ${lifecycle?.status === "online" ? "connected" : "disconnected"}`} />
+              </div>
+              <div className="space-y-2">
+                <PolicyRow label="Mode" value={lifecycle?.runtime.mode || "unknown"} />
+                <PolicyRow label="Runtime" value={lifecycle?.runtime.status || "unknown"} />
+                <PolicyRow label="Wrapper" value={lifecycle?.runtime.launcher_running ? "running" : "not tracked"} />
+                <PolicyRow label="API" value={lifecycle?.ports.api ? `:${lifecycle.ports.api}` : "unknown"} />
+                <PolicyRow label="UI" value={lifecycle?.ports.ui ? `:${lifecycle.ports.ui}` : "unknown"} />
+                <PolicyRow label="App Bundle" value={lifecycle?.app_bundles?.some((item) => item.installed) ? "installed" : "missing"} />
+                <PolicyRow label="Launch Agent" value={lifecycle?.launch_agent.installed ? (lifecycle.launch_agent.loaded ? "loaded" : "installed") : "not installed"} />
+                <PolicyRow label="Started" value={formatTimestamp(lifecycle?.runtime.started_at)} />
+              </div>
+              <div className="mt-3 rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-2 space-y-1">
+                {["backend", "ui", "overlay", "tunnel"].map((name) => {
+                  const process = lifecycle?.processes?.[name];
+                  return (
+                    <div key={name} className="flex items-center justify-between gap-3 text-2xs">
+                      <span className="text-jarvis-text-dim/45 capitalize">{name}</span>
+                      <span className="font-mono text-jarvis-text/55">
+                        {process?.running ? `pid ${process.pid}` : "offline"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={refreshLifecycle}>
+                  Refresh
+                </button>
+                <button
+                  className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                  onClick={lifecycle?.launch_agent.installed ? uninstallLaunchAgent : installLaunchAgent}
+                >
+                  {lifecycle?.launch_agent.installed ? "Remove Agent" : "Install Agent"}
+                </button>
+                <button
+                  className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md disabled:opacity-40"
+                  disabled={lifecycle?.controls?.can_restart === false}
+                  onClick={restartJarvis}
+                >
+                  Restart
+                </button>
+                <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={quitJarvis}>
+                  Quit
+                </button>
+              </div>
+            </section>
+
+            <section className="jarvis-card">
               <div className="jarvis-card-header">Team Access</div>
               <div className="space-y-3">
                 {members.map((member) => (
@@ -1735,6 +1865,11 @@ function formatPercent(value?: number) {
 function formatCost(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value) || value <= 0) return "$0";
   return value < 0.01 ? `$${value.toFixed(6)}` : `$${value.toFixed(4)}`;
+}
+
+function formatTimestamp(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value) || value <= 0) return "unknown";
+  return new Date(value * 1000).toLocaleString();
 }
 
 function MetricTile({ label, value }: { label: string; value: string }) {
