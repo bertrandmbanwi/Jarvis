@@ -59,6 +59,93 @@ async def test_workflow_runner_executes_prompt_action(product_bet_files):
     assert run["action_results"][0]["response"] == "ran: Say hello"
 
 
+@pytest.mark.asyncio
+async def test_workflow_condition_can_skip_branch(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Conditional workflow",
+        actions=[
+            {"id": "first", "type": "prompt", "title": "First", "prompt": "first"},
+            {
+                "id": "second",
+                "type": "prompt",
+                "title": "Second",
+                "prompt": "second",
+                "condition": {
+                    "type": "previous_response_contains",
+                    "action_id": "first",
+                    "value": "continue",
+                },
+            },
+        ],
+    )
+    prompts: list[str] = []
+
+    async def runner(prompt: str) -> str:
+        prompts.append(prompt)
+        return "stop here"
+
+    run = await workflows.run_workflow(workflow["id"], runner=runner)
+
+    assert run is not None
+    assert prompts == ["first"]
+    assert run["action_results"][0]["status"] == "completed"
+    assert run["action_results"][1]["status"] == "skipped"
+    assert "Condition not met" in run["action_results"][1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_action_retries_before_succeeding(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Retry workflow",
+        actions=[{
+            "type": "prompt",
+            "title": "Retry",
+            "prompt": "unstable",
+            "retry_count": 2,
+        }],
+    )
+    attempts = 0
+
+    async def runner(prompt: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("temporary failure")
+        return f"ok:{prompt}"
+
+    run = await workflows.run_workflow(workflow["id"], runner=runner)
+
+    assert run is not None
+    assert run["status"] == "completed"
+    assert attempts == 3
+    assert run["action_results"][0]["attempts"] == 3
+    assert run["action_results"][0]["response"] == "ok:unstable"
+
+
+@pytest.mark.asyncio
+async def test_workflow_can_continue_after_step_failure(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Continue workflow",
+        actions=[
+            {"type": "prompt", "title": "Fail", "prompt": "explode", "on_error": "continue"},
+            {"type": "prompt", "title": "Next", "prompt": "next"},
+        ],
+    )
+
+    async def runner(prompt: str) -> str:
+        if prompt == "explode":
+            raise RuntimeError("boom")
+        return f"ok:{prompt}"
+
+    run = await workflows.run_workflow(workflow["id"], runner=runner)
+
+    assert run is not None
+    assert run["status"] == "completed_with_errors"
+    assert run["action_results"][0]["status"] == "failed"
+    assert run["action_results"][0]["error"] == "boom"
+    assert run["action_results"][1]["response"] == "ok:next"
+
+
 def test_team_roles_and_capabilities(product_bet_files):
     member = team.upsert_member(name="Operator", email="operator@example.com", role="member")
 

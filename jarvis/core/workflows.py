@@ -32,6 +32,8 @@ ACTION_TYPES = {
     "wait_for_approval",
 }
 OAUTH_CALENDAR_PROVIDERS = {"google", "outlook"}
+CONDITION_TYPES = {"always", "previous_status", "previous_response_contains", "previous_response_not_contains"}
+ON_ERROR_POLICIES = {"stop", "continue"}
 VISIBILITY = {"private", "team"}
 
 WorkflowRunner = Callable[[str], Awaitable[str]]
@@ -175,8 +177,34 @@ def _normalize_action(action: dict[str, Any], index: int) -> dict[str, Any]:
             normalized[key] = int(raw[key])
         except (TypeError, ValueError):
             continue
+    if "condition" in raw and isinstance(raw["condition"], dict):
+        normalized["condition"] = _normalize_condition(raw["condition"])
+    if "retry_count" in raw:
+        try:
+            normalized["retry_count"] = max(0, min(int(raw["retry_count"]), 3))
+        except (TypeError, ValueError):
+            normalized["retry_count"] = 0
+    if "retry_delay_ms" in raw:
+        try:
+            normalized["retry_delay_ms"] = max(0, min(int(raw["retry_delay_ms"]), 30000))
+        except (TypeError, ValueError):
+            normalized["retry_delay_ms"] = 0
+    on_error = str(raw.get("on_error") or "stop").strip().lower()
+    normalized["on_error"] = on_error if on_error in ON_ERROR_POLICIES else "stop"
     if "all_day" in raw:
         normalized["all_day"] = bool(raw["all_day"])
+    return normalized
+
+
+def _normalize_condition(condition: dict[str, Any]) -> dict[str, Any]:
+    mode = str(condition.get("type") or "always").strip().lower()
+    if mode not in CONDITION_TYPES:
+        mode = "always"
+    normalized = {"type": mode}
+    if "action_id" in condition:
+        normalized["action_id"] = _clean_text(condition.get("action_id"), 120)
+    if "value" in condition:
+        normalized["value"] = _clean_text(condition.get("value"), 500)
     return normalized
 
 
@@ -605,6 +633,155 @@ def reject_approval(approval_id: str, *, actor: str = "local-owner", note: str =
     )
 
 
+def _base_action_result(action: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    return {
+        "action_id": action.get("id"),
+        "type": str(action.get("type", "prompt")),
+        "title": action.get("title", ""),
+        "status": "prepared" if dry_run else "completed",
+    }
+
+
+def _result_text(result: dict[str, Any]) -> str:
+    parts = [
+        str(result.get("response") or ""),
+        str(result.get("message") or ""),
+        str(result.get("error") or ""),
+    ]
+    return " ".join(part for part in parts if part).lower()
+
+
+def _context_result(condition: dict[str, Any], action_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    action_id = str(condition.get("action_id") or "").strip()
+    if action_id:
+        return next((item for item in action_results if item.get("action_id") == action_id), None)
+    return action_results[-1] if action_results else None
+
+
+def _condition_matches(action: dict[str, Any], action_results: list[dict[str, Any]]) -> bool:
+    condition = dict(action.get("condition") or {})
+    mode = str(condition.get("type") or "always").strip().lower()
+    if mode == "always":
+        return True
+    previous = _context_result(condition, action_results)
+    if previous is None:
+        return False
+    value = str(condition.get("value") or "").strip().lower()
+    if mode == "previous_status":
+        return str(previous.get("status") or "").lower() == (value or "completed")
+    if mode == "previous_response_contains":
+        return bool(value) and value in _result_text(previous)
+    if mode == "previous_response_not_contains":
+        return not value or value not in _result_text(previous)
+    return True
+
+
+def _condition_message(action: dict[str, Any]) -> str:
+    condition = dict(action.get("condition") or {})
+    mode = str(condition.get("type") or "always").replace("_", " ")
+    value = str(condition.get("value") or "").strip()
+    return f"Condition not met: {mode}{f' = {value}' if value else ''}."
+
+
+def _retry_attempts(action: dict[str, Any]) -> int:
+    try:
+        retry_count = int(action.get("retry_count", 0) or 0)
+    except (TypeError, ValueError):
+        retry_count = 0
+    return 1 + max(0, min(retry_count, 3))
+
+
+def _retry_delay_seconds(action: dict[str, Any]) -> float:
+    try:
+        retry_delay_ms = int(action.get("retry_delay_ms", 0) or 0)
+    except (TypeError, ValueError):
+        retry_delay_ms = 0
+    return max(0, min(retry_delay_ms, 30000)) / 1000
+
+
+async def _run_action_once(
+    *,
+    action: dict[str, Any],
+    workflow: dict[str, Any],
+    run_id: str,
+    runner: WorkflowRunner | None,
+    triggered_by: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    action_type = str(action.get("type", "prompt"))
+    result = _base_action_result(action, dry_run=dry_run)
+
+    if action.get("requires_approval"):
+        message = "Workflow paused for explicit approval." if action_type == "wait_for_approval" else "This action requires user approval."
+        result.update({"status": "approval_required", "message": message})
+        if not dry_run:
+            approval = _record_approval(
+                workflow=workflow,
+                run_id=run_id,
+                action=action,
+                message=message,
+                triggered_by=triggered_by,
+            )
+            result["approval_id"] = approval["id"]
+    elif action_type == "prompt":
+        prompt = str(action.get("prompt") or action.get("message") or workflow.get("description") or workflow["name"])
+        result["prompt"] = prompt
+        if runner is not None and not dry_run:
+            result["response"] = await runner(prompt)
+        elif not dry_run:
+            result["status"] = "skipped"
+            result["message"] = "No prompt runner was provided."
+    elif action_type == "routine":
+        routine = _find_routine(action)
+        if routine is None:
+            result.update({"status": "skipped", "message": "Routine not found."})
+        else:
+            prompt = str(routine.get("prompt", ""))
+            result["routine_id"] = routine.get("id")
+            result["prompt"] = prompt
+            if runner is not None and not dry_run:
+                routines.mark_routine_run(str(routine.get("id")))
+                result["response"] = await runner(prompt)
+            elif not dry_run:
+                result["status"] = "skipped"
+                result["message"] = "No prompt runner was provided."
+    elif action_type == "calendar_brief":
+        if dry_run:
+            result["message"] = "Calendar brief prepared."
+        else:
+            result["response"] = await _execute_calendar_brief(action)
+    elif action_type == "email_digest":
+        if dry_run:
+            result["message"] = "Email digest prepared."
+        else:
+            result["response"] = await _execute_email_digest(action)
+    elif action_type == "notification":
+        if dry_run:
+            result["message"] = str(action.get("message") or "Workflow notification prepared.")
+        else:
+            result["response"] = await _execute_notification(action, str(workflow.get("name", "")))
+    elif action_type == "create_calendar_event":
+        if dry_run:
+            result.update({"status": "approval_required", "message": "Calendar writes require explicit approval."})
+        elif action.get("requires_approval") is False:
+            result["response"] = await _execute_calendar_event(action)
+        else:
+            result.update({"status": "approval_required", "message": "Calendar writes require explicit approval."})
+    elif action_type == "wait_for_approval":
+        message = "Workflow paused for explicit approval."
+        result.update({"status": "approval_required", "message": message})
+        if not dry_run:
+            approval = _record_approval(
+                workflow=workflow,
+                run_id=run_id,
+                action=action,
+                message=message,
+                triggered_by=triggered_by,
+            )
+            result["approval_id"] = approval["id"]
+    return result
+
+
 async def run_workflow(
     workflow_id: str,
     *,
@@ -625,83 +802,51 @@ async def run_workflow(
 
     try:
         for action in workflow.get("actions", []):
-            action_type = str(action.get("type", "prompt"))
-            result: dict[str, Any] = {
-                "action_id": action.get("id"),
-                "type": action_type,
-                "title": action.get("title", ""),
-                "status": "prepared" if dry_run else "completed",
-            }
+            if not _condition_matches(action, action_results):
+                skipped_result = _base_action_result(action, dry_run=dry_run)
+                skipped_result.update({"status": "skipped", "message": _condition_message(action)})
+                action_results.append(skipped_result)
+                continue
 
-            if action.get("requires_approval"):
-                message = "This action requires user approval."
-                result.update({"status": "approval_required", "message": message})
-                if not dry_run:
-                    approval = _record_approval(
+            attempts = _retry_attempts(action)
+            retry_delay = _retry_delay_seconds(action)
+            action_result: dict[str, Any] | None = None
+            stop_after_action = False
+            for attempt in range(1, attempts + 1):
+                try:
+                    action_result = await _run_action_once(
+                        action=action,
                         workflow=workflow,
                         run_id=run_id,
-                        action=action,
-                        message=message,
+                        runner=runner,
                         triggered_by=triggered_by,
+                        dry_run=dry_run,
                     )
-                    result["approval_id"] = approval["id"]
-            elif action_type == "prompt":
-                prompt = str(action.get("prompt") or action.get("message") or workflow.get("description") or workflow["name"])
-                result["prompt"] = prompt
-                if runner is not None and not dry_run:
-                    result["response"] = await runner(prompt)
-                elif not dry_run:
-                    result["status"] = "skipped"
-                    result["message"] = "No prompt runner was provided."
-            elif action_type == "routine":
-                routine = _find_routine(action)
-                if routine is None:
-                    result.update({"status": "skipped", "message": "Routine not found."})
-                else:
-                    prompt = str(routine.get("prompt", ""))
-                    result["routine_id"] = routine.get("id")
-                    result["prompt"] = prompt
-                    if runner is not None and not dry_run:
-                        routines.mark_routine_run(str(routine.get("id")))
-                        result["response"] = await runner(prompt)
-                    elif not dry_run:
-                        result["status"] = "skipped"
-                        result["message"] = "No prompt runner was provided."
-            elif action_type == "calendar_brief":
-                if dry_run:
-                    result["message"] = "Calendar brief prepared."
-                else:
-                    result["response"] = await _execute_calendar_brief(action)
-            elif action_type == "email_digest":
-                if dry_run:
-                    result["message"] = "Email digest prepared."
-                else:
-                    result["response"] = await _execute_email_digest(action)
-            elif action_type == "notification":
-                if dry_run:
-                    result["message"] = str(action.get("message") or "Workflow notification prepared.")
-                else:
-                    result["response"] = await _execute_notification(action, str(workflow.get("name", "")))
-            elif action_type == "create_calendar_event":
-                if dry_run:
-                    result.update({"status": "approval_required", "message": "Calendar writes require explicit approval."})
-                elif action.get("requires_approval") is False:
-                    result["response"] = await _execute_calendar_event(action)
-                else:
-                    result.update({"status": "approval_required", "message": "Calendar writes require explicit approval."})
-            elif action_type == "wait_for_approval":
-                message = "Workflow paused for explicit approval."
-                result.update({"status": "approval_required", "message": message})
-                if not dry_run:
-                    approval = _record_approval(
-                        workflow=workflow,
-                        run_id=run_id,
-                        action=action,
-                        message=message,
-                        triggered_by=triggered_by,
-                    )
-                    result["approval_id"] = approval["id"]
-            action_results.append(result)
+                    if attempts > 1:
+                        action_result["attempts"] = attempt
+                    break
+                except Exception as exc:
+                    if attempt < attempts:
+                        if retry_delay:
+                            await asyncio.sleep(retry_delay)
+                        continue
+                    action_result = _base_action_result(action, dry_run=dry_run)
+                    action_result.update({
+                        "status": "failed",
+                        "error": str(exc),
+                        "attempts": attempt,
+                    })
+                    if str(action.get("on_error") or "stop").lower() == "continue":
+                        status = "completed_with_errors" if status == "completed" else status
+                        action_result["message"] = "Step failed; continuing workflow."
+                    else:
+                        status = "failed"
+                        error = str(exc)
+                        stop_after_action = True
+            if action_result is not None:
+                action_results.append(action_result)
+            if stop_after_action:
+                break
     except Exception as exc:
         status = "failed"
         error = str(exc)
@@ -736,7 +881,7 @@ def get_overview() -> dict[str, Any]:
         "recent_runs": runs,
         "next_foundation_steps": [
             "Replace JSON storage with a multi-user database when team mode is enabled.",
-            "Add branching conditions and per-step retry policies.",
             "Add collaborative workflow editing with audit history.",
+            "Add visual run timelines with per-step inputs, outputs, and retry traces.",
         ],
     }
