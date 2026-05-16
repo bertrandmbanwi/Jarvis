@@ -576,6 +576,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     amplitudeEnvelope = [];
                     amplitudeDuration = 0;
                     currentAudioAmp = 0;
+                    setResponseText('');
+                    setUserText('');
                     if (state === 'speaking') setState('idle');
                 }
 

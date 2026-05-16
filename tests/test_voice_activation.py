@@ -101,3 +101,19 @@ async def test_overlay_activation_requests_listener(monkeypatch):
     assert server._overlay_state == "listening"
     assert server._overlay_text == ""
     assert server._overlay_user_text == ""
+
+
+@pytest.mark.asyncio
+async def test_voice_state_clear_removes_overlay_text(monkeypatch):
+    from jarvis.core import server
+
+    monkeypatch.setattr(server, "_overlay_clients", [])
+    monkeypatch.setattr(server, "_overlay_state", "speaking")
+    monkeypatch.setattr(server, "_overlay_text", "old response")
+    monkeypatch.setattr(server, "_overlay_user_text", "old user text")
+
+    await server.broadcast_voice_state(False)
+
+    assert server._overlay_state == "idle"
+    assert server._overlay_text == ""
+    assert server._overlay_user_text == ""

@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any, cast
 
+from jarvis.core import profile
+
 logger = logging.getLogger("jarvis.tools.weather")
 
 try:
@@ -13,12 +15,15 @@ except ImportError:
     HAS_HTTPX = False
 
 
-async def get_weather(location: str) -> str:
-    """Get current weather and tomorrow's forecast for a location."""
-    if not location or not location.strip():
-        return "Please provide a location (city name or zip code)."
+async def get_weather(location: str = "") -> str:
+    """Get current weather and tomorrow's forecast for a location.
 
-    location = location.strip()
+    If no location is provided, use the user's default profile location.
+    """
+    location = _resolve_weather_location(location)
+    if not location:
+        return "Please set your default location in your profile, or ask for weather in a specific city."
+
     logger.info("Weather query for location: '%s'", location)
 
     try:
@@ -39,6 +44,22 @@ async def get_weather(location: str) -> str:
     except Exception as e:
         logger.error("Weather lookup error for '%s': %s", location, e)
         return f"Error retrieving weather: {str(e)[:100]}"
+
+
+def _resolve_weather_location(location: str | None = "") -> str:
+    """Use the profile location for local/generic weather requests."""
+    requested_location = (location or "").strip()
+    if requested_location.lower() in {
+        "",
+        "here",
+        "my location",
+        "current location",
+        "local",
+        "home",
+        "near me",
+    }:
+        return profile.get_default_location()
+    return requested_location
 
 
 async def _geocode_location(location: str) -> tuple[float, float, str] | None:

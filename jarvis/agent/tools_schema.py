@@ -992,7 +992,10 @@ TOOL_SCHEMAS = [
         "description": (
             "Get current weather and tomorrow's forecast for any location. "
             "Uses Open-Meteo API (free, no API key needed). "
-            "Provide a city name or zip code. Returns temperature, conditions, "
+            "If the user asks for local weather without naming a place, omit location "
+            "or pass an empty string; the tool will use the user's saved default location. "
+            "Only provide a city name or zip code when the user asks about a specific place. "
+            "Returns temperature, conditions, "
             "humidity, wind speed, and precipitation chance in a speech-friendly format."
         ),
         "input_schema": {
@@ -1003,7 +1006,6 @@ TOOL_SCHEMAS = [
                     "description": "City name (e.g., 'New York', 'San Francisco') or zip code (e.g., '90210')",
                 },
             },
-            "required": ["location"],
         },
     },
     # ---- Web Page Reading ----
