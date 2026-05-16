@@ -336,6 +336,8 @@ async def broadcast_voice_state(
     """
     await broadcast_overlay_state(
         "speaking" if speaking else "idle",
+        text=None if speaking else "",
+        user_text=None if speaking else "",
         amplitude_envelope=amplitude_envelope if speaking else None,
         audio_duration=audio_duration if speaking else 0.0,
         voice_speaking=speaking,
