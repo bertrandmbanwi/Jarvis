@@ -120,6 +120,13 @@ async def test_workflow_action_retries_before_succeeding(product_bet_files):
     assert attempts == 3
     assert run["action_results"][0]["attempts"] == 3
     assert run["action_results"][0]["response"] == "ok:unstable"
+    assert len(run["timeline"]) == 1
+    assert len(run["timeline"][0]["attempts"]) == 3
+    assert run["timeline"][0]["attempts"][0]["status"] == "failed"
+    assert run["timeline"][0]["attempts"][2]["status"] == "completed"
+    assert run["timeline"][0]["input"]["prompt"] == "unstable"
+    assert run["timeline"][0]["output"]["response"] == "ok:unstable"
+    assert workflows.get_run(run["id"])["timeline"][0]["duration_ms"] >= 0
 
 
 @pytest.mark.asyncio
@@ -144,6 +151,32 @@ async def test_workflow_can_continue_after_step_failure(product_bet_files):
     assert run["action_results"][0]["status"] == "failed"
     assert run["action_results"][0]["error"] == "boom"
     assert run["action_results"][1]["response"] == "ok:next"
+
+
+@pytest.mark.asyncio
+async def test_workflow_timeline_records_skipped_conditions(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Timeline skip",
+        actions=[
+            {"id": "first", "type": "prompt", "title": "First", "prompt": "first"},
+            {
+                "id": "second",
+                "type": "prompt",
+                "title": "Second",
+                "prompt": "second",
+                "condition": {"type": "previous_status", "value": "failed"},
+            },
+        ],
+    )
+
+    async def runner(prompt: str) -> str:
+        return f"ok:{prompt}"
+
+    run = await workflows.run_workflow(workflow["id"], runner=runner)
+
+    assert run is not None
+    assert [item["status"] for item in run["timeline"]] == ["completed", "skipped"]
+    assert run["timeline"][1]["output"]["message"].startswith("Condition not met")
 
 
 def test_team_roles_and_capabilities(product_bet_files):

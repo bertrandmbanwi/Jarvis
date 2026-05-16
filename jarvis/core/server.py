@@ -1234,6 +1234,15 @@ async def list_workflow_runs(workflow_id: str = "", limit: int = 50):
     return {"runs": runs, "count": len(runs)}
 
 
+@app.get("/workflows/runs/{run_id}", dependencies=[Depends(require_auth)])
+async def get_workflow_run(run_id: str):
+    """Get one workflow run with its timeline/audit trace."""
+    run = workflows.get_run(run_id)
+    if run is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow run not found."})
+    return run
+
+
 @app.get("/workflows/approvals", dependencies=[Depends(require_auth)])
 async def list_workflow_approvals(status: str = "pending", limit: int = 50):
     """List workflow approvals waiting for a user decision."""
