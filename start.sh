@@ -39,10 +39,70 @@ PROXY_PID=""
 OLLAMA_PID=""
 TUNNEL_PID=""
 OVERLAY_PID=""
+RUNTIME_DIR="${SCRIPT_DIR}/data/runtime"
+LIFECYCLE_FILE="${RUNTIME_DIR}/lifecycle.json"
+
+write_lifecycle_state() {
+    local lifecycle_status="${1:-running}"
+    if ! command -v python >/dev/null 2>&1; then
+        return 0
+    fi
+    mkdir -p "${RUNTIME_DIR}"
+    JARVIS_LIFECYCLE_STATUS="${lifecycle_status}" \
+    JARVIS_LIFECYCLE_FILE="${LIFECYCLE_FILE}" \
+    JARVIS_LIFECYCLE_MODE="${MODE}" \
+    JARVIS_LIFECYCLE_HOME="${SCRIPT_DIR}" \
+    JARVIS_API_PORT_VALUE="${API_PORT}" \
+    JARVIS_UI_PORT_VALUE="${UI_PORT}" \
+    JARVIS_PARENT_PID="$$" \
+    JARVIS_UI_PID="${UI_PID}" \
+    JARVIS_NEXTJS_PID="${NEXTJS_PID}" \
+    JARVIS_PROXY_PID="${PROXY_PID}" \
+    JARVIS_OLLAMA_PID="${OLLAMA_PID}" \
+    JARVIS_TUNNEL_PID="${TUNNEL_PID}" \
+    JARVIS_OVERLAY_PID="${OVERLAY_PID}" \
+    python - <<'PY' || true
+import json
+import os
+import time
+from pathlib import Path
+
+path = Path(os.environ["JARVIS_LIFECYCLE_FILE"])
+previous = {}
+if path.exists():
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        previous = {}
+
+status = os.environ.get("JARVIS_LIFECYCLE_STATUS", "running")
+started_at = time.time() if status == "starting" else previous.get("started_at") or time.time()
+payload = {
+    "status": status,
+    "mode": os.environ.get("JARVIS_LIFECYCLE_MODE", "full"),
+    "jarvis_home": os.environ.get("JARVIS_LIFECYCLE_HOME", ""),
+    "api_port": int(os.environ.get("JARVIS_API_PORT_VALUE") or 8741),
+    "ui_port": int(os.environ.get("JARVIS_UI_PORT_VALUE") or 3000),
+    "started_at": started_at,
+    "updated_at": time.time(),
+    "processes": {
+        "parent_pid": os.environ.get("JARVIS_PARENT_PID", ""),
+        "ui_pid": os.environ.get("JARVIS_UI_PID", ""),
+        "nextjs_pid": os.environ.get("JARVIS_NEXTJS_PID", ""),
+        "proxy_pid": os.environ.get("JARVIS_PROXY_PID", ""),
+        "ollama_pid": os.environ.get("JARVIS_OLLAMA_PID", ""),
+        "tunnel_pid": os.environ.get("JARVIS_TUNNEL_PID", ""),
+        "overlay_pid": os.environ.get("JARVIS_OVERLAY_PID", ""),
+    },
+}
+path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+PY
+}
 
 cleanup() {
     echo ""
     echo "Shutting down JARVIS..."
+    write_lifecycle_state "stopping"
     if [[ -n "${UI_PID}" ]] && kill -0 "${UI_PID}" 2>/dev/null; then
         echo "Stopping UI server..."
         kill -- -"${UI_PID}" 2>/dev/null || kill "${UI_PID}" 2>/dev/null || true
@@ -72,6 +132,7 @@ cleanup() {
         echo "Stopping Ollama..."
         kill "${OLLAMA_PID}" 2>/dev/null || true
     fi
+    write_lifecycle_state "stopped"
     echo "JARVIS shut down."
     exit 0
 }
@@ -155,6 +216,7 @@ python -c "import yaml" 2>/dev/null || pip install pyyaml -q
 # Ensure data directories exist for SQLite databases
 mkdir -p "${SCRIPT_DIR}/data"
 mkdir -p "${SCRIPT_DIR}/templates/prompts"
+write_lifecycle_state "starting"
 
 # Build and launch desktop overlay (macOS only, optional)
 OVERLAY_DIR="${SCRIPT_DIR}/desktop-overlay"
@@ -267,6 +329,8 @@ if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${MODE}" == "full" || "${MODE}" ==
         echo "  JARVIS still works locally at http://localhost:${UI_PORT}"
     fi
 fi
+
+write_lifecycle_state "running"
 
 # Launch JARVIS backend
 python -m jarvis.main "${MODE}"
