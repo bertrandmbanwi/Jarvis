@@ -4,6 +4,7 @@ from datetime import datetime
 import pytest
 
 from jarvis.core import calendar_accounts, team, workflow_scheduler, workflows
+from jarvis.tools import calendar_email, mac_control
 
 
 @pytest.fixture
@@ -103,3 +104,83 @@ async def test_scheduler_detects_and_runs_due_workflow(product_bet_files):
     assert len(runs) == 1
     assert runs[0]["workflow_id"] == workflow["id"]
     assert workflow_scheduler.is_workflow_due(workflows.get_workflow(workflow["id"]) or {}, now) is False
+
+
+@pytest.mark.asyncio
+async def test_workflow_calendar_and_email_actions_execute_tools(product_bet_files, monkeypatch):
+    async def fake_events(days: int = 1) -> str:
+        return f"events:{days}"
+
+    async def fake_unread() -> str:
+        return "unread:3"
+
+    async def fake_recent(count: int = 10, mailbox: str = "INBOX") -> str:
+        return f"recent:{count}:{mailbox}"
+
+    monkeypatch.setattr(calendar_email, "get_upcoming_events", fake_events)
+    monkeypatch.setattr(calendar_email, "get_unread_count", fake_unread)
+    monkeypatch.setattr(calendar_email, "get_recent_emails", fake_recent)
+    workflow = workflows.create_workflow(
+        name="Local tools",
+        actions=[
+            {"type": "calendar_brief", "title": "Calendar", "days": 2},
+            {"type": "email_digest", "title": "Mail", "count": 4, "mailbox": "INBOX"},
+        ],
+    )
+
+    run = await workflows.run_workflow(workflow["id"])
+
+    assert run is not None
+    assert run["action_results"][0]["response"] == "events:2"
+    assert "unread:3" in run["action_results"][1]["response"]
+    assert "recent:4:INBOX" in run["action_results"][1]["response"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_notification_action_executes_tool(product_bet_files, monkeypatch):
+    async def fake_notification(title: str, message: str) -> str:
+        return f"notified:{title}:{message}"
+
+    monkeypatch.setattr(mac_control, "send_notification", fake_notification)
+    workflow = workflows.create_workflow(
+        name="Notify workflow",
+        actions=[{"type": "notification", "title": "Done", "message": "Workflow complete"}],
+    )
+
+    run = await workflows.run_workflow(workflow["id"])
+
+    assert run is not None
+    assert run["action_results"][0]["response"] == "notified:Done:Workflow complete"
+
+
+@pytest.mark.asyncio
+async def test_calendar_event_action_requires_approval_by_default(product_bet_files, monkeypatch):
+    async def fake_create_event(**kwargs) -> str:
+        return f"created:{kwargs['title']}"
+
+    monkeypatch.setattr(calendar_email, "create_calendar_event", fake_create_event)
+    workflow = workflows.create_workflow(
+        name="Write calendar",
+        actions=[{"type": "create_calendar_event", "title": "Planning", "start_date": "May 20, 2026 9:00 AM"}],
+    )
+
+    run = await workflows.run_workflow(workflow["id"])
+
+    assert run is not None
+    assert run["action_results"][0]["status"] == "approval_required"
+    assert "response" not in run["action_results"][0]
+
+    approved = workflows.create_workflow(
+        name="Approved write",
+        actions=[{
+            "type": "create_calendar_event",
+            "title": "Planning",
+            "start_date": "May 20, 2026 9:00 AM",
+            "requires_approval": False,
+        }],
+    )
+
+    approved_run = await workflows.run_workflow(approved["id"])
+
+    assert approved_run is not None
+    assert approved_run["action_results"][0]["response"] == "created:Planning"
