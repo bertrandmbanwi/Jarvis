@@ -10,19 +10,13 @@ export function isTunnelMode(): boolean {
 
 export function getApiBaseUrl(): string {
   if (typeof window === "undefined") return "http://localhost:8741";
-  if (isTunnelMode()) {
-    return `${window.location.origin}/jarvis-api`;
-  }
-  return `${window.location.protocol}//${window.location.hostname}:8741`;
+  return `${window.location.origin}/jarvis-api`;
 }
 
 export function getWsUrl(): string {
   if (typeof window === "undefined") return "ws://localhost:8741/ws";
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  if (isTunnelMode()) {
-    return `${proto}//${window.location.host}/jarvis-ws`;
-  }
-  return `${proto}//${window.location.hostname}:8741/ws`;
+  return `${proto}//${window.location.host}/jarvis-ws`;
 }
 
 export function jarvisHeaders(
