@@ -65,6 +65,36 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 OLLAMA_FAST_MODEL = os.getenv("OLLAMA_FAST_MODEL", "llama3.2:latest")
 PREFER_CLAUDE = os.getenv("PREFER_CLAUDE", "true").lower() in ("true", "1", "yes")
 
+
+def _get_default_location_context() -> str:
+    """Build dynamic prompt context from the saved profile location."""
+    try:
+        import json
+        profile_path = PROFILE_DIR / "profile.json"
+        profile_data = json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else {}
+    except Exception:
+        profile_data = {}
+
+    prefs = profile_data.get("preferences", {})
+    explicit_location = str(
+        profile_data.get("location", "") or
+        (prefs.get("location", "") if isinstance(prefs, dict) else "")
+    ).strip()
+    city = str(profile_data.get("location_city", "Forney") or "").strip()
+    state = str(profile_data.get("location_state", "Texas") or "").strip()
+    location = explicit_location or ", ".join(part for part in (city, state) if part)
+
+    if not location:
+        return ""
+
+    return f"""
+<user_location>
+Becs' default local location is {location}.
+For local weather requests, use this saved location automatically unless Becs explicitly names another place.
+</user_location>
+"""
+
+
 def _build_system_prompt() -> str:
     """Build the system prompt with current date/time injected.
 
@@ -82,12 +112,14 @@ def _build_system_prompt() -> str:
     static = _SYSTEM_PROMPT_STATIC
 
     # ── DYNAMIC PORTION (per-request) ──────────────────────────────────
+    location_context = _get_default_location_context()
     dynamic = f"""
 <dynamic_context>
 <current_datetime>
 Today is {date_str}. The current time is {time_str}.
 Always use this date when searching for current events, scores, weather, or time-sensitive information.
 </current_datetime>
+{location_context}
 </dynamic_context>
 """
     return static + dynamic
@@ -228,7 +260,8 @@ Use run_terminal_command_smart for commands that need safety reasoning.
 </category>
 
 <tool_routing>
-When you need real-time data (weather, scores, news, facts): use search_web or search_and_read.
+When the user asks for weather or forecast data: use get_weather. If no place is named, rely on the saved default location.
+When you need other real-time data (scores, news, facts): use search_web or search_and_read.
 When the user wants to SEE search results in their browser: use search_in_browser.
 When you need to read a specific web page: use fetch_page_text.
 When the user asks to interact with a website (fill forms, apply to jobs, log in, download): use browse_web.

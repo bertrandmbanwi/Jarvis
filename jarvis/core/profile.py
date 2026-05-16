@@ -73,6 +73,29 @@ def get_preference(key: str) -> Any | None:
     return _profile.get("preferences", {}).get(key)
 
 
+def get_default_location() -> str:
+    """Return the user's default location for local weather and nearby queries."""
+    prefs = _profile.get("preferences", {})
+    explicit_location = str(_profile.get("location", "") or prefs.get("location", "") or "").strip()
+    if explicit_location:
+        return explicit_location
+
+    city = str(_profile.get("location_city", "") or "").strip()
+    state = str(_profile.get("location_state", "") or "").strip()
+    if city and state:
+        return f"{city}, {state}"
+    if city:
+        return city
+    if state:
+        return state
+
+    default_city = str(_DEFAULT_PROFILE.get("location_city", "") or "").strip()
+    default_state = str(_DEFAULT_PROFILE.get("location_state", "") or "").strip()
+    if default_city and default_state:
+        return f"{default_city}, {default_state}"
+    return default_city or default_state
+
+
 def update_profile(updates: dict[str, Any]) -> dict[str, Any]:
     """Update profile fields; known keys set directly, others go to preferences."""
     known_top_keys = set(_DEFAULT_PROFILE.keys())
