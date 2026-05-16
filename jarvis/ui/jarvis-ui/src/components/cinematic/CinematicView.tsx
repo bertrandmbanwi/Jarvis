@@ -157,7 +157,13 @@ export default function CinematicView({
       );
 
   return (
-    <div className="flex-1 relative overflow-hidden bg-black">
+    <div
+      className="flex-1 relative overflow-hidden bg-black"
+      style={{
+        background:
+          "radial-gradient(circle at 50% 52%, rgba(0, 58, 78, 0.26) 0%, rgba(0, 18, 36, 0.18) 32%, rgba(0, 0, 0, 1) 72%)",
+      }}
+    >
       {showBoot && (
         <div className="absolute inset-0" style={{ zIndex: 2 }}>
           <BootScreen progress={bootProgress} />
@@ -189,7 +195,7 @@ export default function CinematicView({
         style={{
           zIndex: 10,
           background:
-            "radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.6) 100%)",
+            "radial-gradient(ellipse at center, transparent 42%, rgba(0,0,0,0.42) 100%)",
         }}
       />
 
@@ -197,7 +203,7 @@ export default function CinematicView({
         className="absolute inset-x-0 top-0 h-24 pointer-events-none"
         style={{
           zIndex: 10,
-          background: "linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%)",
+          background: "linear-gradient(to bottom, rgba(0,0,0,0.42) 0%, transparent 100%)",
         }}
       />
 

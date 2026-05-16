@@ -49,8 +49,8 @@ const STATES: Record<OrbState, StateConfig> = {
     coreColor:     C.cyanBrite,
     particleColor: C.cyan,
     glowColor:     C.cyanDeep,
-    coreIntensity: 0.95,
-    particleAlpha: 1.0,
+    coreIntensity: 1.08,
+    particleAlpha: 1.02,
     orbitalSpeed:  0.04,
     turbulence:    0.012,
     pulseRate:     0.45,
@@ -59,15 +59,15 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.0,
     breathBlend:   0.70,
     scaleTarget:   1.0,
-    dustAlpha:     0.30,
-    ringAlpha:     0.20,
+    dustAlpha:     0.38,
+    ringAlpha:     0.28,
   },
   listening: {
     coreColor:     C.cyanBrite,
     particleColor: C.cyanPale,
     glowColor:     C.cyanDeep,
-    coreIntensity: 0.95,
-    particleAlpha: 1.0,
+    coreIntensity: 1.16,
+    particleAlpha: 1.04,
     orbitalSpeed:  0.10,
     turbulence:    0.03,
     pulseRate:     0.8,
@@ -76,15 +76,15 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.15,           // rare arcs, not busy
     breathBlend:   0.30,
     scaleTarget:   0.93,           // slight inward pull
-    dustAlpha:     0.32,
-    ringAlpha:     0.20,
+    dustAlpha:     0.40,
+    ringAlpha:     0.30,
   },
   thinking: {
     coreColor:     C.white,
     particleColor: C.thinkA,
     glowColor:     C.thinkB,
-    coreIntensity: 1.0,
-    particleAlpha: 1.0,
+    coreIntensity: 1.24,
+    particleAlpha: 1.05,
     orbitalSpeed:  0.28,
     turbulence:    0.06,
     pulseRate:     1.2,
@@ -93,15 +93,15 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.5,           // occasional arcs, not frantic
     breathBlend:   0.10,
     scaleTarget:   0.94,
-    dustAlpha:     0.36,
-    ringAlpha:     0.22,
+    dustAlpha:     0.42,
+    ringAlpha:     0.31,
   },
   speaking: {
     coreColor:     C.speakCore,   // warm white-gold at nucleus only
     particleColor: C.speakPart,   // particles stay cyan with subtle warm tint
     glowColor:     C.speakGlow,   // warm-cyan glow, not full gold
-    coreIntensity: 1.1,
-    particleAlpha: 1.0,
+    coreIntensity: 1.28,
+    particleAlpha: 1.05,
     orbitalSpeed:  0.07,
     turbulence:    0.025,
     pulseRate:     0.55,
@@ -110,15 +110,15 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.25,
     breathBlend:   0.85,          // smooth breathing, not spiky heartbeat
     scaleTarget:   1.05,          // gentle expansion, not dramatic
-    dustAlpha:     0.30,
-    ringAlpha:     0.20,
+    dustAlpha:     0.40,
+    ringAlpha:     0.30,
   },
   error: {
     coreColor:     C.errPale,
     particleColor: C.errRed,
     glowColor:     C.errRed,
-    coreIntensity: 0.25,
-    particleAlpha: 0.65,
+    coreIntensity: 0.45,
+    particleAlpha: 0.75,
     orbitalSpeed:  0.03,
     turbulence:    0.025,
     pulseRate:     0.45,
@@ -127,8 +127,8 @@ const STATES: Record<OrbState, StateConfig> = {
     arcFrequency:  0.0,
     breathBlend:   0.08,
     scaleTarget:   0.80,
-    dustAlpha:     0.06,
-    ringAlpha:     0.05,
+    dustAlpha:     0.12,
+    ringAlpha:     0.10,
   },
 };
 
@@ -270,8 +270,8 @@ const FRAG_PARTICLES = /* glsl */ `
     vec3 col = mix(uColor, uCoreCol, core * 0.8 + glow * 0.15);
 
     // Combine: bright core + colored glow, both contributing
-    float alpha = (core * 1.0 + glow * 0.6 + edge * 0.1) * vAlpha * uAlpha;
-    gl_FragColor = vec4(col * alpha * 3.2, alpha);
+    float alpha = (core * 1.05 + glow * 0.68 + edge * 0.12) * vAlpha * uAlpha;
+    gl_FragColor = vec4(col * alpha * 3.65, min(alpha, 1.0));
   }
 `;
 
@@ -309,8 +309,8 @@ const FRAG_DUST = /* glsl */ `
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5) discard;
     float glow = exp(-d * d * 12.0);
-    float alpha = glow * vFade * uAlpha * 0.45;
-    gl_FragColor = vec4(uColor * alpha, alpha);
+    float alpha = glow * vFade * uAlpha * 0.62;
+    gl_FragColor = vec4(uColor * alpha * 1.35, alpha);
   }
 `;
 
@@ -334,13 +334,14 @@ const FRAG_GLOW = /* glsl */ `
   void main() {
     float d = length(vUv - vec2(0.5)) * 2.0;
     float p = 1.0 + uPulse * 0.25;
+    float edgeFade = smoothstep(1.12, 0.70, d);
 
     // Layered radial falloff: white-hot center > colored mid > soft bloom
-    float L0 = exp(-d * d * 28.0) * 1.8;           // white nucleus (brighter)
-    float L1 = exp(-d * d * 8.0)  * 0.72 * p;      // bright inner (boosted)
-    float L2 = exp(-d * d * 2.5)  * 0.30 * p;      // colored mid (boosted)
-    float L3 = exp(-d * d * 0.6)  * 0.10;           // soft bloom
-    float L4 = exp(-d * d * 0.18) * 0.035;          // atmospheric haze
+    float L0 = exp(-d * d * 28.0) * 1.9;           // white nucleus
+    float L1 = exp(-d * d * 8.0)  * 0.78 * p;      // bright inner glow
+    float L2 = exp(-d * d * 2.5)  * 0.34 * p;      // colored mid bloom
+    float L3 = exp(-d * d * 0.6)  * 0.12;          // soft bloom
+    float L4 = exp(-d * d * 0.18) * 0.045;         // atmospheric haze
 
     vec3 col = vec3(1.0) * L0
              + uCore  * L1
@@ -348,8 +349,8 @@ const FRAG_GLOW = /* glsl */ `
              + uOuter * L3
              + uOuter * L4;
 
-    float alpha = (L0 + L1 + L2 + L3 + L4) * uIntensity;
-    gl_FragColor = vec4(col * uIntensity, alpha);
+    float alpha = (L0 + L1 + L2 + L3 + L4) * uIntensity * edgeFade;
+    gl_FragColor = vec4(col * uIntensity * edgeFade, alpha);
   }
 `;
 
@@ -444,9 +445,11 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
   const curRef = useRef<StateConfig>({ ...STATES[state] });
   const tgtRef = useRef<StateConfig>({ ...STATES[state] });
   const ampRef = useRef(0);
+  const transitionRef = useRef(transitionIn);
 
   useEffect(() => { tgtRef.current = { ...STATES[state] }; }, [state]);
   useEffect(() => { ampRef.current = audioAmplitude; }, [audioAmplitude]);
+  useEffect(() => { transitionRef.current = transitionIn; }, [transitionIn]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -510,15 +513,15 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       if (shell === 0) {
         // Core particles: small, very bright pinpoints clustered at nucleus
         sizes[i] = 1.8 + Math.random() * 1.2;
-        brights[i] = 0.90 + Math.random() * 0.10;
+        brights[i] = 0.95 + Math.random() * 0.10;
       } else if (shell === 1) {
         // Mid-layer particles: medium size, solid brightness (main visible body)
         sizes[i] = 2.5 + Math.random() * 2.0;
-        brights[i] = 0.65 + Math.random() * 0.25;
+        brights[i] = 0.70 + Math.random() * 0.24;
       } else {
         // Outer particles: larger, still clearly visible but softer
         sizes[i] = 3.5 + Math.random() * 3.0;
-        brights[i] = 0.45 + Math.random() * 0.25;
+        brights[i] = 0.50 + Math.random() * 0.24;
       }
 
       shells[i] = shell / 2.0; // Normalized to 0, 0.5, or 1.0
@@ -546,7 +549,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
         uTime:    { value: 0 },
         uColor:   { value: new THREE.Color() },
         uCoreCol: { value: new THREE.Color() },
-        uAlpha:   { value: 0.55 },
+        uAlpha:   { value: 0.85 },
         uPulse:   { value: 0 },
         uScale:   { value: 1.0 },
         uAudio:   { value: 0 },
@@ -567,7 +570,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
         uCore:      { value: new THREE.Color() },
         uMid:       { value: new THREE.Color() },
         uOuter:     { value: new THREE.Color() },
-        uIntensity: { value: 0.55 },
+        uIntensity: { value: 0.85 },
         uPulse:     { value: 0 },
       },
       transparent: true,
@@ -578,12 +581,12 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     });
     // Two glow planes at different scales for richer, brighter nucleus
     // Increased scales to create more prominent luminous center
-    const glow1 = new THREE.Mesh(new THREE.PlaneGeometry(1.25, 1.25), glowMat);
+    const glow1 = new THREE.Mesh(new THREE.PlaneGeometry(1.45, 1.45), glowMat);
     glow1.renderOrder = -2;
     scene.add(glow1);
 
     const glow2Mat = glowMat.clone();
-    const glow2 = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 2.0), glow2Mat);
+    const glow2 = new THREE.Mesh(new THREE.PlaneGeometry(2.35, 2.35), glow2Mat);
     glow2.renderOrder = -3;
     scene.add(glow2);
 
@@ -611,7 +614,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       uniforms: {
         uTime:  { value: 0 },
         uColor: { value: new THREE.Color() },
-        uAlpha: { value: 0.15 },
+        uAlpha: { value: 0.24 },
         uScale: { value: 1.0 },
       },
       transparent: true,
@@ -646,7 +649,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       const rMat = new THREE.LineBasicMaterial({
         color: 0x00d4ff,
         transparent: true,
-        opacity: 0.10,
+        opacity: 0.18,
         blending: THREE.AdditiveBlending,
       });
       const ring = new THREE.Line(rGeom, rMat);
@@ -745,7 +748,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       const amp = ampRef.current;
       if (amp > 0.01) pulse = pulse * 0.15 + amp * 0.85;
 
-      const masterAlpha = Math.min(1, transitionIn);
+      const masterAlpha = Math.min(1, transitionRef.current);
 
       // ---- Subtle camera breathing for parallax depth ----
       camera.position.x = Math.sin(t * 0.13) * 0.04;
@@ -767,12 +770,12 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
         mat.uniforms.uCore.value.setRGB(...c.coreColor);
         mat.uniforms.uMid.value.setRGB(...c.particleColor);
         mat.uniforms.uOuter.value.setRGB(...c.glowColor);
-        mat.uniforms.uIntensity.value = c.coreIntensity * masterAlpha * intensityMul * (1 + pulse * 0.2);
+        mat.uniforms.uIntensity.value = c.coreIntensity * masterAlpha * intensityMul * (1 + pulse * 0.35);
         mat.uniforms.uPulse.value = pulse;
       };
       // Nucleus glow: bright enough to read as luminous core
-      glowUpdater(glowMat, 0.92);
-      glowUpdater(glow2Mat, 0.48);
+      glowUpdater(glowMat, 1.02);
+      glowUpdater(glow2Mat, 0.58);
 
       // Billboard glow planes
       glow1.quaternion.copy(camera.quaternion);
@@ -860,7 +863,10 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     <div
       ref={mountRef}
       className={`w-full h-full ${className}`}
-      style={{ background: "transparent" }}
+      style={{
+        background: "transparent",
+        filter: "brightness(1.08) saturate(1.10) drop-shadow(0 0 36px rgba(0, 212, 255, 0.18))",
+      }}
     />
   );
 };

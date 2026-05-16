@@ -84,10 +84,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 #panel {
                     position: absolute;
                     inset: 8px;
-                    background: rgba(2, 6, 14, 0.92);
-                    border: 1px solid rgba(0, 212, 255, 0.08);
+                    background: rgba(2, 8, 18, 0.86);
+                    border: 1px solid rgba(0, 212, 255, 0.18);
                     border-radius: 20px;
-                    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5), inset 0 0 60px rgba(0, 20, 40, 0.3);
+                    box-shadow:
+                        0 0 42px rgba(0, 0, 0, 0.45),
+                        0 0 46px rgba(0, 212, 255, 0.09),
+                        inset 0 0 70px rgba(0, 56, 88, 0.22);
                     pointer-events: none;
                 }
 
@@ -148,6 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     width: 260px;
                     height: 260px;
                     flex-shrink: 0;
+                    filter: brightness(1.2) saturate(1.12) drop-shadow(0 0 22px rgba(0, 212, 255, 0.24));
                 }
                 #orb-container canvas {
                     display: block;
@@ -396,6 +400,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let showConnections = false;
                 let targetGlowIntensity = 0.45;
                 let currentGlowIntensity = 0.45;
+                let voiceSpeaking = false;
+                let currentAudioAmp = 0;
+                let amplitudeEnvelope = [];
+                let amplitudeDuration = 0;
+                let amplitudeStartMs = 0;
 
                 // Color targets for state transitions
                 const cyanColor = [0.0, 0.832, 1.0];
@@ -425,6 +434,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 if (data.state) setState(data.state);
                                 if (data.text !== undefined) setResponseText(data.text);
                                 if (data.userText !== undefined) setUserText(data.userText);
+                                if (data.voiceSpeaking !== undefined || data.voice_speaking !== undefined) {
+                                    setVoiceSpeaking(Boolean(data.voiceSpeaking ?? data.voice_speaking));
+                                }
+                                const envelope = data.amplitudeEnvelope || data.amplitude_envelope;
+                                const duration = data.audioDuration || data.audio_duration;
+                                if (Array.isArray(envelope) && duration > 0) {
+                                    startAmplitudeEnvelope(envelope, duration);
+                                }
                             } catch (e) {
                                 console.error('Parse error:', e);
                             }
@@ -463,34 +480,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         case 'idle':
                             targetCompactness = 0.85;
                             targetSpeed = 0.005;
-                            targetBrightness = 0.75;
+                            targetBrightness = 0.88;
                             showConnections = false;
                             targetColor = cyanColor;
-                            targetGlowIntensity = 0.45;
+                            targetGlowIntensity = 0.58;
                             break;
                         case 'listening':
                             targetCompactness = 0.92;
                             targetSpeed = 0.015;
-                            targetBrightness = 0.95;
+                            targetBrightness = 1.05;
                             showConnections = false;
                             targetColor = cyanColor;
-                            targetGlowIntensity = 0.55;
+                            targetGlowIntensity = 0.70;
                             break;
                         case 'thinking':
                             targetCompactness = 1.0;
                             targetSpeed = 0.035;
-                            targetBrightness = 1.0;
+                            targetBrightness = 1.12;
                             showConnections = true;
                             targetColor = whiteColor;
-                            targetGlowIntensity = 0.7;
+                            targetGlowIntensity = 0.86;
                             break;
                         case 'speaking':
                             targetCompactness = 0.88;
-                            targetSpeed = 0.018;
-                            targetBrightness = 0.95;
+                            targetSpeed = 0.028;
+                            targetBrightness = 1.12;
                             showConnections = false;
                             targetColor = goldColor;
-                            targetGlowIntensity = 0.6;
+                            targetGlowIntensity = 0.82;
                             break;
                     }
                 }
@@ -514,6 +531,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     userTextEl.classList.add('visible');
                 }
 
+                function setVoiceSpeaking(speaking) {
+                    voiceSpeaking = speaking;
+                    if (speaking) {
+                        if (state !== 'speaking') setState('speaking');
+                        return;
+                    }
+
+                    amplitudeEnvelope = [];
+                    amplitudeDuration = 0;
+                    currentAudioAmp = 0;
+                    if (state === 'speaking') setState('idle');
+                }
+
+                function startAmplitudeEnvelope(envelope, duration) {
+                    amplitudeEnvelope = envelope;
+                    amplitudeDuration = duration;
+                    amplitudeStartMs = performance.now();
+                    currentAudioAmp = 0;
+                    setVoiceSpeaking(true);
+                }
+
+                function nextAudioAmplitude() {
+                    if (amplitudeEnvelope.length > 0 && amplitudeDuration > 0) {
+                        const elapsed = (performance.now() - amplitudeStartMs) / 1000;
+                        if (elapsed < amplitudeDuration) {
+                            const progress = elapsed / amplitudeDuration;
+                            const envelopeIndex = Math.min(
+                                Math.floor(progress * amplitudeEnvelope.length),
+                                amplitudeEnvelope.length - 1
+                            );
+                            const targetAmp = Number(amplitudeEnvelope[envelopeIndex]) || 0;
+                            currentAudioAmp += (targetAmp - currentAudioAmp) * 0.35;
+                            return currentAudioAmp;
+                        }
+
+                        amplitudeEnvelope = [];
+                        amplitudeDuration = 0;
+                    }
+
+                    if (voiceSpeaking || state === 'speaking') {
+                        // Fallback for TTS backends that cannot provide an envelope.
+                        const syllable = Math.pow((Math.sin(stateTime * 10.0) + 1) * 0.5, 2.2);
+                        const carrier = Math.pow((Math.sin(stateTime * 17.0 + 0.8) + 1) * 0.5, 1.8);
+                        const targetAmp = 0.18 + syllable * 0.34 + carrier * 0.18;
+                        currentAudioAmp += (targetAmp - currentAudioAmp) * 0.22;
+                        return currentAudioAmp;
+                    }
+
+                    currentAudioAmp *= 0.86;
+                    return currentAudioAmp;
+                }
+
                 // --- Animation ---
                 const connectionDistance = 8;
                 let frameCount = 0;
@@ -534,22 +603,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     currentColor[1] += (targetColor[1] - currentColor[1]) * lerp;
                     currentColor[2] += (targetColor[2] - currentColor[2]) * lerp;
 
+                    const audioAmp = nextAudioAmplitude();
+                    const reactiveSpeed = currentSpeed * (1 + audioAmp * 3.4);
+                    const reactiveBrightness = Math.min(1.45, currentBrightness + audioAmp * 0.42);
+
                     // Breathing effect
-                    const breathe = Math.sin(breathePhase) * 0.03;
+                    const breathe = Math.sin(breathePhase) * (0.035 + audioAmp * 0.12);
 
                     for (let i = 0; i < particleCount; i++) {
                         const p = particles[i];
 
                         // Sinusoidal noise-based motion (like ethanplusai's approach)
-                        const t = stateTime * p.orbitSpeed * currentSpeed * 8;
-                        const noiseX = Math.sin(t + p.baseX * 0.5) * 0.08;
-                        const noiseY = Math.cos(t * 0.7 + p.baseY * 0.5) * 0.08;
-                        const noiseZ = Math.sin(t * 0.9 + p.baseZ * 0.5) * 0.08;
+                        const t = stateTime * p.orbitSpeed * reactiveSpeed * 8;
+                        const noiseScale = 0.08 + audioAmp * 0.16;
+                        const noiseX = Math.sin(t + p.baseX * 0.5) * noiseScale;
+                        const noiseY = Math.cos(t * 0.7 + p.baseY * 0.5) * noiseScale;
+                        const noiseZ = Math.sin(t * 0.9 + p.baseZ * 0.5) * noiseScale;
 
                         // Apply noise as velocity perturbation
-                        p.vx += noiseX * currentSpeed * 2;
-                        p.vy += noiseY * currentSpeed * 2;
-                        p.vz += noiseZ * currentSpeed * 2;
+                        p.vx += noiseX * reactiveSpeed * 2;
+                        p.vy += noiseY * reactiveSpeed * 2;
+                        p.vz += noiseZ * reactiveSpeed * 2;
 
                         // Damping
                         p.vx *= 0.92;
@@ -561,7 +635,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         p.z += p.vz;
 
                         // Centripetal pull: scale current position toward target shell radius
-                        const targetR = shellRadii[p.shell] * currentCompactness * (1 + breathe);
+                        const shellReaction = p.shell === 0 ? 0.10 : p.shell === 1 ? 0.18 : 0.24;
+                        const audioExpansion = 1 + audioAmp * shellReaction;
+                        const targetR = shellRadii[p.shell] * currentCompactness * (1 + breathe) * audioExpansion;
                         const dist = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
                         if (dist > 0.01) {
                             const pullStrength = 0.04;
@@ -576,19 +652,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         pos[i * 3 + 2] = p.z;
 
                         // Color with brightness
-                        col[i * 3]     = currentColor[0] * currentBrightness;
-                        col[i * 3 + 1] = currentColor[1] * currentBrightness;
-                        col[i * 3 + 2] = currentColor[2] * currentBrightness;
+                        col[i * 3]     = currentColor[0] * reactiveBrightness;
+                        col[i * 3 + 1] = currentColor[1] * reactiveBrightness;
+                        col[i * 3 + 2] = currentColor[2] * reactiveBrightness;
                     }
 
                     posAttr.needsUpdate = true;
                     colAttr.needsUpdate = true;
 
                     // Update glow
-                    glowMaterial.opacity = currentGlowIntensity;
+                    glowMaterial.opacity = Math.min(1.0, currentGlowIntensity + audioAmp * 0.42);
                     const glowHue = new THREE.Color(currentColor[0], currentColor[1], currentColor[2]);
                     glowMaterial.color = glowHue;
-                    const glowScale = 22 + Math.sin(breathePhase) * 2;
+                    const glowScale = 22 + Math.sin(breathePhase) * 2 + audioAmp * 8;
                     glowSprite.scale.set(glowScale, glowScale, 1);
                 }
 
@@ -642,8 +718,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     camera.position.y = Math.cos(cameraAngle * 0.7) * driftR * 0.5;
 
                     // Breathing
-                    breathePhase += 0.008;
-                    camera.position.z = 30 + Math.sin(breathePhase) * 1.0;
+                    breathePhase += 0.008 + currentAudioAmp * 0.022;
+                    camera.position.z = 30 + Math.sin(breathePhase) * (1.0 + currentAudioAmp * 1.8);
 
                     updateParticles();
 
