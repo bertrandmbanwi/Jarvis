@@ -8,6 +8,9 @@ interface WorkflowAction {
   type: string;
   title: string;
   prompt?: string;
+  provider?: string;
+  calendar_id?: string;
+  days?: number;
   requires_approval?: boolean;
 }
 
@@ -81,6 +84,13 @@ interface SchedulerStatus {
   due_count: number;
 }
 
+interface CalendarPreviewEvent {
+  id?: string;
+  title?: string;
+  start?: string;
+  location?: string;
+}
+
 interface ProductViewProps {
   authToken?: string | null;
 }
@@ -111,11 +121,14 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [customPrompt, setCustomPrompt] = useState("Summarize what needs attention and suggest next steps.");
   const [triggerMode, setTriggerMode] = useState("manual");
   const [dailyTime, setDailyTime] = useState("08:30");
+  const [includeCalendarBrief, setIncludeCalendarBrief] = useState(false);
+  const [workflowCalendarProvider, setWorkflowCalendarProvider] = useState("");
   const [memberName, setMemberName] = useState("Operator");
   const [memberEmail, setMemberEmail] = useState("");
   const [memberRole, setMemberRole] = useState("member");
   const [calendarClientIds, setCalendarClientIds] = useState<Record<string, string>>({});
   const [calendarClientSecrets, setCalendarClientSecrets] = useState<Record<string, string>>({});
+  const [calendarPreviews, setCalendarPreviews] = useState<Record<string, CalendarPreviewEvent[]>>({});
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const isJsonBody = typeof init?.body === "string";
@@ -181,15 +194,25 @@ export default function ProductView({ authToken }: ProductViewProps) {
     const trigger = triggerMode === "schedule"
       ? { type: "schedule", rrule: `FREQ=DAILY;BYHOUR=${hour || 8};BYMINUTE=${minute || 0}` }
       : { type: "manual" };
+    const actions: WorkflowAction[] = [];
+    if (includeCalendarBrief) {
+      actions.push({
+        type: "calendar_brief",
+        title: "Read calendar",
+        provider: workflowCalendarProvider || undefined,
+        days: 1,
+      });
+    }
+    actions.push({ type: "prompt", title: "Run prompt", prompt: customPrompt });
     await api("/workflows", {
       method: "POST",
       body: JSON.stringify({
         name: customName,
         description: customPrompt.slice(0, 180),
         trigger,
-        actions: [{ type: "prompt", title: "Run prompt", prompt: customPrompt }],
+        actions,
         tags: triggerMode === "schedule" ? ["scheduled"] : ["manual"],
-        permissions: ["llm:chat"],
+        permissions: includeCalendarBrief ? ["calendar:read", "llm:chat"] : ["llm:chat"],
       }),
     });
     setMessage("Workflow created.");
@@ -260,6 +283,20 @@ export default function ProductView({ authToken }: ProductViewProps) {
     await api(`/calendar/oauth/${provider}/disconnect`, { method: "POST" });
     setMessage(`${provider} disconnected.`);
     await loadData();
+  }
+
+  async function testCalendarProvider(provider: string) {
+    const data = await api(`/calendar/oauth/${provider}/status`);
+    const state = data.connected && data.enabled ? "ready" : data.connected ? "connected but disabled" : "not connected";
+    setMessage(`${data.name || provider} is ${state}.`);
+  }
+
+  async function previewCalendarProvider(provider: string) {
+    const params = new URLSearchParams({ days: "1", limit: "5" });
+    const data = await api(`/calendar/providers/${provider}/events?${params.toString()}`);
+    const events = Array.isArray(data.events) ? data.events : [];
+    setCalendarPreviews((current) => ({ ...current, [provider]: events }));
+    setMessage(`${data.provider || provider} returned ${data.count || events.length} event${(data.count || events.length) === 1 ? "" : "s"}.`);
   }
 
   async function saveCalendarPolicy(updates: Partial<CalendarState["policy"]>) {
@@ -342,6 +379,30 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       />
                     </label>
                   </div>
+                  <label className="flex items-center gap-2 rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={includeCalendarBrief}
+                      onChange={(event) => setIncludeCalendarBrief(event.target.checked)}
+                    />
+                    <span className="text-2xs text-jarvis-text/60 uppercase tracking-wider">Calendar Brief</span>
+                  </label>
+                  <label className="block">
+                    <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Calendar Source</span>
+                    <select
+                      className="jarvis-input mt-1"
+                      value={workflowCalendarProvider}
+                      disabled={!includeCalendarBrief}
+                      onChange={(event) => setWorkflowCalendarProvider(event.target.value)}
+                    >
+                      <option value="">Local</option>
+                      {Object.entries(calendar.providers)
+                        .filter(([, details]) => details.oauth_required)
+                        .map(([provider, details]) => (
+                          <option key={provider} value={provider}>{details.name}</option>
+                        ))}
+                    </select>
+                  </label>
                 </div>
                 <label className="block">
                   <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Prompt</span>
@@ -441,6 +502,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
               <div className="space-y-3">
                 {Object.entries(calendar.providers).map(([provider, details]) => {
                   const connection = calendar.connections.find((item) => item.provider === provider);
+                  const previewEvents = calendarPreviews[provider] || [];
                   return (
                     <div key={provider} className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3 space-y-3">
                       <div className="flex items-center justify-between gap-3">
@@ -472,10 +534,27 @@ export default function ProductView({ authToken }: ProductViewProps) {
                             <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => startCalendarOAuth(provider)}>
                               Connect
                             </button>
+                            <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => testCalendarProvider(provider)}>
+                              Test
+                            </button>
+                            <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => previewCalendarProvider(provider)}>
+                              Preview
+                            </button>
                             <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => disconnectCalendar(provider)}>
                               Disconnect
                             </button>
                           </div>
+                          {previewEvents.length > 0 && (
+                            <div className="space-y-1 rounded-md border border-jarvis-cyan/10 bg-black/20 px-2 py-2">
+                              {previewEvents.slice(0, 3).map((event, index) => (
+                                <div key={event.id || `${provider}-${index}`} className="text-2xs text-jarvis-text/60">
+                                  <span className="font-mono text-jarvis-cyan/55">{event.start || "unscheduled"}</span>
+                                  <span className="text-jarvis-text-dim/45"> · </span>
+                                  <span>{event.title || "(Untitled)"}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => upsertCalendar(provider)}>

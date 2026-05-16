@@ -30,6 +30,7 @@ ACTION_TYPES = {
     "create_calendar_event",
     "wait_for_approval",
 }
+OAUTH_CALENDAR_PROVIDERS = {"google", "outlook"}
 VISIBILITY = {"private", "team"}
 
 WorkflowRunner = Callable[[str], Awaitable[str]]
@@ -149,14 +150,23 @@ def _normalize_action(action: dict[str, Any], index: int) -> dict[str, Any]:
         "routine_name",
         "message",
         "calendar_name",
+        "calendar_id",
+        "provider",
+        "timezone",
         "location",
         "notes",
+        "start",
         "start_date",
+        "end",
         "end_date",
         "mailbox",
     ):
         if key in raw:
             normalized[key] = _clean_text(raw[key], 2000)
+    if "attendees" in raw and isinstance(raw["attendees"], list):
+        normalized["attendees"] = [
+            _clean_text(attendee, 240) for attendee in raw["attendees"] if _clean_text(attendee, 240)
+        ][:50]
     for key in ("days", "count"):
         if key not in raw:
             continue
@@ -332,7 +342,7 @@ def _find_routine(action: dict[str, Any]) -> dict[str, Any] | None:
     return next((item for item in routines.list_routines() if str(item.get("name", "")).lower() == routine_name), None)
 
 
-async def _with_timeout(label: str, coro, timeout: float = 18.0) -> str:
+async def _with_timeout(label: str, coro: Awaitable[Any], timeout: float = 18.0) -> Any:
     try:
         return await asyncio.wait_for(coro, timeout=timeout)
     except TimeoutError:
@@ -349,11 +359,58 @@ def _bounded_int(action: dict[str, Any], key: str, default: int, minimum: int, m
     return max(minimum, min(value, maximum))
 
 
+def _oauth_provider_from_action(action: dict[str, Any]) -> str:
+    provider = str(action.get("provider") or "").strip().lower()
+    return provider if provider in OAUTH_CALENDAR_PROVIDERS else ""
+
+
+def _format_provider_events(provider: str, payload: dict[str, Any], *, days: int) -> str:
+    events = payload.get("events", [])
+    provider_name = "Google Calendar" if provider == "google" else "Outlook Calendar"
+    if not isinstance(events, list) or not events:
+        return f"{provider_name} has no events in the next {days} day{'s' if days != 1 else ''}."
+
+    lines = [f"{provider_name} events for the next {days} day{'s' if days != 1 else ''}:"]
+    for event in events[:20]:
+        if not isinstance(event, dict):
+            continue
+        title = str(event.get("title") or "(Untitled)")
+        start = str(event.get("start") or "unscheduled")
+        location = str(event.get("location") or "")
+        line = f"- {start}: {title}"
+        if location:
+            line = f"{line} @ {location}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 async def _execute_calendar_brief(action: dict[str, Any]) -> str:
     from jarvis.tools.calendar_email import get_upcoming_events
 
     days = _bounded_int(action, "days", 1, 1, 14)
-    return await _with_timeout("Calendar brief", get_upcoming_events(days=days), timeout=22.0)
+    provider = _oauth_provider_from_action(action)
+    if provider:
+        from jarvis.core import calendar_oauth
+
+        limit = _bounded_int(action, "count", 20, 1, 50)
+        provider_result = await _with_timeout(
+            f"{provider} calendar brief",
+            calendar_oauth.list_events(
+                provider,
+                days=days,
+                limit=limit,
+                calendar_id=str(action.get("calendar_id") or ""),
+            ),
+            timeout=22.0,
+        )
+        if isinstance(provider_result, dict):
+            return _format_provider_events(provider, provider_result, days=days)
+
+        fallback = await _with_timeout("Local calendar brief", get_upcoming_events(days=days), timeout=22.0)
+        return f"{provider.title()} calendar unavailable: {provider_result}\n\n{fallback}"
+
+    local_result = await _with_timeout("Calendar brief", get_upcoming_events(days=days), timeout=22.0)
+    return str(local_result)
 
 
 async def _execute_email_digest(action: dict[str, Any]) -> str:
@@ -371,22 +428,63 @@ async def _execute_notification(action: dict[str, Any], workflow_name: str) -> s
 
     title = str(action.get("title") or workflow_name or "JARVIS Workflow")
     message = str(action.get("message") or action.get("prompt") or "Workflow step completed.")
-    return await _with_timeout("Notification", send_notification(title, message), timeout=8.0)
+    result = await _with_timeout("Notification", send_notification(title, message), timeout=8.0)
+    return str(result)
 
 
 async def _execute_calendar_event(action: dict[str, Any]) -> str:
     from jarvis.tools.calendar_email import create_calendar_event
 
     title = str(action.get("title") or action.get("message") or "JARVIS Event")
-    start_date = str(action.get("start_date") or "")
+    start_date = str(action.get("start") or action.get("start_date") or "")
     if not start_date:
         return "Calendar event skipped: start_date is required."
-    return await _with_timeout(
+    provider = _oauth_provider_from_action(action)
+    if provider:
+        from jarvis.core import calendar_accounts, calendar_oauth
+
+        end_date = str(action.get("end") or action.get("end_date") or "")
+        if not end_date:
+            return "Calendar event skipped: end/end_date is required for provider-backed calendars."
+        attendees = [str(value) for value in action.get("attendees", []) if str(value).strip()]
+        assessment = calendar_accounts.assess_scheduling_request(
+            title=title,
+            start=start_date,
+            end=end_date,
+            attendees=attendees,
+            provider=provider,
+        )
+        if not assessment.get("can_auto_schedule"):
+            blockers = ", ".join(str(item) for item in assessment.get("blockers", []))
+            return f"Calendar event skipped: {blockers or 'Scheduling policy requires confirmation.'}"
+
+        created = await _with_timeout(
+            "Provider calendar event creation",
+            calendar_oauth.create_event(
+                provider,
+                title=title,
+                start=start_date,
+                end=end_date,
+                timezone=str(action.get("timezone") or assessment.get("policy", {}).get("timezone") or "UTC"),
+                location=str(action.get("location") or ""),
+                notes=str(action.get("notes") or ""),
+                attendees=attendees,
+                calendar_id=str(action.get("calendar_id") or ""),
+            ),
+            timeout=22.0,
+        )
+        if isinstance(created, dict):
+            event = created.get("event", {})
+            event_title = event.get("title") if isinstance(event, dict) else title
+            return f"Created {provider.title()} calendar event: {event_title or title}"
+        return str(created)
+
+    result = await _with_timeout(
         "Calendar event creation",
         create_calendar_event(
             title=title,
             start_date=start_date,
-            end_date=str(action.get("end_date") or ""),
+            end_date=str(action.get("end") or action.get("end_date") or ""),
             location=str(action.get("location") or ""),
             notes=str(action.get("notes") or ""),
             calendar_name=str(action.get("calendar_name") or ""),
@@ -394,6 +492,7 @@ async def _execute_calendar_event(action: dict[str, Any]) -> str:
         ),
         timeout=22.0,
     )
+    return str(result)
 
 
 async def run_workflow(

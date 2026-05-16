@@ -892,6 +892,8 @@ class CalendarProviderEventsRequest(BaseModel):
     timezone: str = "UTC"
     location: str = ""
     notes: str = ""
+    calendar_id: str = ""
+    attendees: list[str] = []
 
 
 class CalendarPolicyRequest(BaseModel):
@@ -1733,10 +1735,10 @@ async def disconnect_calendar_oauth(provider: str):
 
 
 @app.get("/calendar/providers/{provider}/events", dependencies=[Depends(require_auth)])
-async def list_provider_events(provider: str, days: int = 1, limit: int = 20):
+async def list_provider_events(provider: str, days: int = 1, limit: int = 20, calendar_id: str = ""):
     """List events from an OAuth-backed calendar provider."""
     try:
-        return await calendar_oauth.list_events(provider, days=days, limit=limit)
+        return await calendar_oauth.list_events(provider, days=days, limit=limit, calendar_id=calendar_id)
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -1748,6 +1750,7 @@ async def create_provider_event(provider: str, request: CalendarProviderEventsRe
         title=request.title,
         start=request.start,
         end=request.end,
+        attendees=request.attendees,
         provider=provider,
     )
     if assessment["requires_confirmation"]:
@@ -1761,6 +1764,8 @@ async def create_provider_event(provider: str, request: CalendarProviderEventsRe
             timezone=request.timezone,
             location=request.location,
             notes=request.notes,
+            attendees=request.attendees,
+            calendar_id=request.calendar_id,
         )
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})

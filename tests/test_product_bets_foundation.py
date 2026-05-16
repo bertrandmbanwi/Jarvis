@@ -221,6 +221,67 @@ async def test_workflow_calendar_and_email_actions_execute_tools(product_bet_fil
 
 
 @pytest.mark.asyncio
+async def test_workflow_calendar_brief_reads_oauth_provider(product_bet_files, monkeypatch):
+    async def fake_provider_events(provider: str, *, days: int = 1, limit: int = 20, calendar_id: str = "") -> dict:
+        return {
+            "provider": provider,
+            "events": [
+                {
+                    "id": "evt-1",
+                    "title": f"{provider}:{calendar_id or 'primary'}",
+                    "start": f"days:{days}:limit:{limit}",
+                    "location": "HQ",
+                }
+            ],
+            "count": 1,
+        }
+
+    monkeypatch.setattr(calendar_oauth, "list_events", fake_provider_events)
+    workflow = workflows.create_workflow(
+        name="Provider calendar",
+        actions=[{
+            "type": "calendar_brief",
+            "title": "Calendar",
+            "provider": "google",
+            "calendar_id": "team-calendar",
+            "days": 2,
+            "count": 3,
+        }],
+    )
+
+    run = await workflows.run_workflow(workflow["id"])
+
+    assert run is not None
+    response = run["action_results"][0]["response"]
+    assert "Google Calendar events" in response
+    assert "google:team-calendar" in response
+    assert "days:2:limit:3" in response
+
+
+@pytest.mark.asyncio
+async def test_workflow_calendar_brief_falls_back_when_oauth_fails(product_bet_files, monkeypatch):
+    async def fake_provider_events(provider: str, *, days: int = 1, limit: int = 20, calendar_id: str = "") -> dict:
+        raise ValueError("provider unavailable")
+
+    async def fake_local_events(days: int = 1) -> str:
+        return f"local-events:{days}"
+
+    monkeypatch.setattr(calendar_oauth, "list_events", fake_provider_events)
+    monkeypatch.setattr(calendar_email, "get_upcoming_events", fake_local_events)
+    workflow = workflows.create_workflow(
+        name="Fallback calendar",
+        actions=[{"type": "calendar_brief", "title": "Calendar", "provider": "outlook", "days": 2}],
+    )
+
+    run = await workflows.run_workflow(workflow["id"])
+
+    assert run is not None
+    response = run["action_results"][0]["response"]
+    assert "Outlook calendar unavailable" in response
+    assert "local-events:2" in response
+
+
+@pytest.mark.asyncio
 async def test_workflow_notification_action_executes_tool(product_bet_files, monkeypatch):
     async def fake_notification(title: str, message: str) -> str:
         return f"notified:{title}:{message}"
@@ -268,3 +329,61 @@ async def test_calendar_event_action_requires_approval_by_default(product_bet_fi
 
     assert approved_run is not None
     assert approved_run["action_results"][0]["response"] == "created:Planning"
+
+
+@pytest.mark.asyncio
+async def test_provider_calendar_event_respects_policy_and_writes_when_allowed(product_bet_files, monkeypatch):
+    calls: list[dict] = []
+
+    async def fake_provider_create(provider: str, **kwargs) -> dict:
+        calls.append({"provider": provider, **kwargs})
+        return {"provider": provider, "event": {"id": "evt-1", "title": kwargs["title"]}}
+
+    monkeypatch.setattr(calendar_oauth, "create_event", fake_provider_create)
+    calendar_accounts.upsert_connection(provider="google", account_label="Work", enabled=True, status="connected")
+
+    blocked = workflows.create_workflow(
+        name="Blocked provider write",
+        actions=[{
+            "type": "create_calendar_event",
+            "title": "Planning",
+            "provider": "google",
+            "start": "2026-05-20T09:00:00",
+            "end": "2026-05-20T09:30:00",
+            "requires_approval": False,
+        }],
+    )
+
+    blocked_run = await workflows.run_workflow(blocked["id"])
+
+    assert blocked_run is not None
+    assert "Auto-create is disabled" in blocked_run["action_results"][0]["response"]
+    assert calls == []
+
+    calendar_accounts.update_policy({
+        "auto_create_events": True,
+        "require_confirmation_for_guests": False,
+        "timezone": "America/Chicago",
+    })
+    allowed = workflows.create_workflow(
+        name="Allowed provider write",
+        actions=[{
+            "type": "create_calendar_event",
+            "title": "Planning",
+            "provider": "google",
+            "calendar_id": "team-calendar",
+            "start": "2026-05-20T09:00:00",
+            "end": "2026-05-20T09:30:00",
+            "attendees": ["person@example.com"],
+            "requires_approval": False,
+        }],
+    )
+
+    allowed_run = await workflows.run_workflow(allowed["id"])
+
+    assert allowed_run is not None
+    assert allowed_run["action_results"][0]["response"] == "Created Google calendar event: Planning"
+    assert calls[0]["provider"] == "google"
+    assert calls[0]["calendar_id"] == "team-calendar"
+    assert calls[0]["timezone"] == "America/Chicago"
+    assert calls[0]["attendees"] == ["person@example.com"]

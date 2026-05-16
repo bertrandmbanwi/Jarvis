@@ -7,7 +7,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -281,7 +281,7 @@ async def get_access_token(provider: str) -> str:
     return str(token["access_token"])
 
 
-async def list_events(provider: str, *, days: int = 1, limit: int = 20) -> dict[str, Any]:
+async def list_events(provider: str, *, days: int = 1, limit: int = 20, calendar_id: str = "") -> dict[str, Any]:
     """Read events from Google Calendar or Outlook via OAuth."""
     config = _provider(provider)
     token = await get_access_token(config.key)
@@ -293,8 +293,9 @@ async def list_events(provider: str, *, days: int = 1, limit: int = 20) -> dict[
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         if config.key == "google":
+            google_calendar = quote(calendar_id.strip() or "primary", safe="")
             response = await client.get(
-                f"{config.api_base_url}/calendars/primary/events",
+                f"{config.api_base_url}/calendars/{google_calendar}/events",
                 headers=headers,
                 params={
                     "timeMin": _iso_z(start),
@@ -305,8 +306,10 @@ async def list_events(provider: str, *, days: int = 1, limit: int = 20) -> dict[
                 },
             )
         else:
+            outlook_calendar = calendar_id.strip()
+            outlook_path = f"/me/calendars/{quote(outlook_calendar, safe='')}/calendarView" if outlook_calendar else "/me/calendarView"
             response = await client.get(
-                f"{config.api_base_url}/me/calendarView",
+                f"{config.api_base_url}{outlook_path}",
                 headers=headers,
                 params={
                     "startDateTime": start.isoformat(),
@@ -331,21 +334,31 @@ async def create_event(
     timezone: str = "UTC",
     location: str = "",
     notes: str = "",
+    attendees: list[str] | None = None,
+    calendar_id: str = "",
 ) -> dict[str, Any]:
     """Create a provider calendar event. Caller is responsible for approval policy."""
     config = _provider(provider)
     token = await get_access_token(config.key)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    attendees = [item.strip() for item in (attendees or []) if item.strip()]
     async with httpx.AsyncClient(timeout=20.0) as client:
         if config.key == "google":
-            body = {
+            body: dict[str, Any] = {
                 "summary": title,
                 "description": notes,
                 "location": location,
                 "start": {"dateTime": start, "timeZone": timezone},
                 "end": {"dateTime": end, "timeZone": timezone},
             }
-            response = await client.post(f"{config.api_base_url}/calendars/primary/events", headers=headers, json=body)
+            if attendees:
+                body["attendees"] = [{"email": email} for email in attendees]
+            google_calendar = quote(calendar_id.strip() or "primary", safe="")
+            response = await client.post(
+                f"{config.api_base_url}/calendars/{google_calendar}/events",
+                headers=headers,
+                json=body,
+            )
         else:
             body = {
                 "subject": title,
@@ -354,7 +367,13 @@ async def create_event(
                 "start": {"dateTime": start, "timeZone": timezone},
                 "end": {"dateTime": end, "timeZone": timezone},
             }
-            response = await client.post(f"{config.api_base_url}/me/events", headers=headers, json=body)
+            if attendees:
+                body["attendees"] = [
+                    {"emailAddress": {"address": email}, "type": "required"} for email in attendees
+                ]
+            outlook_calendar = calendar_id.strip()
+            outlook_path = f"/me/calendars/{quote(outlook_calendar, safe='')}/events" if outlook_calendar else "/me/events"
+            response = await client.post(f"{config.api_base_url}{outlook_path}", headers=headers, json=body)
         response.raise_for_status()
         event = response.json()
     return {"provider": config.key, "event": _normalize_event(config.key, event)}
