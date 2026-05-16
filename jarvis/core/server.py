@@ -41,13 +41,23 @@ _overlay_text: str = ""  # latest assistant response text for overlay display
 _overlay_user_text: str = ""  # latest user utterance for overlay display
 
 
-async def broadcast_overlay_state(new_state: str, text: str | None = None, user_text: str | None = None):
+async def broadcast_overlay_state(
+    new_state: str,
+    text: str | None = None,
+    user_text: str | None = None,
+    amplitude_envelope: list[float] | None = None,
+    audio_duration: float = 0.0,
+    voice_speaking: bool | None = None,
+):
     """Broadcast state change to all connected desktop overlay clients.
 
     Args:
         new_state: One of idle, listening, thinking, speaking.
         text: Optional assistant response text to display on the overlay.
         user_text: Optional user utterance to display on the overlay.
+        amplitude_envelope: Optional normalized TTS amplitude samples.
+        audio_duration: Duration in seconds for the amplitude envelope.
+        voice_speaking: Whether voice playback is currently active.
     """
     global _overlay_state, _overlay_text, _overlay_user_text
     _overlay_state = new_state
@@ -57,7 +67,12 @@ async def broadcast_overlay_state(new_state: str, text: str | None = None, user_
         _overlay_user_text = user_text
     if not _overlay_clients:
         return
-    payload = {"state": new_state, "text": _overlay_text, "userText": _overlay_user_text}
+    payload: dict = {"state": new_state, "text": _overlay_text, "userText": _overlay_user_text}
+    if voice_speaking is not None:
+        payload["voiceSpeaking"] = voice_speaking
+    if amplitude_envelope and audio_duration > 0:
+        payload["amplitudeEnvelope"] = amplitude_envelope
+        payload["audioDuration"] = audio_duration
     dead = []
     for ws in _overlay_clients:
         try:
@@ -293,6 +308,13 @@ async def broadcast_voice_state(
       2. Terminal-originated (target_ws=None): audio to all clients that
          registered with wants_audio=True (respects per-device preferences)
     """
+    await broadcast_overlay_state(
+        "speaking" if speaking else "idle",
+        amplitude_envelope=amplitude_envelope if speaking else None,
+        audio_duration=audio_duration if speaking else 0.0,
+        voice_speaking=speaking,
+    )
+
     if not ws_manager.active:
         return
 
@@ -364,6 +386,14 @@ async def broadcast_voice_chunk(
         target_ws: send only to this client (browser-originated), or all if None
         audio_format: MIME type of the audio (e.g., "audio/wav", "audio/webm;codecs=opus")
     """
+    if chunk_envelope and chunk_duration > 0:
+        await broadcast_overlay_state(
+            "speaking",
+            amplitude_envelope=chunk_envelope,
+            audio_duration=chunk_duration,
+            voice_speaking=True,
+        )
+
     if not ws_manager.active:
         return
 
@@ -1341,13 +1371,15 @@ async def websocket_chat(websocket: WebSocket):
                     _speaker.stop_speaking()
                 await ws_manager.broadcast_json({"voice_stop": True})
                 await broadcast_voice_state(False)
+                await broadcast_overlay_state("idle")
                 if _listener and _listener._is_speaking:
                     _listener.set_speaking(False, open_followup=False)
                 continue
 
             if "browser_mic" in data:
+                recording = data["browser_mic"]
+                await broadcast_overlay_state("listening" if recording else "idle")
                 if _listener:
-                    recording = data["browser_mic"]
                     _listener.set_speaking(recording, open_followup=False)
                     logger.info("Browser mic %s, terminal listener %s",
                                 "started" if recording else "stopped",
@@ -1365,6 +1397,8 @@ async def websocket_chat(websocket: WebSocket):
             if len(message) > 50000:
                 await websocket.send_json({"error": "Message too long (max 50,000 characters)"})
                 continue
+
+            await broadcast_overlay_state("thinking", user_text=message)
 
             if _listener:
                 _listener.set_speaking(True)
@@ -1387,6 +1421,7 @@ async def websocket_chat(websocket: WebSocket):
             })
 
             if _speaker and complete.strip():
+                await broadcast_overlay_state("speaking", text=complete, user_text=message)
                 try:
                     requesting_ws = websocket
 
@@ -1412,9 +1447,13 @@ async def websocket_chat(websocket: WebSocket):
                         skip_local_playback=True,
                     )
                     await broadcast_voice_state(False)
+                    await broadcast_overlay_state("idle")
                 except Exception as e:
                     logger.error("TTS failed for browser message: %s", e)
                     await broadcast_voice_state(False)
+                    await broadcast_overlay_state("idle")
+            else:
+                await broadcast_overlay_state("idle", text=complete, user_text=message)
 
             if _listener:
                 _listener.set_speaking(False, open_followup=False)
