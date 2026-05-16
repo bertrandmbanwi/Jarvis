@@ -40,3 +40,4 @@ pycookiecheat>=0.8.0
 # Utilities
 python-dotenv>=1.0.0
 pyyaml>=6.0.0
+keyring>=25.0.0

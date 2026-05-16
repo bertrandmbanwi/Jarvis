@@ -1,5 +1,6 @@
 """JARVIS configuration with environment variable overrides."""
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 JARVIS_HOME = Path(__file__).parent.parent.parent
@@ -20,7 +21,16 @@ if _dotenv_path.exists():
         load_dotenv(_dotenv_path)
     except ImportError:
         pass
+
+_secret_lookup: Callable[[str], str] | None
+try:
+    from jarvis.core.secrets import get_secret as _secret_lookup
+except Exception:
+    _secret_lookup = None
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+if not ANTHROPIC_API_KEY and _secret_lookup is not None:
+    ANTHROPIC_API_KEY = _secret_lookup("ANTHROPIC_API_KEY")
 
 CLAUDE_FAST_MODEL = os.getenv("CLAUDE_FAST_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE_BRAIN_MODEL = os.getenv("CLAUDE_BRAIN_MODEL", "claude-sonnet-4-6")

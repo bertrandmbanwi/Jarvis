@@ -16,10 +16,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from jarvis.config import settings
-from jarvis.core import auth, cost_tracker
+from jarvis.core import auth, cost_tracker, jobs
 from jarvis.core import profile as user_profile
 from jarvis.core.brain import JarvisBrain
+from jarvis.core.permissions import TOOL_PERMISSIONS, list_tool_audit, summarize_permissions
 from jarvis.core.settings_api import settings_router
+from jarvis.core.tracing import get_trace_id, record_event, reset_trace_id, set_trace_id, trace_span
 from jarvis.tools import chrome_extension
 
 logger = logging.getLogger("jarvis.server")
@@ -458,6 +460,7 @@ async def lifespan(app: FastAPI):
     import signal
 
     logger.info("Starting JARVIS server...")
+    jobs.init_jobs_db()
     success = await brain.initialize()
     if not success:
         logger.warning(
@@ -515,8 +518,22 @@ app.add_middleware(
     allow_origin_regex=r"https://.*\.trycloudflare\.com",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["authorization", "content-type", "x-requested-with", "x-jarvis-client"],
+    allow_headers=["authorization", "content-type", "x-requested-with", "x-jarvis-client", "x-trace-id"],
 )
+
+
+@app.middleware("http")
+async def tracing_middleware(request: Request, call_next):
+    """Attach a trace ID to every HTTP request and response."""
+    incoming_trace_id = request.headers.get("x-trace-id", "")
+    token = set_trace_id(incoming_trace_id or None)
+    try:
+        with trace_span("http.request", method=request.method, path=request.url.path):
+            response = await call_next(request)
+        response.headers["X-Trace-ID"] = get_trace_id()
+        return response
+    finally:
+        reset_trace_id(token)
 
 
 @app.middleware("http")
@@ -708,6 +725,11 @@ class ChatRequest(BaseModel):
     tier: str = ""
 
 
+class JobRequest(BaseModel):
+    message: str
+    kind: str = "chat"
+
+
 class ChatResponse(BaseModel):
     response: str
     elapsed_ms: float
@@ -724,6 +746,47 @@ class StatusResponse(BaseModel):
     memory_stats: dict
     conversation_turns: int
     session_cost: dict
+
+
+def _serialize_job(job: jobs.JobRecord) -> dict:
+    return {
+        "id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "payload": job.payload,
+        "result": job.result,
+        "error": job.error,
+        "trace_id": job.trace_id,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "started_at": job.started_at,
+        "completed_at": job.completed_at,
+    }
+
+
+async def _run_chat_job(job_id: str, message: str) -> None:
+    job = jobs.get_job(job_id)
+    if job is None or job.status == jobs.JobStatus.CANCELLED.value:
+        return
+
+    token = set_trace_id(job.trace_id)
+    try:
+        jobs.mark_running(job_id)
+        record_event("job.started", job_id=job_id, kind=job.kind)
+        with trace_span("job.chat", job_id=job_id):
+            result = await brain.process(message)
+        latest = jobs.get_job(job_id)
+        if latest is not None and latest.status == jobs.JobStatus.CANCELLED.value:
+            record_event("job.cancelled", job_id=job_id)
+            return
+        jobs.mark_completed(job_id, result)
+        record_event("job.completed", job_id=job_id)
+    except Exception as exc:
+        logger.exception("Background job %s failed", job_id)
+        jobs.mark_failed(job_id, str(exc))
+        record_event("job.failed", job_id=job_id, error=str(exc))
+    finally:
+        reset_trace_id(token)
 
 
 _start_time = time.time()
@@ -770,6 +833,49 @@ async def chat(request: ChatRequest):
     )
 
 
+@app.post("/jobs", dependencies=[Depends(require_auth)])
+async def create_background_job(request: JobRequest):
+    """Queue a durable background chat job and return immediately."""
+    if request.kind != "chat":
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Only kind='chat' background jobs are supported right now."},
+        )
+    if len(request.message) > 50000:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Message too long (max 50,000 characters)."},
+        )
+    job = jobs.create_job(request.kind, {"message": request.message}, trace_id=get_trace_id())
+    asyncio.create_task(_run_chat_job(job.id, request.message))
+    return _serialize_job(job)
+
+
+@app.get("/jobs", dependencies=[Depends(require_auth)])
+async def list_background_jobs(limit: int = 50, status: str = ""):
+    """List durable background jobs."""
+    records = jobs.list_jobs(limit=limit, status=status)
+    return {"jobs": [_serialize_job(job) for job in records], "count": len(records)}
+
+
+@app.get("/jobs/{job_id}", dependencies=[Depends(require_auth)])
+async def get_background_job(job_id: str):
+    """Get one durable background job."""
+    job = jobs.get_job(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "Job not found."})
+    return _serialize_job(job)
+
+
+@app.post("/jobs/{job_id}/cancel", dependencies=[Depends(require_auth)])
+async def cancel_background_job(job_id: str):
+    """Cancel a queued/running durable background job."""
+    job = jobs.cancel_job(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "Job not found."})
+    return _serialize_job(job)
+
+
 @app.post("/clear", dependencies=[Depends(require_auth)])
 async def clear_conversation():
     """Clear the current conversation."""
@@ -802,6 +908,7 @@ async def health():
         "hardening": get_health_report(),
         "perf_summary": perf_tracker.get_summary_line(),
         "cache": tool_cache.get_stats(),
+        "jobs": {"recent": len(jobs.list_jobs(limit=10))},
     }
 
 
@@ -953,6 +1060,30 @@ async def get_tool_reliability():
         "tools": brain.learning.get_tool_reliability_report(),
         "unreliable": brain.learning.get_unreliable_tools(),
     }
+
+
+@app.get("/tools/permissions", dependencies=[Depends(require_auth)])
+async def get_tool_permissions():
+    """Get the formal permission catalog for all registered tools."""
+    return {
+        "summary": summarize_permissions(),
+        "tools": {
+            name: {
+                "capabilities": sorted(capability.value for capability in permission.capabilities),
+                "risk": permission.risk.value,
+                "requires_confirmation": permission.requires_confirmation,
+                "reason": permission.reason,
+            }
+            for name, permission in sorted(TOOL_PERMISSIONS.items())
+        },
+    }
+
+
+@app.get("/tools/audit", dependencies=[Depends(require_auth)])
+async def get_tool_audit(limit: int = 50):
+    """Get recent redacted tool audit rows."""
+    rows = list_tool_audit(limit=limit)
+    return {"audit": rows, "count": len(rows)}
 
 
 @app.get("/learning/failures", dependencies=[Depends(require_auth)])
