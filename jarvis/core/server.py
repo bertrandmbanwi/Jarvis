@@ -649,11 +649,14 @@ class SetPinRequest(BaseModel):
 
 
 async def require_auth(request: Request) -> bool:
-    """FastAPI dependency for PIN auth. Local connections bypass auth.
+    """FastAPI dependency for optional PIN auth. Local connections bypass auth.
 
     Remote connections require valid session token via header, cookie, or query param.
     """
     client_host = request.client.host if request.client else ""
+
+    if not auth.pin_auth_enabled():
+        return True
 
     if auth.is_local_request(client_host):
         return True
@@ -689,6 +692,10 @@ async def auth_login(request: Request, body: PinRequest):
     This endpoint is always accessible (no auth required).
     Rate-limited by client IP.
     """
+    if not auth.pin_auth_enabled():
+        # The token key is part of the public auth API response, not a secret.
+        return {"token": None, "expires_in": 0, "auth_required": False}  # nosec B105
+
     client_host = request.client.host if request.client else ""
     token = auth.verify_pin(body.pin, client_ip=client_host)
 
@@ -715,8 +722,15 @@ async def auth_status(request: Request):
     """Check whether the current request is authenticated."""
     client_host = request.client.host if request.client else ""
 
+    if not auth.pin_auth_enabled():
+        return {
+            "authenticated": True,
+            "local": auth.is_local_request(client_host),
+            "auth_required": False,
+        }
+
     if auth.is_local_request(client_host):
-        return {"authenticated": True, "local": True}
+        return {"authenticated": True, "local": True, "auth_required": True}
 
     for token_source in [
         request.headers.get("authorization", "").removeprefix("Bearer "),
@@ -724,9 +738,9 @@ async def auth_status(request: Request):
         request.query_params.get("token", ""),
     ]:
         if token_source and auth.validate_token(token_source):
-            return {"authenticated": True, "local": False}
+            return {"authenticated": True, "local": False, "auth_required": True}
 
-    return {"authenticated": False, "local": False}
+    return {"authenticated": False, "local": False, "auth_required": True}
 
 
 @app.post("/auth/logout")
@@ -741,7 +755,12 @@ async def auth_logout(request: Request):
         if token_source:
             auth.revoke_token(token_source)
 
-    response = JSONResponse(content={"status": "logged out"})
+    response = JSONResponse(
+        content={
+            "status": "logged out",
+            "auth_required": auth.pin_auth_enabled(),
+        },
+    )
     response.delete_cookie("jarvis_token")
     return response
 
@@ -749,6 +768,14 @@ async def auth_logout(request: Request):
 @app.post("/auth/set-pin", dependencies=[Depends(require_auth)])
 async def auth_set_pin(request: Request, body: SetPinRequest):
     """Change the PIN. Requires current PIN verification first."""
+    if not auth.pin_auth_enabled():
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "PIN authentication is disabled. Set JARVIS_PIN_AUTH_ENABLED=true to manage a PIN.",
+            },
+        )
+
     client_host = request.client.host if request.client else ""
 
     token = auth.verify_pin(body.current_pin, client_ip=client_host)
@@ -2429,7 +2456,7 @@ async def websocket_chat(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else ""
     is_local = auth.is_local_request(client_host)
 
-    if not is_local:
+    if not is_local and auth.pin_auth_enabled():
         ws_token = websocket.query_params.get("token", "")
         if not ws_token or not auth.validate_token(ws_token):
             await websocket.close(code=4001, reason="Authentication required")
@@ -2570,7 +2597,7 @@ async def websocket_extension(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else ""
     is_local = auth.is_local_request(client_host)
 
-    if not is_local:
+    if not is_local and auth.pin_auth_enabled():
         ws_token = websocket.query_params.get("token", "")
         if not ws_token or not auth.validate_token(ws_token):
             await websocket.close(code=4001, reason="Authentication required")
