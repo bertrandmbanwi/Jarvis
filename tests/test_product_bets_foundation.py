@@ -1,9 +1,10 @@
 """Tests for workflow, team, and calendar product-bet foundations."""
 from datetime import datetime
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from jarvis.core import calendar_accounts, team, workflow_scheduler, workflows
+from jarvis.core import calendar_accounts, calendar_oauth, team, workflow_scheduler, workflows
 from jarvis.tools import calendar_email, mac_control
 
 
@@ -13,6 +14,15 @@ def product_bet_files(tmp_path, monkeypatch):
     monkeypatch.setattr(workflows, "WORKFLOW_RUNS_FILE", tmp_path / "workflow_runs.json")
     monkeypatch.setattr(team, "TEAM_FILE", tmp_path / "team.json")
     monkeypatch.setattr(calendar_accounts, "CALENDAR_STATE_FILE", tmp_path / "calendar_state.json")
+
+
+@pytest.fixture
+def fake_calendar_secrets(monkeypatch):
+    store: dict[str, str] = {}
+    monkeypatch.setattr(calendar_oauth, "set_secret", lambda name, value: store.__setitem__(name, value))
+    monkeypatch.setattr(calendar_oauth, "get_secret", lambda name: store.get(name, ""))
+    monkeypatch.setattr(calendar_oauth, "delete_secret", lambda name: store.pop(name, None))
+    return store
 
 
 @pytest.mark.asyncio
@@ -86,6 +96,80 @@ def test_calendar_policy_blocks_auto_schedule_until_connected(product_bet_files)
         provider="google",
     )
     assert assessment["can_auto_schedule"] is True
+
+
+def test_calendar_oauth_builds_authorization_url(product_bet_files, fake_calendar_secrets):
+    status = calendar_oauth.save_credentials("google", "google-client", "google-secret")
+
+    assert status["configured"] is True
+
+    result = calendar_oauth.build_authorization_url("google", redirect_uri="http://localhost/callback")
+    query = parse_qs(urlparse(result["authorization_url"]).query)
+
+    assert query["client_id"] == ["google-client"]
+    assert query["redirect_uri"] == ["http://localhost/callback"]
+    assert query["response_type"] == ["code"]
+    assert result["state"]
+    assert calendar_accounts.get_state()["connections"][0]["client_id_configured"] is True
+    assert "client_id" not in calendar_accounts.get_state()["connections"][0]
+
+
+@pytest.mark.asyncio
+async def test_calendar_oauth_exchange_and_list_events(product_bet_files, fake_calendar_secrets, monkeypatch):
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data=None, json=None, headers=None):
+            return FakeResponse({
+                "access_token": "access",
+                "refresh_token": "refresh",
+                "expires_in": 3600,
+                "scope": "https://www.googleapis.com/auth/calendar.events",
+            })
+
+        async def get(self, url, headers=None, params=None):
+            return FakeResponse({
+                "items": [
+                    {
+                        "id": "evt-1",
+                        "summary": "Planning",
+                        "start": {"dateTime": "2026-05-18T10:00:00Z"},
+                        "end": {"dateTime": "2026-05-18T10:30:00Z"},
+                        "htmlLink": "https://calendar.google.com/event",
+                    }
+                ]
+            })
+
+    monkeypatch.setattr(calendar_oauth.httpx, "AsyncClient", FakeClient)
+    calendar_oauth.save_credentials("google", "google-client", "google-secret")
+    auth = calendar_oauth.build_authorization_url("google", redirect_uri="http://localhost/callback")
+
+    status = await calendar_oauth.exchange_code("google", code="oauth-code", state=auth["state"])
+
+    assert status["connected"] is True
+    assert status["status"] == "connected"
+
+    events = await calendar_oauth.list_events("google", days=1)
+
+    assert events["count"] == 1
+    assert events["events"][0]["title"] == "Planning"
 
 
 @pytest.mark.asyncio

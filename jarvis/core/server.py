@@ -21,6 +21,7 @@ from jarvis.core import (
     anthropic_batch,
     auth,
     calendar_accounts,
+    calendar_oauth,
     cost_tracker,
     feedback,
     jobs,
@@ -875,6 +876,24 @@ class CalendarConnectionRequest(BaseModel):
     scopes: list[str] = []
 
 
+class CalendarOAuthCredentialsRequest(BaseModel):
+    client_id: str
+    client_secret: str = ""
+
+
+class CalendarOAuthStartRequest(BaseModel):
+    redirect_uri: str = ""
+
+
+class CalendarProviderEventsRequest(BaseModel):
+    title: str
+    start: str
+    end: str
+    timezone: str = "UTC"
+    location: str = ""
+    notes: str = ""
+
+
 class CalendarPolicyRequest(BaseModel):
     timezone: str | None = None
     working_hours: dict[str, Any] | None = None
@@ -1650,6 +1669,101 @@ async def delete_calendar_connection(provider: str):
     if not calendar_accounts.remove_connection(provider):
         return JSONResponse(status_code=404, content={"error": "Calendar connection not found."})
     return {"status": "deleted"}
+
+
+@app.get("/calendar/oauth/{provider}/status", dependencies=[Depends(require_auth)])
+async def get_calendar_oauth_status(provider: str):
+    """Get OAuth configuration and token status for a provider."""
+    try:
+        return calendar_oauth.get_provider_status(provider)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.put("/calendar/oauth/{provider}/credentials", dependencies=[Depends(require_auth)])
+async def save_calendar_oauth_credentials(provider: str, request: CalendarOAuthCredentialsRequest):
+    """Save OAuth app credentials for Google or Outlook Calendar."""
+    try:
+        return calendar_oauth.save_credentials(provider, request.client_id, request.client_secret)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.delete("/calendar/oauth/{provider}/credentials", dependencies=[Depends(require_auth)])
+async def delete_calendar_oauth_credentials(provider: str):
+    """Remove OAuth app credentials for a provider."""
+    try:
+        return calendar_oauth.delete_credentials(provider)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.post("/calendar/oauth/{provider}/start", dependencies=[Depends(require_auth)])
+async def start_calendar_oauth(provider: str, request: CalendarOAuthStartRequest):
+    """Build a provider OAuth authorization URL."""
+    try:
+        return calendar_oauth.build_authorization_url(provider, redirect_uri=request.redirect_uri)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.get("/calendar/oauth/{provider}/callback", dependencies=[Depends(require_auth)])
+async def calendar_oauth_callback(provider: str, code: str = "", state: str = "", error: str = ""):
+    """OAuth redirect callback for Google or Outlook Calendar."""
+    if error:
+        calendar_accounts.mark_connection_error(provider, error)
+        return JSONResponse(status_code=400, content={"error": error})
+    if not code or not state:
+        return JSONResponse(status_code=400, content={"error": "OAuth callback requires code and state."})
+    try:
+        status = await calendar_oauth.exchange_code(provider, code=code, state=state)
+        return {"status": "connected", "provider": provider, "connection": status}
+    except Exception as exc:
+        calendar_accounts.mark_connection_error(provider, str(exc))
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.post("/calendar/oauth/{provider}/disconnect", dependencies=[Depends(require_auth)])
+async def disconnect_calendar_oauth(provider: str):
+    """Disconnect a provider calendar account."""
+    try:
+        return calendar_oauth.disconnect(provider)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.get("/calendar/providers/{provider}/events", dependencies=[Depends(require_auth)])
+async def list_provider_events(provider: str, days: int = 1, limit: int = 20):
+    """List events from an OAuth-backed calendar provider."""
+    try:
+        return await calendar_oauth.list_events(provider, days=days, limit=limit)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.post("/calendar/providers/{provider}/events", dependencies=[Depends(require_auth)])
+async def create_provider_event(provider: str, request: CalendarProviderEventsRequest):
+    """Create an event through an OAuth-backed calendar provider."""
+    assessment = calendar_accounts.assess_scheduling_request(
+        title=request.title,
+        start=request.start,
+        end=request.end,
+        provider=provider,
+    )
+    if assessment["requires_confirmation"]:
+        return JSONResponse(status_code=409, content={"error": "Scheduling requires confirmation.", "assessment": assessment})
+    try:
+        return await calendar_oauth.create_event(
+            provider,
+            title=request.title,
+            start=request.start,
+            end=request.end,
+            timezone=request.timezone,
+            location=request.location,
+            notes=request.notes,
+        )
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
 @app.put("/calendar/policy", dependencies=[Depends(require_auth)])

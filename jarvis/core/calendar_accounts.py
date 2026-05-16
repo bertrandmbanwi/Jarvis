@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import time
 from contextlib import suppress
 from typing import Any
@@ -83,7 +84,16 @@ def list_provider_templates() -> dict[str, dict[str, Any]]:
 
 
 def get_state() -> dict[str, Any]:
-    state = _load()
+    state = dict(_load())
+    state.pop("oauth_states", None)
+    sanitized_connections = []
+    for item in state.get("connections", []):
+        if not isinstance(item, dict):
+            continue
+        sanitized = dict(item)
+        sanitized["client_id_configured"] = bool(sanitized.pop("client_id", ""))
+        sanitized_connections.append(sanitized)
+    state["connections"] = sanitized_connections
     state["providers"] = list_provider_templates()
     return state
 
@@ -104,11 +114,14 @@ def upsert_connection(
     if provider_key not in PROVIDER_TEMPLATES:
         return None
     state = _load()
-    connections = list(state.get("connections", []))
+    connections: list[dict[str, Any]] = [
+        dict(item) for item in state.get("connections", []) if isinstance(item, dict)
+    ]
     now = _now()
     normalized_status = status if status in {"not_connected", "connected", "needs_auth", "error"} else "not_connected"
     requested_scopes = scopes or PROVIDER_TEMPLATES[provider_key]["scopes"]
 
+    existing = next((item for item in connections if item.get("provider") == provider_key), {})
     connection = {
         "provider": provider_key,
         "name": PROVIDER_TEMPLATES[provider_key]["name"],
@@ -118,6 +131,9 @@ def upsert_connection(
         "scopes": list(requested_scopes),
         "updated_at": now,
     }
+    for key in ("client_id", "token_expires_at", "last_error"):
+        if key in existing:
+            connection[key] = existing[key]
 
     for index, item in enumerate(connections):
         if item.get("provider") == provider_key:
@@ -128,6 +144,48 @@ def upsert_connection(
         connection["created_at"] = now
         connections.append(connection)
 
+    state["connections"] = connections
+    state["updated_at"] = now
+    _save(state)
+    return connection
+
+
+def update_connection(provider: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+    """Patch connection metadata without exposing stored OAuth tokens."""
+    provider_key = provider.strip().lower()
+    if provider_key not in PROVIDER_TEMPLATES:
+        return None
+    state = _load()
+    connections: list[dict[str, Any]] = [
+        dict(item) for item in state.get("connections", []) if isinstance(item, dict)
+    ]
+    now = _now()
+    for item in connections:
+        if item.get("provider") != provider_key:
+            continue
+        item.update(updates)
+        item["provider"] = provider_key
+        item["name"] = PROVIDER_TEMPLATES[provider_key]["name"]
+        item["updated_at"] = now
+        state["connections"] = connections
+        state["updated_at"] = now
+        _save(state)
+        return item
+
+    connection = {
+        "provider": provider_key,
+        "name": PROVIDER_TEMPLATES[provider_key]["name"],
+        "account_label": _clean(updates.get("account_label", ""), 180),
+        "enabled": bool(updates.get("enabled", False)),
+        "status": str(updates.get("status", "not_connected")),
+        "scopes": list(updates.get("scopes") or PROVIDER_TEMPLATES[provider_key]["scopes"]),
+        "created_at": now,
+        "updated_at": now,
+    }
+    for key in ("client_id", "token_expires_at", "last_error"):
+        if key in updates:
+            connection[key] = updates[key]
+    connections.append(connection)
     state["connections"] = connections
     state["updated_at"] = now
     _save(state)
@@ -145,6 +203,98 @@ def remove_connection(provider: str) -> bool:
     state["updated_at"] = _now()
     _save(state)
     return True
+
+
+def create_oauth_state(provider: str, redirect_uri: str) -> str | None:
+    provider_key = provider.strip().lower()
+    if provider_key not in PROVIDER_TEMPLATES:
+        return None
+    state = _load()
+    now = _now()
+    oauth_state = secrets.token_urlsafe(32)
+    states = [
+        item for item in state.get("oauth_states", [])
+        if isinstance(item, dict) and float(item.get("expires_at", 0) or 0) > now
+    ]
+    states.append({
+        "provider": provider_key,
+        "state": oauth_state,
+        "redirect_uri": _clean(redirect_uri, 500),
+        "created_at": now,
+        "expires_at": now + 600,
+    })
+    state["oauth_states"] = states[-20:]
+    state["updated_at"] = now
+    _save(state)
+    return oauth_state
+
+
+def consume_oauth_state(provider: str, state_value: str) -> dict[str, Any] | None:
+    provider_key = provider.strip().lower()
+    state = _load()
+    now = _now()
+    kept: list[dict[str, Any]] = []
+    match: dict[str, Any] | None = None
+    for item in state.get("oauth_states", []):
+        if not isinstance(item, dict) or float(item.get("expires_at", 0) or 0) <= now:
+            continue
+        if item.get("provider") == provider_key and item.get("state") == state_value and match is None:
+            match = item
+            continue
+        kept.append(item)
+    state["oauth_states"] = kept
+    state["updated_at"] = now
+    _save(state)
+    return match
+
+
+def mark_oauth_connected(
+    provider: str,
+    *,
+    account_label: str = "",
+    scopes: list[str] | None = None,
+    token_expires_at: float = 0.0,
+) -> dict[str, Any] | None:
+    provider_key = provider.strip().lower()
+    connection = upsert_connection(
+        provider=provider_key,
+        account_label=account_label or provider_key,
+        enabled=True,
+        status="connected",
+        scopes=scopes,
+    )
+    if connection is None:
+        return None
+
+    state = _load()
+    connections = list(state.get("connections", []))
+    for item in connections:
+        if item.get("provider") == provider_key:
+            item["token_expires_at"] = token_expires_at
+            item["last_error"] = ""
+            item["updated_at"] = _now()
+            break
+    state["connections"] = connections
+    state["updated_at"] = _now()
+    _save(state)
+    return next((item for item in connections if item.get("provider") == provider_key), connection)
+
+
+def mark_connection_error(provider: str, error: str) -> dict[str, Any] | None:
+    provider_key = provider.strip().lower()
+    connection = update_connection(provider_key, {"status": "error"})
+    state = _load()
+    connections = list(state.get("connections", []))
+    for item in connections:
+        if item.get("provider") == provider_key:
+            item["last_error"] = _clean(error, 500)
+            item["updated_at"] = _now()
+            connection = item
+            break
+    state["connections"] = connections
+    state["updated_at"] = _now()
+    _save(state)
+    return connection
 
 
 def update_policy(updates: dict[str, Any]) -> dict[str, Any]:
