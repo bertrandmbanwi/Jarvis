@@ -849,6 +849,9 @@ class WorkflowRequest(BaseModel):
     actor_id: str = "local-owner"
     version_note: str = ""
     active_release_channel: str | None = None
+    base_version: int | None = None
+    edit_session_id: str = ""
+    conflict_strategy: str = "reject"
 
 
 class WorkflowTemplateRequest(BaseModel):
@@ -865,6 +868,13 @@ class WorkflowRunRequest(BaseModel):
 
 class WorkflowReplayRequest(BaseModel):
     dry_run: bool = True
+
+
+class WorkflowEditPresenceRequest(BaseModel):
+    actor_id: str = "local-owner"
+    actor_name: str = ""
+    session_id: str = ""
+    ttl_seconds: int = 90
 
 
 class WorkflowAssertionRunRequest(BaseModel):
@@ -1438,6 +1448,57 @@ async def run_workflow_version_assertions(
     return {"result": result}
 
 
+@app.get("/workflows/{workflow_id}/presence", dependencies=[Depends(require_auth)])
+async def get_workflow_presence(workflow_id: str, actor_id: str = "", session_id: str = ""):
+    """Get active edit presence for one workflow."""
+    presence = workflows.get_workflow_presence(
+        workflow_id,
+        actor_id=actor_id,
+        current_session_id=session_id,
+    )
+    if presence is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    return presence
+
+
+@app.post("/workflows/{workflow_id}/presence", dependencies=[Depends(require_auth)])
+async def start_workflow_edit_presence(workflow_id: str, request: WorkflowEditPresenceRequest):
+    """Start or refresh an advisory workflow edit session."""
+    result = workflows.start_workflow_edit(
+        workflow_id,
+        actor_id=request.actor_id,
+        actor_name=request.actor_name,
+        session_id=request.session_id,
+        ttl_seconds=request.ttl_seconds,
+    )
+    if result is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    return result
+
+
+@app.post("/workflows/{workflow_id}/presence/{session_id}/heartbeat", dependencies=[Depends(require_auth)])
+async def heartbeat_workflow_edit_presence(workflow_id: str, session_id: str, request: WorkflowEditPresenceRequest):
+    """Refresh a workflow edit session lease."""
+    result = workflows.heartbeat_workflow_edit(
+        workflow_id,
+        session_id,
+        actor_id=request.actor_id,
+        ttl_seconds=request.ttl_seconds,
+    )
+    if result is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow edit session not found."})
+    return result
+
+
+@app.delete("/workflows/{workflow_id}/presence/{session_id}", dependencies=[Depends(require_auth)])
+async def end_workflow_edit_presence(workflow_id: str, session_id: str, actor_id: str = ""):
+    """End an advisory workflow edit session."""
+    if not workflows.end_workflow_edit(workflow_id, session_id, actor_id=actor_id):
+        return JSONResponse(status_code=404, content={"error": "Workflow edit session not found."})
+    presence = workflows.get_workflow_presence(workflow_id, actor_id=actor_id)
+    return {"status": "ended", "presence": presence}
+
+
 @app.post("/workflows/{workflow_id}/versions/{version_id}/restore", dependencies=[Depends(require_auth)])
 async def restore_workflow_version(workflow_id: str, version_id: str, request: WorkflowVersionRestoreRequest):
     """Restore a workflow from a version snapshot."""
@@ -1506,12 +1567,25 @@ async def update_workflow(workflow_id: str, request: WorkflowRequest):
     }
     if request.active_release_channel is not None:
         updates["active_release_channel"] = request.active_release_channel
-    workflow = workflows.update_workflow(
+    result = workflows.update_workflow_with_conflict_check(
         workflow_id,
         updates,
         actor_id=request.actor_id,
         note=request.version_note,
+        base_version=request.base_version,
+        edit_session_id=request.edit_session_id,
+        conflict_strategy=request.conflict_strategy,
     )
+    if result["status"] == "conflict":
+        conflict = dict(result.get("conflict") or {})
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": conflict.get("message") or "Workflow edit conflict.",
+                "conflict": conflict,
+            },
+        )
+    workflow = result.get("workflow")
     if workflow is None:
         return JSONResponse(status_code=404, content={"error": "Workflow not found."})
     return workflow
