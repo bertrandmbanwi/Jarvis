@@ -52,6 +52,7 @@ interface Workflow {
   enabled: boolean;
   tags?: string[];
   visibility?: string;
+  active_release_channel?: string;
   last_run_at?: number | null;
 }
 
@@ -73,6 +74,8 @@ interface WorkflowRun {
   id: string;
   workflow_id: string;
   workflow_name: string;
+  workflow_version?: number;
+  release_channel?: string;
   status: string;
   triggered_by: string;
   dry_run: boolean;
@@ -406,12 +409,34 @@ export default function ProductView({ authToken }: ProductViewProps) {
     await loadWorkflowVersions(restored);
   }
 
-  async function runWorkflow(id: string, dryRun: boolean) {
+  async function publishWorkflowVersion(workflowId: string, versionId: string) {
+    await api(`/workflows/${workflowId}/versions/${versionId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({
+        channel: "stable",
+        actor_id: "local-owner",
+        note: "Promoted from workflow history.",
+        activate: true,
+      }),
+    });
+    setMessage("Stable release promoted and activated.");
+    await loadData();
+    if (selectedWorkflowForHistory?.id === workflowId) {
+      await loadWorkflowVersions(selectedWorkflowForHistory);
+    }
+  }
+
+  async function runWorkflow(id: string, dryRun: boolean, releaseChannel?: string) {
+    const payload: { dry_run: boolean; release_channel?: string } = { dry_run: dryRun };
+    if (releaseChannel !== undefined) {
+      payload.release_channel = releaseChannel;
+    }
     const data = await api(`/workflows/${id}/run`, {
       method: "POST",
-      body: JSON.stringify({ dry_run: dryRun }),
+      body: JSON.stringify(payload),
     });
-    setMessage(dryRun ? "Dry run recorded." : `Workflow ran: ${data.run?.status || "complete"}.`);
+    const channel = data.run?.release_channel ? ` (${data.run.release_channel})` : "";
+    setMessage(dryRun ? `Dry run recorded${channel}.` : `Workflow ran${channel}: ${data.run?.status || "complete"}.`);
     if (data.run?.id) {
       setSelectedRun(data.run);
     }
@@ -703,6 +728,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                           <span className="text-sm text-jarvis-text/75 font-medium">{workflow.name}</span>
                           <span className="jarvis-badge">v{workflow.version || 1}</span>
                           <span className="jarvis-badge">{workflow.trigger?.type || "manual"}</span>
+                          {workflow.active_release_channel && <span className="jarvis-badge">{workflow.active_release_channel} pinned</span>}
                           {!workflow.enabled && <span className="jarvis-badge">disabled</span>}
                         </div>
                         <p className="text-xs text-jarvis-text-dim/55 mt-1 max-w-2xl">{workflow.description || workflow.actions?.[0]?.prompt}</p>
@@ -717,6 +743,11 @@ export default function ProductView({ authToken }: ProductViewProps) {
                         <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => runWorkflow(workflow.id, true)}>
                           Dry Run
                         </button>
+                        {workflow.active_release_channel && (
+                          <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => runWorkflow(workflow.id, true, "")}>
+                            Draft Dry
+                          </button>
+                        )}
                         <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => runWorkflow(workflow.id, false)}>
                           Run
                         </button>
@@ -761,6 +792,12 @@ export default function ProductView({ authToken }: ProductViewProps) {
                             Load
                           </button>
                           <button
+                            className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                            onClick={() => publishWorkflowVersion(version.workflow_id, version.id)}
+                          >
+                            Promote
+                          </button>
+                          <button
                             className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
                             onClick={() => restoreWorkflowVersion(version.workflow_id, version.id)}
                           >
@@ -784,7 +821,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                     <div>
                       <div className="text-xs text-jarvis-text/70">{run.workflow_name}</div>
                       <div className="text-2xs text-jarvis-text-dim/45 font-mono">
-                        {run.triggered_by} · {run.dry_run ? "dry" : "live"} · {new Date(run.started_at * 1000).toLocaleString()}
+                        {run.triggered_by} · {run.dry_run ? "dry" : "live"} · v{run.workflow_version || 1}{run.release_channel ? ` · ${run.release_channel}` : ""} · {new Date(run.started_at * 1000).toLocaleString()}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -806,7 +843,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                     <div>
                       <div className="text-sm text-jarvis-text/75">{selectedRun.workflow_name}</div>
                       <div className="text-2xs text-jarvis-text-dim/45 font-mono">
-                        {selectedRun.triggered_by} · {selectedRun.dry_run ? "dry" : "live"} · {formatDuration(selectedRun.duration_ms)}
+                        {selectedRun.triggered_by} · {selectedRun.dry_run ? "dry" : "live"} · v{selectedRun.workflow_version || 1}{selectedRun.release_channel ? ` · ${selectedRun.release_channel}` : ""} · {formatDuration(selectedRun.duration_ms)}
                       </div>
                     </div>
                     <span className="jarvis-badge">{selectedRun.status}</span>

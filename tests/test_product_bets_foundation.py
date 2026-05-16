@@ -15,6 +15,7 @@ def product_bet_files(tmp_path, monkeypatch):
     monkeypatch.setattr(workflows, "WORKFLOW_RUNS_FILE", tmp_path / "workflow_runs.json")
     monkeypatch.setattr(workflows, "WORKFLOW_APPROVALS_FILE", tmp_path / "workflow_approvals.json")
     monkeypatch.setattr(workflows, "WORKFLOW_VERSIONS_FILE", tmp_path / "workflow_versions.json")
+    monkeypatch.setattr(workflows, "WORKFLOW_RELEASES_FILE", tmp_path / "workflow_releases.json")
     monkeypatch.setattr(team, "TEAM_FILE", tmp_path / "team.json")
     monkeypatch.setattr(calendar_accounts, "CALENDAR_STATE_FILE", tmp_path / "calendar_state.json")
 
@@ -324,6 +325,50 @@ def test_workflow_version_history_can_restore_snapshots(product_bet_files):
     assert deleted_versions[0]["event"] == "deleted"
     assert deleted_versions[0]["note"] == "Cleanup"
     assert workflows.get_workflow(workflow["id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_workflow_release_channel_runs_promoted_snapshot(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Stable automation",
+        actions=[{"type": "prompt", "title": "Stable", "prompt": "stable prompt"}],
+    )
+    stable_version = workflows.list_workflow_versions(workflow["id"])[0]
+
+    updated = workflows.update_workflow(
+        workflow["id"],
+        {"actions": [{"type": "prompt", "title": "Draft", "prompt": "draft prompt"}]},
+    )
+
+    assert updated is not None
+    release = workflows.publish_workflow_version(
+        workflow["id"],
+        stable_version["id"],
+        channel="stable",
+        actor_id="owner",
+        note="Promote known-good version",
+    )
+
+    assert release is not None
+    assert release["version"] == 1
+    assert workflows.get_workflow(workflow["id"])["active_release_channel"] == "stable"
+
+    prompts: list[str] = []
+
+    async def runner(prompt: str) -> str:
+        prompts.append(prompt)
+        return f"ok:{prompt}"
+
+    stable_run = await workflows.run_workflow(workflow["id"], runner=runner)
+    draft_run = await workflows.run_workflow(workflow["id"], runner=runner, release_channel="")
+
+    assert stable_run is not None
+    assert draft_run is not None
+    assert prompts == ["stable prompt", "draft prompt"]
+    assert stable_run["release_channel"] == "stable"
+    assert stable_run["workflow_version"] == 1
+    assert draft_run["release_channel"] == ""
+    assert draft_run["workflow_version"] == 2
 
 
 def test_calendar_policy_blocks_auto_schedule_until_connected(product_bet_files):
