@@ -379,6 +379,31 @@ async def test_workflow_release_promotion_requires_approval(product_bet_files):
     )
     version = workflows.list_workflow_versions(workflow["id"])[0]
 
+    blocked = workflows.request_workflow_release_approval(
+        workflow["id"],
+        version["id"],
+        channel="stable",
+        actor_id="operator",
+        note="Ready for stable.",
+    )
+    readiness = workflows.get_release_readiness(
+        workflow["id"],
+        version["id"],
+        channel="stable",
+        note="Ready for stable.",
+    )
+
+    assert blocked is None
+    assert readiness["ready"] is False
+    assert "A successful dry run is required" in readiness["blockers"][0]
+
+    dry_run = await workflows.run_workflow_version(workflow["id"], version["id"], dry_run=True)
+
+    assert dry_run is not None
+    assert dry_run["dry_run"] is True
+    assert dry_run["workflow_version_id"] == version["id"]
+    assert workflows.get_release_gate_evidence(workflow["id"], version["id"])["ready"] is True
+
     request = workflows.request_workflow_release_approval(
         workflow["id"],
         version["id"],
@@ -399,6 +424,7 @@ async def test_workflow_release_promotion_requires_approval(product_bet_files):
     assert pending[0]["action_type"] == "publish_workflow_version"
     assert pending[0]["action"]["channel"] == "stable"
     assert pending[0]["action"]["version"] == 1
+    assert pending[0]["action"]["dry_run_id"] == dry_run["id"]
 
     duplicate = workflows.request_workflow_release_approval(
         workflow["id"],

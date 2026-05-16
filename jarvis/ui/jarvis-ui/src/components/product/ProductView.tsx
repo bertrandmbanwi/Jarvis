@@ -67,7 +67,24 @@ interface WorkflowVersion {
   note?: string;
   changed_fields?: string[];
   snapshot?: Partial<Workflow>;
+  release_readiness?: ReleaseReadiness;
   created_at: number;
+}
+
+interface ReleaseReadiness {
+  ready: boolean;
+  status: string;
+  blockers?: string[];
+  evidence?: {
+    dry_run_id?: string;
+    dry_run?: {
+      id?: string;
+      status?: string;
+      started_at?: number;
+      completed_at?: number;
+      duration_ms?: number;
+    } | null;
+  };
 }
 
 interface WorkflowRun {
@@ -75,6 +92,7 @@ interface WorkflowRun {
   workflow_id: string;
   workflow_name: string;
   workflow_version?: number;
+  workflow_version_id?: string;
   release_channel?: string;
   status: string;
   triggered_by: string;
@@ -120,6 +138,7 @@ interface WorkflowApproval {
     type?: string;
     channel?: string;
     version?: number;
+    dry_run_id?: string;
     requested_by?: string;
   };
   status: string;
@@ -413,6 +432,21 @@ export default function ProductView({ authToken }: ProductViewProps) {
     setMessage(`Restored ${restored.name || "workflow"} from history.`);
     await loadData();
     await loadWorkflowVersions(restored);
+  }
+
+  async function dryRunWorkflowVersion(workflowId: string, versionId: string) {
+    const data = await api(`/workflows/${workflowId}/versions/${versionId}/dry-run`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    setMessage(`Version dry run recorded: ${data.run?.status || "complete"}.`);
+    if (data.run?.id) {
+      setSelectedRun(data.run);
+    }
+    await loadData();
+    if (selectedWorkflowForHistory?.id === workflowId) {
+      await loadWorkflowVersions(selectedWorkflowForHistory);
+    }
   }
 
   async function publishWorkflowVersion(workflowId: string, versionId: string) {
@@ -773,46 +807,72 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 <div className="space-y-3">
                   {workflowVersions.length === 0 ? (
                     <p className="text-sm text-jarvis-text-dim/45">No versions recorded.</p>
-                  ) : workflowVersions.map((version) => (
-                    <div key={version.id} className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs text-jarvis-text/70">Version {version.version}</span>
-                            <span className="jarvis-badge">{version.event}</span>
-                            <span className="text-2xs text-jarvis-text-dim/45 font-mono">
-                              {new Date(version.created_at * 1000).toLocaleString()}
-                            </span>
+                  ) : workflowVersions.map((version) => {
+                    const readiness = version.release_readiness;
+                    const readinessLabel = readiness?.ready
+                      ? "ready"
+                      : readiness?.status === "missing_dry_run"
+                        ? "needs dry run"
+                        : "blocked";
+                    return (
+                      <div key={version.id} className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs text-jarvis-text/70">Version {version.version}</span>
+                              <span className="jarvis-badge">{version.event}</span>
+                              <span className="jarvis-badge">{readinessLabel}</span>
+                              <span className="text-2xs text-jarvis-text-dim/45 font-mono">
+                                {new Date(version.created_at * 1000).toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="text-2xs text-jarvis-text-dim/45 mt-1">
+                              {version.actor_id || "local-owner"}
+                              {version.changed_fields?.length ? ` · ${version.changed_fields.join(", ")}` : ""}
+                              {version.note ? ` · ${version.note}` : ""}
+                            </div>
+                            {readiness?.evidence?.dry_run_id && (
+                              <div className="text-2xs text-jarvis-text-dim/45 mt-1">
+                                dry run {readiness.evidence.dry_run_id.slice(0, 8)}
+                              </div>
+                            )}
+                            {!readiness?.ready && readiness?.blockers?.[0] && (
+                              <div className="text-2xs text-jarvis-text-dim/45 mt-1">
+                                {readiness.blockers[0]}
+                              </div>
+                            )}
                           </div>
-                          <div className="text-2xs text-jarvis-text-dim/45 mt-1">
-                            {version.actor_id || "local-owner"}
-                            {version.changed_fields?.length ? ` · ${version.changed_fields.join(", ")}` : ""}
-                            {version.note ? ` · ${version.note}` : ""}
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <button
+                              className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                              onClick={() => dryRunWorkflowVersion(version.workflow_id, version.id)}
+                            >
+                              Test
+                            </button>
+                            <button
+                              className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                              onClick={() => version.snapshot && loadWorkflowIntoBuilder(version.snapshot as Workflow)}
+                            >
+                              Load
+                            </button>
+                            <button
+                              className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md disabled:opacity-40"
+                              disabled={!readiness?.ready}
+                              onClick={() => publishWorkflowVersion(version.workflow_id, version.id)}
+                            >
+                              Promote
+                            </button>
+                            <button
+                              className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                              onClick={() => restoreWorkflowVersion(version.workflow_id, version.id)}
+                            >
+                              Restore
+                            </button>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
-                            onClick={() => version.snapshot && loadWorkflowIntoBuilder(version.snapshot as Workflow)}
-                          >
-                            Load
-                          </button>
-                          <button
-                            className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
-                            onClick={() => publishWorkflowVersion(version.workflow_id, version.id)}
-                          >
-                            Promote
-                          </button>
-                          <button
-                            className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
-                            onClick={() => restoreWorkflowVersion(version.workflow_id, version.id)}
-                          >
-                            Restore
-                          </button>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             )}
@@ -912,6 +972,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                         {approval.action?.type === "publish_workflow_version" && (
                           <div className="text-2xs text-jarvis-text-dim/45 mt-1">
                             v{approval.action.version || "?"} · {approval.action.channel || "stable"} · {approval.action.requested_by || "local-owner"}
+                            {approval.action.dry_run_id ? ` · dry ${approval.action.dry_run_id.slice(0, 8)}` : ""}
                           </div>
                         )}
                       </div>
