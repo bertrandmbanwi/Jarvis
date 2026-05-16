@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from jarvis.config import settings
-from jarvis.core import routines, sqlite_state
+from jarvis.core import routines, sqlite_state, workflow_run_store
 
 WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
@@ -256,11 +256,21 @@ def _save_workflows(items: list[dict[str, Any]]) -> None:
 
 
 def _load_runs() -> list[dict[str, Any]]:
-    return _load_list("workflow_runs", WORKFLOW_RUNS_FILE, [])
+    return workflow_run_store.list_runs(
+        db_path=_state_db_path(),
+        legacy_path=WORKFLOW_RUNS_FILE,
+        limit=500,
+    )
 
 
 def _save_runs(items: list[dict[str, Any]]) -> None:
-    _save_list("workflow_runs", items[-500:])
+    for item in items[-500:]:
+        workflow_run_store.save_run(
+            db_path=_state_db_path(),
+            legacy_path=WORKFLOW_RUNS_FILE,
+            run=item,
+            limit=500,
+        )
 
 
 def _load_approvals() -> list[dict[str, Any]]:
@@ -410,20 +420,21 @@ def get_release_gate_evidence(
         }
 
     version_number = int(version.get("version", 0) or 0)
-    dry_runs = [
-        run
-        for run in _load_runs()
-        if run.get("workflow_id") == workflow_id
-        and run.get("dry_run") is True
-        and (
-            run.get("workflow_version_id") == version_id
-            or (
-                not run.get("workflow_version_id")
-                and int(run.get("workflow_version", 0) or 0) == version_number
-            )
+    dry_runs = list_runs(
+        workflow_id=workflow_id,
+        workflow_version_id=version_id,
+        dry_run=True,
+        limit=10,
+    )
+    if not dry_runs:
+        dry_runs = list_runs(
+            workflow_id=workflow_id,
+            workflow_version=version_number,
+            dry_run=True,
+            limit=10,
         )
-    ]
-    latest = sorted(dry_runs, key=lambda run: float(run.get("started_at", 0)), reverse=True)[0] if dry_runs else None
+        dry_runs = [run for run in dry_runs if not run.get("workflow_version_id")]
+    latest = dry_runs[0] if dry_runs else None
     max_age_seconds = int(policy.get("dry_run_max_age_seconds", 0) or 0)
     if latest is None:
         return {
@@ -838,15 +849,46 @@ def delete_workflow(workflow_id: str, *, actor_id: str = "local-owner", note: st
     return True
 
 
-def list_runs(workflow_id: str = "", limit: int = 50) -> list[dict[str, Any]]:
-    runs = _load_runs()
-    if workflow_id:
-        runs = [run for run in runs if run.get("workflow_id") == workflow_id]
-    return sorted(runs, key=lambda run: float(run.get("started_at", 0)), reverse=True)[: max(1, min(limit, 200))]
+def list_runs(
+    workflow_id: str = "",
+    limit: int = 50,
+    *,
+    status: str = "",
+    dry_run: bool | None = None,
+    release_channel: str = "",
+    workflow_version_id: str = "",
+    workflow_version: int | None = None,
+    started_after: float | None = None,
+    started_before: float | None = None,
+) -> list[dict[str, Any]]:
+    return workflow_run_store.list_runs(
+        db_path=_state_db_path(),
+        legacy_path=WORKFLOW_RUNS_FILE,
+        workflow_id=workflow_id,
+        status=status,
+        dry_run=dry_run,
+        release_channel=release_channel,
+        workflow_version_id=workflow_version_id,
+        workflow_version=workflow_version,
+        started_after=started_after,
+        started_before=started_before,
+        limit=limit,
+    )
 
 
 def get_run(run_id: str) -> dict[str, Any] | None:
-    return next((run for run in _load_runs() if run.get("id") == run_id), None)
+    return workflow_run_store.get_run(
+        db_path=_state_db_path(),
+        legacy_path=WORKFLOW_RUNS_FILE,
+        run_id=run_id,
+    )
+
+
+def get_run_storage_status() -> dict[str, int | bool]:
+    return workflow_run_store.storage_status(
+        db_path=_state_db_path(),
+        legacy_path=WORKFLOW_RUNS_FILE,
+    )
 
 
 def list_approvals(status: str = "pending", limit: int = 50) -> list[dict[str, Any]]:
@@ -857,10 +899,12 @@ def list_approvals(status: str = "pending", limit: int = 50) -> list[dict[str, A
 
 
 def _record_run(run: dict[str, Any]) -> dict[str, Any]:
-    runs = _load_runs()
-    runs.append(run)
-    _save_runs(runs)
-    return run
+    return workflow_run_store.save_run(
+        db_path=_state_db_path(),
+        legacy_path=WORKFLOW_RUNS_FILE,
+        run=run,
+        limit=500,
+    )
 
 
 def _record_approval(
