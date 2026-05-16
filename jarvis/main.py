@@ -407,9 +407,17 @@ async def run_full():
 
 
 def _display_auth_info():
-    """Display PIN authentication info."""
+    """Display browser/mobile authentication info."""
 
+    from jarvis.core import auth
     from jarvis.core.server import get_startup_pin
+
+    if not auth.pin_auth_enabled():
+        print("  PIN authentication: disabled")
+        print("  (Set JARVIS_PIN_AUTH_ENABLED=true to require a PIN for remote access)")
+        print()
+        return
+
     pin = get_startup_pin()
     if pin:
         print("  ==========================================")

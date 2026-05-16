@@ -36,6 +36,7 @@ export interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   isLocal: boolean;
+  authRequired: boolean;
   token: string | null;
   loginError: string | null;
   login: (pin: string) => Promise<boolean>;
@@ -46,6 +47,7 @@ export function useAuth(): AuthState {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isLocal, setIsLocal] = useState(false);
+  const [authRequired, setAuthRequired] = useState(true);
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [loginError, setLoginError] = useState<string | null>(null);
   const checkedRef = useRef(false);
@@ -62,7 +64,9 @@ export function useAuth(): AuthState {
         const resp = await fetch(`${API_BASE}/auth/status`, { headers });
         if (resp.ok) {
           const data = await resp.json();
-          setIsAuthenticated(data.authenticated);
+          const required = data.auth_required !== false;
+          setAuthRequired(required);
+          setIsAuthenticated(!required || data.authenticated);
           setIsLocal(data.local || false);
           if (data.authenticated && storedToken) {
             setToken(storedToken);
@@ -90,9 +94,15 @@ export function useAuth(): AuthState {
 
       if (resp.ok) {
         const data = await resp.json();
-        const newToken = data.token;
+        const newToken = data.token || null;
+        const required = data.auth_required !== false;
+        setAuthRequired(required);
         setToken(newToken);
-        storeToken(newToken);
+        if (newToken) {
+          storeToken(newToken);
+        } else {
+          clearStoredToken();
+        }
         setIsAuthenticated(true);
         return true;
       } else {
@@ -118,13 +128,14 @@ export function useAuth(): AuthState {
     }
     setToken(null);
     clearStoredToken();
-    setIsAuthenticated(false);
-  }, [token]);
+    setIsAuthenticated(!authRequired);
+  }, [authRequired, token]);
 
   return {
     isAuthenticated,
     isLoading,
     isLocal,
+    authRequired,
     token,
     loginError,
     login,

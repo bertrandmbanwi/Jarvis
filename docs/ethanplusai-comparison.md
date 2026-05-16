@@ -206,10 +206,10 @@ These are areas where our Jarvis is clearly superior:
 | **Tools** | 93 registered tools with safety guards vs. ~15-20 actions |
 | **LLM Routing** | 3-tier (Haiku/Sonnet/Opus) with cost optimization vs. single model |
 | **Voice** | Local-first (Moonshine + Whisper + Kokoro) vs. cloud-only (Fish Audio) |
-| **Security** | PIN auth, rate limiting, circuit breakers, input validation vs. none |
+| **Security** | Optional PIN auth, rate limiting, circuit breakers, input validation vs. none |
 | **Memory** | ChromaDB vectors + SQLite FTS5 + JSON facts vs. flat SQLite |
 | **UI** | Next.js + React + Tailwind + Three.js vs. Vite + Three.js only |
-| **Mobile** | Cloudflare Tunnel + PIN + responsive vs. none |
+| **Mobile** | Cloudflare Tunnel + optional PIN + responsive vs. none |
 | **Cost Tracking** | Per-session/daily/monthly alerts vs. none |
 | **Error Handling** | Circuit breakers, retries, error classification vs. basic try-catch |
 | **Agent System** | 7 specialized agents with parallel execution vs. single generic |
