@@ -6,6 +6,7 @@ and migrate to SQLite/Postgres later.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -20,7 +21,15 @@ WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
 
 TRIGGER_TYPES = {"manual", "schedule", "calendar_event", "startup", "hotkey", "webhook"}
-ACTION_TYPES = {"prompt", "routine", "notification", "calendar_brief", "email_digest", "wait_for_approval"}
+ACTION_TYPES = {
+    "prompt",
+    "routine",
+    "notification",
+    "calendar_brief",
+    "email_digest",
+    "create_calendar_event",
+    "wait_for_approval",
+}
 VISIBILITY = {"private", "team"}
 
 WorkflowRunner = Callable[[str], Awaitable[str]]
@@ -130,11 +139,33 @@ def _normalize_action(action: dict[str, Any], index: int) -> dict[str, Any]:
         "id": str(raw.get("id") or uuid.uuid4().hex),
         "type": action_type,
         "title": _clean_text(raw.get("title") or f"Step {index + 1}", 120),
-        "requires_approval": bool(raw.get("requires_approval", action_type == "wait_for_approval")),
+        "requires_approval": bool(
+            raw.get("requires_approval", action_type in {"wait_for_approval", "create_calendar_event"})
+        ),
     }
-    for key in ("prompt", "routine_id", "routine_name", "message"):
+    for key in (
+        "prompt",
+        "routine_id",
+        "routine_name",
+        "message",
+        "calendar_name",
+        "location",
+        "notes",
+        "start_date",
+        "end_date",
+        "mailbox",
+    ):
         if key in raw:
             normalized[key] = _clean_text(raw[key], 2000)
+    for key in ("days", "count"):
+        if key not in raw:
+            continue
+        try:
+            normalized[key] = int(raw[key])
+        except (TypeError, ValueError):
+            continue
+    if "all_day" in raw:
+        normalized["all_day"] = bool(raw["all_day"])
     return normalized
 
 
@@ -301,6 +332,70 @@ def _find_routine(action: dict[str, Any]) -> dict[str, Any] | None:
     return next((item for item in routines.list_routines() if str(item.get("name", "")).lower() == routine_name), None)
 
 
+async def _with_timeout(label: str, coro, timeout: float = 18.0) -> str:
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except TimeoutError:
+        return f"{label} timed out."
+    except Exception as exc:
+        return f"{label} failed: {exc}"
+
+
+def _bounded_int(action: dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(action.get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+async def _execute_calendar_brief(action: dict[str, Any]) -> str:
+    from jarvis.tools.calendar_email import get_upcoming_events
+
+    days = _bounded_int(action, "days", 1, 1, 14)
+    return await _with_timeout("Calendar brief", get_upcoming_events(days=days), timeout=22.0)
+
+
+async def _execute_email_digest(action: dict[str, Any]) -> str:
+    from jarvis.tools.calendar_email import get_recent_emails, get_unread_count
+
+    count = _bounded_int(action, "count", 5, 1, 25)
+    mailbox = str(action.get("mailbox") or "INBOX")
+    unread = await _with_timeout("Unread email check", get_unread_count(), timeout=12.0)
+    recent = await _with_timeout("Recent email digest", get_recent_emails(count=count, mailbox=mailbox), timeout=22.0)
+    return f"{unread}\n\n{recent}"
+
+
+async def _execute_notification(action: dict[str, Any], workflow_name: str) -> str:
+    from jarvis.tools.mac_control import send_notification
+
+    title = str(action.get("title") or workflow_name or "JARVIS Workflow")
+    message = str(action.get("message") or action.get("prompt") or "Workflow step completed.")
+    return await _with_timeout("Notification", send_notification(title, message), timeout=8.0)
+
+
+async def _execute_calendar_event(action: dict[str, Any]) -> str:
+    from jarvis.tools.calendar_email import create_calendar_event
+
+    title = str(action.get("title") or action.get("message") or "JARVIS Event")
+    start_date = str(action.get("start_date") or "")
+    if not start_date:
+        return "Calendar event skipped: start_date is required."
+    return await _with_timeout(
+        "Calendar event creation",
+        create_calendar_event(
+            title=title,
+            start_date=start_date,
+            end_date=str(action.get("end_date") or ""),
+            location=str(action.get("location") or ""),
+            notes=str(action.get("notes") or ""),
+            calendar_name=str(action.get("calendar_name") or ""),
+            all_day=bool(action.get("all_day", False)),
+        ),
+        timeout=22.0,
+    )
+
+
 async def run_workflow(
     workflow_id: str,
     *,
@@ -325,7 +420,7 @@ async def run_workflow(
                 "action_id": action.get("id"),
                 "type": action_type,
                 "title": action.get("title", ""),
-                "status": "prepared" if dry_run or runner is None else "completed",
+                "status": "prepared" if dry_run else "completed",
             }
 
             if action.get("requires_approval"):
@@ -335,6 +430,9 @@ async def run_workflow(
                 result["prompt"] = prompt
                 if runner is not None and not dry_run:
                     result["response"] = await runner(prompt)
+                elif not dry_run:
+                    result["status"] = "skipped"
+                    result["message"] = "No prompt runner was provided."
             elif action_type == "routine":
                 routine = _find_routine(action)
                 if routine is None:
@@ -346,12 +444,31 @@ async def run_workflow(
                     if runner is not None and not dry_run:
                         routines.mark_routine_run(str(routine.get("id")))
                         result["response"] = await runner(prompt)
+                    elif not dry_run:
+                        result["status"] = "skipped"
+                        result["message"] = "No prompt runner was provided."
             elif action_type == "calendar_brief":
-                result["message"] = "Calendar read step prepared. Provider execution will attach here."
+                if dry_run:
+                    result["message"] = "Calendar brief prepared."
+                else:
+                    result["response"] = await _execute_calendar_brief(action)
             elif action_type == "email_digest":
-                result["message"] = "Mail digest step prepared. Provider execution will attach here."
+                if dry_run:
+                    result["message"] = "Email digest prepared."
+                else:
+                    result["response"] = await _execute_email_digest(action)
             elif action_type == "notification":
-                result["message"] = str(action.get("message") or "Workflow notification prepared.")
+                if dry_run:
+                    result["message"] = str(action.get("message") or "Workflow notification prepared.")
+                else:
+                    result["response"] = await _execute_notification(action, str(workflow.get("name", "")))
+            elif action_type == "create_calendar_event":
+                if dry_run:
+                    result.update({"status": "approval_required", "message": "Calendar writes require explicit approval."})
+                elif action.get("requires_approval") is False:
+                    result["response"] = await _execute_calendar_event(action)
+                else:
+                    result.update({"status": "approval_required", "message": "Calendar writes require explicit approval."})
             elif action_type == "wait_for_approval":
                 result.update({"status": "approval_required", "message": "Workflow paused for explicit approval."})
             action_results.append(result)
