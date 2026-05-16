@@ -1,0 +1,29 @@
+# CI-friendly dependency set.
+#
+# The full macOS voice stack depends on local audio drivers and large ML
+# packages, so CI installs the API/test/runtime subset needed for linting,
+# type-checking, unit tests, contract checks, evals, and Playwright smoke tests.
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+httpx>=0.28.0
+pydantic>=2.10.0
+websockets>=14.0
+python-multipart>=0.0.18
+anthropic>=0.52.0
+chromadb>=0.6.0
+ddgs>=7.0.0
+beautifulsoup4>=4.12.0
+playwright>=1.49.0
+pycookiecheat>=0.8.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+keyring>=25.0.0
+
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
+pytest-timeout>=2.3.0
+ruff>=0.8.0
+mypy>=1.13.0
+bandit>=1.8.0

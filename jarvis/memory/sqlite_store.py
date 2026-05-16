@@ -14,10 +14,33 @@ import logging
 import sqlite3
 
 from jarvis.config import settings
+from jarvis.core.migrations import Migration, add_column_if_missing, ensure_migrations
 
 logger = logging.getLogger("jarvis.memory.sqlite")
 
 DB_PATH = settings.DATA_DIR / "jarvis_memory.db"
+
+
+def _apply_memory_migrations(conn: sqlite3.Connection) -> None:
+    """Apply versioned migrations for the structured memory database."""
+
+    def baseline(_conn: sqlite3.Connection) -> None:
+        # The initial schema is created just before migrations run.
+        return None
+
+    def add_metadata(conn_: sqlite3.Connection) -> None:
+        add_column_if_missing(conn_, "memories", "metadata_json", "TEXT DEFAULT '{}'")
+        add_column_if_missing(conn_, "tasks", "metadata_json", "TEXT DEFAULT '{}'")
+        conn_.execute("CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed DESC)")
+
+    ensure_migrations(
+        conn,
+        "memory",
+        [
+            Migration(1, "baseline_memory_schema", baseline),
+            Migration(2, "memory_metadata_columns", add_metadata),
+        ],
+    )
 
 
 def init_db() -> None:
@@ -117,6 +140,7 @@ def init_db() -> None:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_created ON notes(created_at DESC)")
 
+        _apply_memory_migrations(conn)
         conn.commit()
         conn.close()
         logger.info("SQLite memory database initialized at %s", DB_PATH)
