@@ -891,6 +891,244 @@ def get_run_storage_status() -> dict[str, int | bool]:
     )
 
 
+def _run_float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * percentile)))
+    return round(ordered[index], 1)
+
+
+def _run_error_summary(run: dict[str, Any]) -> str:
+    if run.get("error"):
+        return _clean_text(run.get("error"), 500)
+    timeline_raw = run.get("timeline")
+    timeline = timeline_raw if isinstance(timeline_raw, list) else []
+    for entry in timeline:
+        if not isinstance(entry, dict) or str(entry.get("status") or "") != "failed":
+            continue
+        output_raw = entry.get("output")
+        output = output_raw if isinstance(output_raw, dict) else {}
+        return _clean_text(output.get("error") or output.get("message") or entry.get("title"), 500)
+    return ""
+
+
+def get_run_analytics(
+    workflow_id: str = "",
+    *,
+    started_after: float | None = None,
+    started_before: float | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    runs = list_runs(
+        workflow_id=workflow_id,
+        started_after=started_after,
+        started_before=started_before,
+        limit=limit,
+    )
+    total = len(runs)
+    status_counts: dict[str, int] = {}
+    workflow_stats: dict[str, dict[str, Any]] = {}
+    action_stats: dict[str, dict[str, Any]] = {}
+    durations: list[float] = []
+    recent_errors: list[dict[str, Any]] = []
+    dry_runs = 0
+    live_runs = 0
+
+    for run in runs:
+        status = str(run.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if run.get("dry_run") is True:
+            dry_runs += 1
+        else:
+            live_runs += 1
+
+        duration = _run_float(run.get("duration_ms"))
+        if duration > 0:
+            durations.append(duration)
+
+        workflow_name = str(run.get("workflow_name") or "Workflow")
+        workflow_key = str(run.get("workflow_id") or workflow_name)
+        workflow_item = workflow_stats.setdefault(
+            workflow_key,
+            {
+                "workflow_id": workflow_key,
+                "workflow_name": workflow_name,
+                "total_runs": 0,
+                "failed_runs": 0,
+                "completed_runs": 0,
+                "last_run_at": 0.0,
+            },
+        )
+        workflow_item["total_runs"] += 1
+        workflow_item["last_run_at"] = max(_run_float(workflow_item.get("last_run_at")), _run_float(run.get("started_at")))
+        if status == "completed":
+            workflow_item["completed_runs"] += 1
+        if status in {"failed", "completed_with_errors"}:
+            workflow_item["failed_runs"] += 1
+
+        error_summary = _run_error_summary(run)
+        if status in {"failed", "completed_with_errors"} or error_summary:
+            recent_errors.append({
+                "run_id": run.get("id", ""),
+                "workflow_id": run.get("workflow_id", ""),
+                "workflow_name": workflow_name,
+                "status": status,
+                "error": error_summary or status.replace("_", " "),
+                "started_at": _run_float(run.get("started_at")),
+            })
+
+        timeline_raw = run.get("timeline")
+        timeline = timeline_raw if isinstance(timeline_raw, list) else []
+        for entry in timeline:
+            if not isinstance(entry, dict):
+                continue
+            action_type = str(entry.get("type") or "action")
+            title = str(entry.get("title") or action_type.replace("_", " "))
+            action_key = f"{action_type}:{title}"
+            action_item = action_stats.setdefault(
+                action_key,
+                {
+                    "type": action_type,
+                    "title": title,
+                    "total": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "approval_required": 0,
+                    "duration_total_ms": 0.0,
+                    "avg_duration_ms": 0.0,
+                },
+            )
+            action_item["total"] += 1
+            entry_status = str(entry.get("status") or "")
+            if entry_status == "failed":
+                action_item["failed"] += 1
+            elif entry_status == "skipped":
+                action_item["skipped"] += 1
+            elif entry_status == "approval_required":
+                action_item["approval_required"] += 1
+            action_item["duration_total_ms"] += _run_float(entry.get("duration_ms"))
+
+    for item in action_stats.values():
+        total_actions = int(item.get("total", 0) or 0)
+        if total_actions:
+            item["avg_duration_ms"] = round(_run_float(item.get("duration_total_ms")) / total_actions, 1)
+        item.pop("duration_total_ms", None)
+
+    completed = status_counts.get("completed", 0)
+    failed = status_counts.get("failed", 0) + status_counts.get("completed_with_errors", 0)
+    return {
+        "total_runs": total,
+        "dry_runs": dry_runs,
+        "live_runs": live_runs,
+        "status_counts": status_counts,
+        "success_rate": round(completed / total, 3) if total else 0.0,
+        "failure_rate": round(failed / total, 3) if total else 0.0,
+        "avg_duration_ms": round(sum(durations) / len(durations), 1) if durations else 0.0,
+        "p95_duration_ms": _percentile(durations, 0.95),
+        "recent_errors": recent_errors[:8],
+        "workflow_stats": sorted(
+            workflow_stats.values(),
+            key=lambda item: (_run_float(item.get("last_run_at")), int(item.get("total_runs", 0) or 0)),
+            reverse=True,
+        )[:10],
+        "action_stats": sorted(
+            action_stats.values(),
+            key=lambda item: (int(item.get("failed", 0) or 0), _run_float(item.get("avg_duration_ms"))),
+            reverse=True,
+        )[:12],
+    }
+
+
+async def replay_run(
+    run_id: str,
+    *,
+    runner: WorkflowRunner | None = None,
+    dry_run: bool = True,
+    triggered_by: str = "",
+) -> dict[str, Any] | None:
+    source_run = get_run(run_id)
+    if source_run is None:
+        return None
+
+    workflow_id = str(source_run.get("workflow_id") or "")
+    version_id = str(source_run.get("workflow_version_id") or "")
+    if not version_id:
+        version_number = int(source_run.get("workflow_version", 0) or 0)
+        if workflow_id and version_number:
+            version_id = _version_id_for_workflow_version(workflow_id, version_number)
+
+    replay_trigger = triggered_by or ("replay_dry_run" if dry_run else "replay_live")
+    warnings: list[str] = []
+    strategy = "current_workflow"
+    replay: dict[str, Any] | None = None
+
+    if workflow_id and version_id and get_workflow_version(workflow_id, version_id) is not None:
+        strategy = "version_snapshot"
+        replay = await run_workflow_version(
+            workflow_id,
+            version_id,
+            runner=runner,
+            triggered_by=replay_trigger,
+            dry_run=dry_run,
+        )
+    else:
+        if version_id:
+            warnings.append("Original workflow version snapshot is unavailable; replay used the current workflow.")
+        release_channel = str(source_run.get("release_channel") or "")
+        if release_channel:
+            strategy = "release_channel"
+            replay = await run_workflow(
+                workflow_id,
+                runner=runner,
+                triggered_by=replay_trigger,
+                dry_run=dry_run,
+                release_channel=release_channel,
+            )
+            if replay is None:
+                warnings.append("Original release channel is unavailable; replay used the current workflow draft.")
+        if replay is None:
+            replay = await run_workflow(
+                workflow_id,
+                runner=runner,
+                triggered_by=replay_trigger,
+                dry_run=dry_run,
+                release_channel="",
+            )
+            strategy = "current_workflow"
+
+    if replay is None:
+        return {
+            "source_run": source_run,
+            "replay_run": None,
+            "strategy": strategy,
+            "warnings": warnings or ["Workflow is unavailable and cannot be replayed."],
+        }
+
+    replay["replayed_from_run_id"] = run_id
+    replay["replay"] = {
+        "source_run_id": run_id,
+        "source_started_at": source_run.get("started_at"),
+        "source_status": source_run.get("status"),
+        "strategy": strategy,
+        "dry_run": dry_run,
+    }
+    _record_run(replay)
+    return {
+        "source_run": source_run,
+        "replay_run": replay,
+        "strategy": strategy,
+        "warnings": warnings,
+    }
+
+
 def list_approvals(status: str = "pending", limit: int = 50) -> list[dict[str, Any]]:
     approvals = _load_approvals()
     if status:
@@ -1654,8 +1892,8 @@ def get_overview() -> dict[str, Any]:
         "pending_approval_count": len(list_approvals(status="pending", limit=200)),
         "recent_runs": runs,
         "next_foundation_steps": [
-            "Move high-volume workflow runs from document snapshots into queryable relational tables.",
+            "Add workflow test suites with explicit assertions before release promotion.",
+            "Attribute LLM cost to workflow runs and actions for budget-aware automation tuning.",
             "Add team presence and conflict handling for simultaneous workflow edits.",
-            "Add release gates for successful dry runs and policy checks before production promotion.",
         ],
     }
