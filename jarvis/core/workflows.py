@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from jarvis.config import settings
-from jarvis.core import routines, sqlite_state, workflow_run_store
+from jarvis.core import cost_tracker, routines, sqlite_state, workflow_run_store
 
 WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
@@ -53,9 +53,10 @@ RELEASE_POLICIES: dict[str, dict[str, Any]] = {
         "required_approvals": 1,
         "requires_successful_dry_run": True,
         "requires_passing_assertions": True,
+        "requires_cost_budget": True,
         "dry_run_max_age_seconds": 7 * 24 * 60 * 60,
         "requires_note": False,
-        "description": "Stable promotions require one recent successful dry run, passing assertions, and one explicit approval.",
+        "description": "Stable promotions require one recent successful dry run, passing assertions, budget compliance, and one explicit approval.",
     },
     "production": {
         "channel": "production",
@@ -63,9 +64,10 @@ RELEASE_POLICIES: dict[str, dict[str, Any]] = {
         "required_approvals": 1,
         "requires_successful_dry_run": True,
         "requires_passing_assertions": True,
+        "requires_cost_budget": True,
         "dry_run_max_age_seconds": 7 * 24 * 60 * 60,
         "requires_note": True,
-        "description": "Production promotions require a recent successful dry run, passing assertions, approval, and a release note.",
+        "description": "Production promotions require a recent successful dry run, passing assertions, budget compliance, approval, and a release note.",
     },
 }
 
@@ -263,6 +265,23 @@ def _normalize_assertion(assertion: dict[str, Any], index: int) -> dict[str, Any
 
 def _normalize_assertions(assertions: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return [_normalize_assertion(assertion, index) for index, assertion in enumerate(assertions or [])][:20]
+
+
+def _normalize_budget(budget: dict[str, Any] | None) -> dict[str, Any]:
+    raw = budget if isinstance(budget, dict) else {}
+    normalized: dict[str, Any] = {}
+    for key in ("max_cost_per_run_usd", "max_cost_per_day_usd", "max_cost_per_month_usd"):
+        if key not in raw:
+            continue
+        try:
+            value = float(raw.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            normalized[key] = round(min(value, 10000.0), 6)
+    if normalized:
+        normalized["enforce_on_release"] = bool(raw.get("enforce_on_release", True))
+    return normalized
 
 
 def _system_assertions() -> list[dict[str, Any]]:
@@ -679,6 +698,102 @@ def get_assertion_evidence(
     }
 
 
+def _budget_window_start(now: float, window: str) -> float:
+    local_time = time.localtime(now)
+    if window == "month":
+        return time.mktime((local_time.tm_year, local_time.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+    return time.mktime((local_time.tm_year, local_time.tm_mon, local_time.tm_mday, 0, 0, 0, 0, 0, -1))
+
+
+def _workflow_cost_since(workflow_id: str, started_at: float) -> float:
+    runs = list_runs(workflow_id=workflow_id, started_after=started_at, limit=500)
+    return round(sum(_run_float(_cost_for_run(run).get("cost_usd")) for run in runs), 6)
+
+
+def get_cost_budget_evidence(
+    workflow_id: str,
+    version_id: str,
+    *,
+    dry_run: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    version = get_workflow_version(workflow_id, version_id)
+    snapshot = copy.deepcopy(version.get("snapshot")) if version else None
+    if not isinstance(snapshot, dict):
+        return {
+            "status": "missing_version",
+            "ready": False,
+            "budget": {},
+            "actual": _zero_cost(),
+            "blockers": ["Workflow version not found."],
+        }
+
+    budget = _normalize_budget(snapshot.get("budget") if isinstance(snapshot.get("budget"), dict) else None)
+    if not budget:
+        return {
+            "status": "no_budget",
+            "ready": True,
+            "budget": {},
+            "actual": _zero_cost(),
+            "blockers": [],
+        }
+
+    candidate_run = dry_run or _latest_version_dry_run(workflow_id, version_id)
+    if candidate_run is None:
+        return {
+            "status": "missing_run",
+            "ready": False,
+            "budget": budget,
+            "actual": _zero_cost(),
+            "blockers": ["Run this version once before evaluating workflow cost budgets."],
+        }
+
+    now = _now()
+    run_cost = _cost_for_run(candidate_run)
+    actual = {
+        **run_cost,
+        "daily_cost_usd": _workflow_cost_since(workflow_id, _budget_window_start(now, "day")),
+        "monthly_cost_usd": _workflow_cost_since(workflow_id, _budget_window_start(now, "month")),
+    }
+    blockers: list[str] = []
+    per_run_limit = _run_float(budget.get("max_cost_per_run_usd"))
+    per_day_limit = _run_float(budget.get("max_cost_per_day_usd"))
+    per_month_limit = _run_float(budget.get("max_cost_per_month_usd"))
+    if per_run_limit > 0 and _run_float(actual.get("cost_usd")) > per_run_limit:
+        blockers.append(
+            f"Dry-run cost {_format_cost_usd(_run_float(actual.get('cost_usd')))} "
+            f"exceeds per-run budget {_format_cost_usd(per_run_limit)}."
+        )
+    if per_day_limit > 0 and _run_float(actual.get("daily_cost_usd")) > per_day_limit:
+        blockers.append(
+            f"Workflow spend today {_format_cost_usd(_run_float(actual.get('daily_cost_usd')))} "
+            f"exceeds daily budget {_format_cost_usd(per_day_limit)}."
+        )
+    if per_month_limit > 0 and _run_float(actual.get("monthly_cost_usd")) > per_month_limit:
+        blockers.append(
+            f"Workflow spend this month {_format_cost_usd(_run_float(actual.get('monthly_cost_usd')))} "
+            f"exceeds monthly budget {_format_cost_usd(per_month_limit)}."
+        )
+
+    enforce = bool(budget.get("enforce_on_release", True))
+    if blockers and enforce:
+        status = "over_budget"
+        ready = False
+    elif blockers:
+        status = "warn_only"
+        ready = True
+    else:
+        status = "ready"
+        ready = True
+
+    return {
+        "status": status,
+        "ready": ready,
+        "budget": budget,
+        "actual": actual,
+        "blockers": blockers,
+    }
+
+
 def run_workflow_assertion_suite(
     workflow_id: str,
     version_id: str,
@@ -743,10 +858,12 @@ def get_release_gate_evidence(
             "dry_run": None,
             "dry_run_id": "",
             "assertion_result": None,
+            "cost_budget": get_cost_budget_evidence(workflow_id, version_id),
             "max_age_seconds": max_age_seconds,
         }
     assertion_evidence = get_assertion_evidence(workflow_id, version_id, dry_run=latest)
     assertion_result = assertion_evidence.get("result")
+    cost_budget_evidence = get_cost_budget_evidence(workflow_id, version_id, dry_run=latest)
     age_seconds = max(0, _now() - float(latest.get("completed_at") or latest.get("started_at") or 0))
     if str(latest.get("status") or "") != "completed":
         return {
@@ -755,6 +872,7 @@ def get_release_gate_evidence(
             "dry_run": latest,
             "dry_run_id": str(latest.get("id") or ""),
             "assertion_result": assertion_result,
+            "cost_budget": cost_budget_evidence,
             "age_seconds": age_seconds,
             "max_age_seconds": max_age_seconds,
         }
@@ -765,6 +883,7 @@ def get_release_gate_evidence(
             "dry_run": latest,
             "dry_run_id": str(latest.get("id") or ""),
             "assertion_result": assertion_result,
+            "cost_budget": cost_budget_evidence,
             "age_seconds": age_seconds,
             "max_age_seconds": max_age_seconds,
         }
@@ -775,6 +894,18 @@ def get_release_gate_evidence(
             "dry_run": latest,
             "dry_run_id": str(latest.get("id") or ""),
             "assertion_result": assertion_result,
+            "cost_budget": cost_budget_evidence,
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+        }
+    if policy.get("requires_cost_budget") and not cost_budget_evidence.get("ready"):
+        return {
+            "status": "over_budget",
+            "ready": False,
+            "dry_run": latest,
+            "dry_run_id": str(latest.get("id") or ""),
+            "assertion_result": assertion_result,
+            "cost_budget": cost_budget_evidence,
             "age_seconds": age_seconds,
             "max_age_seconds": max_age_seconds,
         }
@@ -784,6 +915,7 @@ def get_release_gate_evidence(
         "dry_run": latest,
         "dry_run_id": str(latest.get("id") or ""),
         "assertion_result": assertion_result,
+        "cost_budget": cost_budget_evidence,
         "age_seconds": age_seconds,
         "max_age_seconds": max_age_seconds,
     }
@@ -806,6 +938,7 @@ def get_release_readiness(
             "started_at": dry_run.get("started_at"),
             "completed_at": dry_run.get("completed_at"),
             "duration_ms": dry_run.get("duration_ms"),
+            "cost": dry_run.get("cost"),
         }
     return {
         "ready": bool(assessment.get("can_request")),
@@ -854,6 +987,11 @@ def assess_release_request(
             blockers.append(
                 f"Workflow assertions must pass before promotion{f': {detail}' if detail else '.'}"
             )
+        elif status == "over_budget":
+            cost_budget = evidence.get("cost_budget") if isinstance(evidence, dict) else None
+            budget_blockers = cost_budget.get("blockers", []) if isinstance(cost_budget, dict) else []
+            detail = str(budget_blockers[0]) if budget_blockers else ""
+            blockers.append(f"Workflow cost budget must pass before promotion{f': {detail}' if detail else '.'}")
     return {
         "can_request": not blockers,
         "blockers": blockers,
@@ -872,6 +1010,7 @@ def create_workflow(
     trigger: dict[str, Any] | None = None,
     actions: list[dict[str, Any]] | None = None,
     assertions: list[dict[str, Any]] | None = None,
+    budget: dict[str, Any] | None = None,
     enabled: bool = True,
     tags: list[str] | None = None,
     owner_id: str = "local-owner",
@@ -889,6 +1028,7 @@ def create_workflow(
         "trigger": _normalize_trigger(trigger),
         "actions": _normalize_actions(actions),
         "assertions": _normalize_assertions(assertions),
+        "budget": _normalize_budget(budget),
         "enabled": bool(enabled),
         "tags": [_clean_text(tag, 40) for tag in (tags or [])][:12],
         "owner_id": _clean_text(owner_id or "local-owner", 80),
@@ -948,6 +1088,7 @@ def update_workflow(
             "trigger",
             "actions",
             "assertions",
+            "budget",
             "enabled",
             "tags",
             "visibility",
@@ -964,6 +1105,8 @@ def update_workflow(
             item["actions"] = _normalize_actions(updates["actions"])
         if "assertions" in updates:
             item["assertions"] = _normalize_assertions(updates["assertions"])
+        if "budget" in updates:
+            item["budget"] = _normalize_budget(updates["budget"] if isinstance(updates["budget"], dict) else None)
         if "enabled" in updates:
             item["enabled"] = bool(updates["enabled"])
         if "tags" in updates:
@@ -1230,12 +1373,80 @@ def _run_float(value: Any) -> float:
         return 0.0
 
 
-def _percentile(values: list[float], percentile: float) -> float:
+def _run_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _zero_cost() -> dict[str, Any]:
+    return {
+        "cost_usd": 0.0,
+        "request_count": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+
+
+def _cost_from_summary(summary: dict[str, Any] | None) -> dict[str, Any]:
+    source = summary or {}
+    return {
+        "cost_usd": round(max(0.0, _run_float(source.get("cost_usd", source.get("total_cost_usd")))), 6),
+        "request_count": _run_int(source.get("request_count", source.get("total_requests"))),
+        "input_tokens": _run_int(source.get("input_tokens", source.get("total_input_tokens"))),
+        "output_tokens": _run_int(source.get("output_tokens", source.get("total_output_tokens"))),
+        "cache_read_tokens": _run_int(source.get("cache_read_tokens", source.get("total_cache_read_tokens"))),
+        "cache_creation_tokens": _run_int(
+            source.get("cache_creation_tokens", source.get("total_cache_creation_tokens"))
+        ),
+    }
+
+
+def _cost_snapshot() -> dict[str, Any]:
+    try:
+        summary = cost_tracker.get_today_summary()
+    except Exception:
+        return _zero_cost()
+    return _cost_from_summary(summary if isinstance(summary, dict) else {})
+
+
+def _cost_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "cost_usd": round(max(0.0, _run_float(after.get("cost_usd")) - _run_float(before.get("cost_usd"))), 6),
+        "request_count": max(0, _run_int(after.get("request_count")) - _run_int(before.get("request_count"))),
+        "input_tokens": max(0, _run_int(after.get("input_tokens")) - _run_int(before.get("input_tokens"))),
+        "output_tokens": max(0, _run_int(after.get("output_tokens")) - _run_int(before.get("output_tokens"))),
+        "cache_read_tokens": max(
+            0,
+            _run_int(after.get("cache_read_tokens")) - _run_int(before.get("cache_read_tokens")),
+        ),
+        "cache_creation_tokens": max(
+            0,
+            _run_int(after.get("cache_creation_tokens")) - _run_int(before.get("cache_creation_tokens")),
+        ),
+    }
+
+
+def _cost_for_run(run: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(run, dict):
+        return _zero_cost()
+    cost = run.get("cost")
+    return _cost_from_summary(cost if isinstance(cost, dict) else {})
+
+
+def _format_cost_usd(value: float) -> str:
+    return f"${value:.6f}" if value < 0.01 else f"${value:.4f}"
+
+
+def _percentile(values: list[float], percentile: float, digits: int = 1) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
     index = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * percentile)))
-    return round(ordered[index], 1)
+    return round(ordered[index], digits)
 
 
 def _run_error_summary(run: dict[str, Any]) -> str:
@@ -1270,13 +1481,18 @@ def get_run_analytics(
     workflow_stats: dict[str, dict[str, Any]] = {}
     action_stats: dict[str, dict[str, Any]] = {}
     durations: list[float] = []
+    run_costs: list[float] = []
     recent_errors: list[dict[str, Any]] = []
     dry_runs = 0
     live_runs = 0
+    total_cost_usd = 0.0
 
     for run in runs:
         status = str(run.get("status") or "unknown")
         status_counts[status] = status_counts.get(status, 0) + 1
+        run_cost = _run_float(_cost_for_run(run).get("cost_usd"))
+        run_costs.append(run_cost)
+        total_cost_usd += run_cost
         if run.get("dry_run") is True:
             dry_runs += 1
         else:
@@ -1296,10 +1512,17 @@ def get_run_analytics(
                 "total_runs": 0,
                 "failed_runs": 0,
                 "completed_runs": 0,
+                "total_cost_usd": 0.0,
+                "avg_cost_usd": 0.0,
                 "last_run_at": 0.0,
             },
         )
         workflow_item["total_runs"] += 1
+        workflow_item["total_cost_usd"] = round(_run_float(workflow_item.get("total_cost_usd")) + run_cost, 6)
+        workflow_item["avg_cost_usd"] = round(
+            _run_float(workflow_item.get("total_cost_usd")) / max(1, int(workflow_item.get("total_runs", 0) or 0)),
+            6,
+        )
         workflow_item["last_run_at"] = max(_run_float(workflow_item.get("last_run_at")), _run_float(run.get("started_at")))
         if status == "completed":
             workflow_item["completed_runs"] += 1
@@ -1336,9 +1559,15 @@ def get_run_analytics(
                     "approval_required": 0,
                     "duration_total_ms": 0.0,
                     "avg_duration_ms": 0.0,
+                    "total_cost_usd": 0.0,
+                    "avg_cost_usd": 0.0,
                 },
             )
             action_item["total"] += 1
+            output_raw = entry.get("output")
+            output = output_raw if isinstance(output_raw, dict) else {}
+            entry_cost = _run_float(_cost_for_run(output).get("cost_usd"))
+            action_item["total_cost_usd"] = round(_run_float(action_item.get("total_cost_usd")) + entry_cost, 6)
             entry_status = str(entry.get("status") or "")
             if entry_status == "failed":
                 action_item["failed"] += 1
@@ -1352,6 +1581,7 @@ def get_run_analytics(
         total_actions = int(item.get("total", 0) or 0)
         if total_actions:
             item["avg_duration_ms"] = round(_run_float(item.get("duration_total_ms")) / total_actions, 1)
+            item["avg_cost_usd"] = round(_run_float(item.get("total_cost_usd")) / total_actions, 6)
         item.pop("duration_total_ms", None)
 
     completed = status_counts.get("completed", 0)
@@ -1365,6 +1595,9 @@ def get_run_analytics(
         "failure_rate": round(failed / total, 3) if total else 0.0,
         "avg_duration_ms": round(sum(durations) / len(durations), 1) if durations else 0.0,
         "p95_duration_ms": _percentile(durations, 0.95),
+        "total_cost_usd": round(total_cost_usd, 6),
+        "avg_cost_usd": round(total_cost_usd / total, 6) if total else 0.0,
+        "p95_cost_usd": _percentile(run_costs, 0.95, digits=6),
         "recent_errors": recent_errors[:8],
         "workflow_stats": sorted(
             workflow_stats.values(),
@@ -1903,6 +2136,7 @@ def _audit_action_output(result: dict[str, Any]) -> dict[str, Any]:
         "attempts",
         "prompt",
         "routine_id",
+        "cost",
     }
     return {key: _audit_value(value, 4000) for key, value in result.items() if key in allowed}
 
@@ -1916,7 +2150,8 @@ def _timeline_entry(
     result: dict[str, Any],
     attempt_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    output = _audit_action_output(result)
+    entry = {
         "id": uuid.uuid4().hex,
         "action_id": action.get("id"),
         "type": str(action.get("type", "prompt")),
@@ -1926,9 +2161,13 @@ def _timeline_entry(
         "completed_at": completed_at,
         "duration_ms": round((completed_at - started_at) * 1000, 1),
         "input": _audit_action_input(action),
-        "output": _audit_action_output(result),
+        "output": output,
         "attempts": attempt_trace or [],
     }
+    cost = output.get("cost")
+    if isinstance(cost, dict):
+        entry["cost"] = cost
+    return entry
 
 
 async def _run_action_once(
@@ -2032,15 +2271,18 @@ async def _execute_workflow_snapshot(
     timeline: list[dict[str, Any]] = []
     status = "completed"
     error = ""
+    run_cost_started = _cost_snapshot()
 
     try:
         for action in workflow.get("actions", []):
             action_started_at = _now()
+            action_cost_started = _cost_snapshot()
             if not _condition_matches(action, action_results):
                 skipped_result = _base_action_result(action, dry_run=dry_run)
                 skipped_result.update({"status": "skipped", "message": _condition_message(action)})
-                action_results.append(skipped_result)
                 action_completed_at = _now()
+                skipped_result["cost"] = _cost_delta(action_cost_started, _cost_snapshot())
+                action_results.append(skipped_result)
                 timeline.append(_timeline_entry(
                     action=action,
                     status="skipped",
@@ -2106,8 +2348,9 @@ async def _execute_workflow_snapshot(
                         stop_after_action = True
             if action_result is not None:
                 action_result["attempt_trace"] = attempt_trace
-                action_results.append(action_result)
                 action_completed_at = _now()
+                action_result["cost"] = _cost_delta(action_cost_started, _cost_snapshot())
+                action_results.append(action_result)
                 timeline.append(_timeline_entry(
                     action=action,
                     status=str(action_result.get("status") or "completed"),
@@ -2140,6 +2383,7 @@ async def _execute_workflow_snapshot(
         "started_at": started_at,
         "completed_at": completed_at,
         "duration_ms": round((completed_at - started_at) * 1000, 1),
+        "cost": _cost_delta(run_cost_started, _cost_snapshot()),
     }
     _record_run(run)
     _mark_workflow_run(workflow_id, timestamp=started_at)
@@ -2224,8 +2468,8 @@ def get_overview() -> dict[str, Any]:
         "pending_approval_count": len(list_approvals(status="pending", limit=200)),
         "recent_runs": runs,
         "next_foundation_steps": [
-            "Add workflow test suites with explicit assertions before release promotion.",
-            "Attribute LLM cost to workflow runs and actions for budget-aware automation tuning.",
             "Add team presence and conflict handling for simultaneous workflow edits.",
+            "Add reusable workflow template marketplace packaging and import/export.",
+            "Add macOS app lifecycle controls for launch agents, restart, and diagnostics.",
         ],
     }
