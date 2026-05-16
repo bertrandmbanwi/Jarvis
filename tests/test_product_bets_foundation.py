@@ -47,6 +47,27 @@ async def test_workflow_template_can_dry_run(product_bet_files):
     assert workflows.get_overview()["workflow_count"] == 1
 
 
+def test_starter_template_exports_as_portable_package(product_bet_files):
+    package = workflows.export_template_package("morning_brief")
+
+    assert package is not None
+    assert package["schema"] == workflows.WORKFLOW_PACKAGE_SCHEMA
+    assert package["kind"] == "workflow_template"
+    assert package["source"]["template_id"] == "morning_brief"
+    assert package["requirements"]["permissions"] == ["calendar:read", "llm:chat", "mail:read"]
+
+    imported = workflows.import_workflow_package(
+        package,
+        actor_id="operator",
+        name="Imported Morning Brief",
+    )
+
+    assert imported["status"] == "imported"
+    assert imported["workflow"]["name"] == "Imported Morning Brief"
+    assert imported["workflow"]["permissions"] == ["calendar:read", "llm:chat", "mail:read"]
+    assert imported["workflow"]["tags"][-1] == "imported"
+
+
 @pytest.mark.asyncio
 async def test_workflow_runner_executes_prompt_action(product_bet_files):
     workflow = workflows.create_workflow(
@@ -181,6 +202,56 @@ async def test_workflow_timeline_records_skipped_conditions(product_bet_files):
     assert run is not None
     assert [item["status"] for item in run["timeline"]] == ["completed", "skipped"]
     assert run["timeline"][1]["output"]["message"].startswith("Condition not met")
+
+
+def test_workflow_package_round_trip_preserves_release_controls(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Packaged workflow",
+        description="Portable automation",
+        trigger={"type": "schedule", "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=15"},
+        actions=[{
+            "type": "prompt",
+            "title": "Ask",
+            "prompt": "Summarize my day.",
+            "retry_count": 1,
+            "on_error": "continue",
+        }],
+        assertions=[{"type": "output_not_contains", "title": "No errors", "value": "error"}],
+        budget={"max_cost_per_run_usd": 0.02},
+        tags=["daily"],
+        permissions=["llm:chat"],
+    )
+    version = workflows.list_workflow_versions(workflow["id"])[0]
+
+    package = workflows.export_workflow_package(workflow["id"], version_id=version["id"])
+    assert package is not None
+    assert package["schema_version"] == workflows.WORKFLOW_PACKAGE_SCHEMA_VERSION
+    assert package["source"]["workflow_version_id"] == version["id"]
+    assert package["workflow"]["budget"]["max_cost_per_run_usd"] == 0.02
+
+    validation = workflows.validate_workflow_package(json.loads(json.dumps(package)))
+    imported = workflows.import_workflow_package(
+        package,
+        actor_id="operator",
+        name="Imported Packaged Workflow",
+    )
+
+    assert validation["valid"] is True
+    assert imported["status"] == "imported"
+    assert imported["workflow"]["name"] == "Imported Packaged Workflow"
+    assert imported["workflow"]["trigger"]["rrule"] == "FREQ=DAILY;BYHOUR=9;BYMINUTE=15"
+    assert imported["workflow"]["assertions"][0]["type"] == "output_not_contains"
+    assert imported["workflow"]["budget"]["max_cost_per_run_usd"] == 0.02
+    assert workflows.list_workflow_versions(imported["workflow"]["id"])[0]["note"].startswith("Imported workflow package")
+
+
+def test_workflow_package_validation_rejects_wrong_schema(product_bet_files):
+    result = workflows.import_workflow_package(
+        {"schema": "other.schema", "schema_version": 1, "kind": "workflow_template", "workflow": {"name": "Bad"}},
+    )
+
+    assert result["status"] == "invalid"
+    assert "Unsupported package schema" in result["validation"]["errors"][0]
 
 
 def test_team_roles_and_capabilities(product_bet_files):

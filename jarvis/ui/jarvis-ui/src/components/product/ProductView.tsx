@@ -61,6 +61,18 @@ interface WorkflowTemplate {
   tags?: string[];
 }
 
+interface WorkflowPackage {
+  schema: string;
+  schema_version: number;
+  kind: string;
+  id?: string;
+  name?: string;
+  description?: string;
+  tags?: string[];
+  workflow?: Partial<Workflow>;
+  source?: Record<string, unknown>;
+}
+
 interface Workflow {
   id: string;
   version?: number;
@@ -429,6 +441,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [calendar, setCalendar] = useState<CalendarState>(emptyCalendar);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [message, setMessage] = useState("");
+  const [workflowPackageText, setWorkflowPackageText] = useState("");
   const [customName, setCustomName] = useState("Quick Workflow");
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
   const [editingBaseVersion, setEditingBaseVersion] = useState<number | null>(null);
@@ -611,6 +624,41 @@ export default function ProductView({ authToken }: ProductViewProps) {
     });
     setMessage("Workflow created from template.");
     await loadData();
+  }
+
+  async function exportTemplatePackage(templateId: string) {
+    const data = await api(`/workflows/templates/${templateId}/package`);
+    setWorkflowPackageText(JSON.stringify(data.package || data, null, 2));
+    setMessage("Starter package ready.");
+  }
+
+  async function exportWorkflowPackage(workflow: Workflow) {
+    const data = await api(`/workflows/${workflow.id}/package`);
+    setWorkflowPackageText(JSON.stringify(data.package || data, null, 2));
+    setMessage(`${workflow.name} package ready.`);
+  }
+
+  async function importWorkflowPackage() {
+    let packageData: WorkflowPackage;
+    try {
+      packageData = JSON.parse(workflowPackageText) as WorkflowPackage;
+    } catch {
+      setMessage("Package JSON is not valid.");
+      return;
+    }
+    const data = await api("/workflows/import-package", {
+      method: "POST",
+      body: JSON.stringify({
+        package: packageData,
+        actor_id: "local-owner",
+      }),
+    });
+    setMessage(`Imported ${data.workflow?.name || packageData.name || "workflow package"}.`);
+    setWorkflowPackageText("");
+    await loadData();
+    if (data.workflow?.id) {
+      await loadWorkflowVersions(data.workflow);
+    }
   }
 
   async function createCustomWorkflow() {
@@ -975,15 +1023,42 @@ export default function ProductView({ authToken }: ProductViewProps) {
                     <p className="text-xs text-jarvis-text-dim/55 leading-relaxed mt-2 flex-1">
                       {template.description}
                     </p>
-                    <button
-                      className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md mt-3"
-                      onClick={() => createFromTemplate(template.id)}
-                    >
-                      Create
-                    </button>
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                      <button
+                        className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                        onClick={() => createFromTemplate(template.id)}
+                      >
+                        Create
+                      </button>
+                      <button
+                        className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                        onClick={() => exportTemplatePackage(template.id)}
+                      >
+                        Package
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
+            </section>
+
+            <section className="jarvis-card">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="jarvis-card-header mb-0">Workflow Packages</div>
+                <button
+                  className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md disabled:opacity-40"
+                  disabled={!workflowPackageText.trim()}
+                  onClick={importWorkflowPackage}
+                >
+                  Import Package
+                </button>
+              </div>
+              <textarea
+                className="jarvis-input min-h-36 resize-y font-mono text-2xs"
+                value={workflowPackageText}
+                onChange={(event) => setWorkflowPackageText(event.target.value)}
+                placeholder='{"schema":"jarvis.workflow.package",...}'
+              />
             </section>
 
             <section className="jarvis-card">
@@ -1195,6 +1270,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
                         </button>
                         <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => loadWorkflowVersions(workflow)}>
                           History
+                        </button>
+                        <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => exportWorkflowPackage(workflow)}>
+                          Export
                         </button>
                         <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => runWorkflow(workflow.id, true)}>
                           Dry Run
