@@ -351,6 +351,10 @@ def list_runs(workflow_id: str = "", limit: int = 50) -> list[dict[str, Any]]:
     return sorted(runs, key=lambda run: float(run.get("started_at", 0)), reverse=True)[: max(1, min(limit, 200))]
 
 
+def get_run(run_id: str) -> dict[str, Any] | None:
+    return next((run for run in _load_runs() if run.get("id") == run_id), None)
+
+
 def list_approvals(status: str = "pending", limit: int = 50) -> list[dict[str, Any]]:
     approvals = _load_approvals()
     if status:
@@ -699,6 +703,93 @@ def _retry_delay_seconds(action: dict[str, Any]) -> float:
     return max(0, min(retry_delay_ms, 30000)) / 1000
 
 
+def _audit_value(value: Any, limit: int = 2000) -> Any:
+    if isinstance(value, str):
+        return _clean_text(value, limit)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_audit_value(item, 500) for item in value[:25]]
+    if isinstance(value, dict):
+        return {
+            str(key): _audit_value(item, 500)
+            for key, item in value.items()
+            if str(key) not in {"client_secret", "access_token", "refresh_token"}
+        }
+    return _clean_text(value, limit)
+
+
+def _audit_action_input(action: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "id",
+        "type",
+        "title",
+        "prompt",
+        "routine_id",
+        "routine_name",
+        "message",
+        "calendar_name",
+        "calendar_id",
+        "provider",
+        "timezone",
+        "location",
+        "notes",
+        "start",
+        "start_date",
+        "end",
+        "end_date",
+        "mailbox",
+        "attendees",
+        "days",
+        "count",
+        "condition",
+        "retry_count",
+        "retry_delay_ms",
+        "on_error",
+        "requires_approval",
+        "all_day",
+    }
+    return {key: _audit_value(value) for key, value in action.items() if key in allowed}
+
+
+def _audit_action_output(result: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "status",
+        "message",
+        "response",
+        "error",
+        "approval_id",
+        "attempts",
+        "prompt",
+        "routine_id",
+    }
+    return {key: _audit_value(value, 4000) for key, value in result.items() if key in allowed}
+
+
+def _timeline_entry(
+    *,
+    action: dict[str, Any],
+    status: str,
+    started_at: float,
+    completed_at: float,
+    result: dict[str, Any],
+    attempt_trace: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": uuid.uuid4().hex,
+        "action_id": action.get("id"),
+        "type": str(action.get("type", "prompt")),
+        "title": action.get("title", ""),
+        "status": status,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "duration_ms": round((completed_at - started_at) * 1000, 1),
+        "input": _audit_action_input(action),
+        "output": _audit_action_output(result),
+        "attempts": attempt_trace or [],
+    }
+
+
 async def _run_action_once(
     *,
     action: dict[str, Any],
@@ -797,22 +888,34 @@ async def run_workflow(
     started_at = run_time or _now()
     run_id = uuid.uuid4().hex
     action_results: list[dict[str, Any]] = []
+    timeline: list[dict[str, Any]] = []
     status = "completed"
     error = ""
 
     try:
         for action in workflow.get("actions", []):
+            action_started_at = _now()
             if not _condition_matches(action, action_results):
                 skipped_result = _base_action_result(action, dry_run=dry_run)
                 skipped_result.update({"status": "skipped", "message": _condition_message(action)})
                 action_results.append(skipped_result)
+                action_completed_at = _now()
+                timeline.append(_timeline_entry(
+                    action=action,
+                    status="skipped",
+                    started_at=action_started_at,
+                    completed_at=action_completed_at,
+                    result=skipped_result,
+                ))
                 continue
 
             attempts = _retry_attempts(action)
             retry_delay = _retry_delay_seconds(action)
             action_result: dict[str, Any] | None = None
+            attempt_trace: list[dict[str, Any]] = []
             stop_after_action = False
             for attempt in range(1, attempts + 1):
+                attempt_started_at = _now()
                 try:
                     action_result = await _run_action_once(
                         action=action,
@@ -824,8 +927,25 @@ async def run_workflow(
                     )
                     if attempts > 1:
                         action_result["attempts"] = attempt
+                    attempt_completed_at = _now()
+                    attempt_trace.append({
+                        "attempt": attempt,
+                        "status": str(action_result.get("status") or "completed"),
+                        "started_at": attempt_started_at,
+                        "completed_at": attempt_completed_at,
+                        "duration_ms": round((attempt_completed_at - attempt_started_at) * 1000, 1),
+                    })
                     break
                 except Exception as exc:
+                    attempt_completed_at = _now()
+                    attempt_trace.append({
+                        "attempt": attempt,
+                        "status": "failed",
+                        "error": _clean_text(exc, 1000),
+                        "started_at": attempt_started_at,
+                        "completed_at": attempt_completed_at,
+                        "duration_ms": round((attempt_completed_at - attempt_started_at) * 1000, 1),
+                    })
                     if attempt < attempts:
                         if retry_delay:
                             await asyncio.sleep(retry_delay)
@@ -844,7 +964,17 @@ async def run_workflow(
                         error = str(exc)
                         stop_after_action = True
             if action_result is not None:
+                action_result["attempt_trace"] = attempt_trace
                 action_results.append(action_result)
+                action_completed_at = _now()
+                timeline.append(_timeline_entry(
+                    action=action,
+                    status=str(action_result.get("status") or "completed"),
+                    started_at=action_started_at,
+                    completed_at=action_completed_at,
+                    result=action_result,
+                    attempt_trace=attempt_trace,
+                ))
             if stop_after_action:
                 break
     except Exception as exc:
@@ -860,6 +990,7 @@ async def run_workflow(
         "triggered_by": triggered_by,
         "dry_run": dry_run,
         "action_results": action_results,
+        "timeline": timeline,
         "error": error,
         "started_at": started_at,
         "completed_at": completed_at,
