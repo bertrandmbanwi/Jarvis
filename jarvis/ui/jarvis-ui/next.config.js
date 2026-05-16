@@ -26,6 +26,11 @@ const nextConfig = {
         destination: `http://127.0.0.1:${apiPort}/:path*`,
       },
       {
+        // Compatibility for older browser bundles that queried auth directly.
+        source: "/auth/:path*",
+        destination: `http://127.0.0.1:${apiPort}/auth/:path*`,
+      },
+      {
         // WebSocket endpoint: the Next.js dev server proxies upgrade
         // requests through rewrites, so this handles ws:// connections too.
         source: "/jarvis-ws",
