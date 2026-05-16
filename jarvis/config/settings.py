@@ -62,6 +62,15 @@ WORKFLOW_SCHEDULER_ENABLED = os.getenv("WORKFLOW_SCHEDULER_ENABLED", "false").lo
 CONTEXT_RECENT_MESSAGES = int(os.getenv("CONTEXT_RECENT_MESSAGES", "10"))
 CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("CONTEXT_SUMMARY_MAX_CHARS", "1800"))
 
+GOOGLE_CALENDAR_CLIENT_ID = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
+GOOGLE_CALENDAR_CLIENT_SECRET = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
+OUTLOOK_CALENDAR_CLIENT_ID = os.getenv("OUTLOOK_CALENDAR_CLIENT_ID", "")
+OUTLOOK_CALENDAR_CLIENT_SECRET = os.getenv("OUTLOOK_CALENDAR_CLIENT_SECRET", "")
+if not GOOGLE_CALENDAR_CLIENT_SECRET and _secret_lookup is not None:
+    GOOGLE_CALENDAR_CLIENT_SECRET = _secret_lookup("GOOGLE_CALENDAR_CLIENT_SECRET")
+if not OUTLOOK_CALENDAR_CLIENT_SECRET and _secret_lookup is not None:
+    OUTLOOK_CALENDAR_CLIENT_SECRET = _secret_lookup("OUTLOOK_CALENDAR_CLIENT_SECRET")
+
 # Maximum per-request cost premium (above the brain tier estimate) before the
 # tier router downgrades a deep-tier request to brain. Set to 0 to disable
 # cost-based downgrades entirely.

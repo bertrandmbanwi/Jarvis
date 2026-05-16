@@ -55,6 +55,10 @@ interface CalendarConnection {
   account_label: string;
   enabled: boolean;
   status: string;
+  client_id_configured?: boolean;
+  connected?: boolean;
+  token_expires_at?: number;
+  last_error?: string;
 }
 
 interface CalendarState {
@@ -110,6 +114,8 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [memberName, setMemberName] = useState("Operator");
   const [memberEmail, setMemberEmail] = useState("");
   const [memberRole, setMemberRole] = useState("member");
+  const [calendarClientIds, setCalendarClientIds] = useState<Record<string, string>>({});
+  const [calendarClientSecrets, setCalendarClientSecrets] = useState<Record<string, string>>({});
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const isJsonBody = typeof init?.body === "string";
@@ -223,6 +229,36 @@ export default function ProductView({ authToken }: ProductViewProps) {
       }),
     });
     setMessage("Calendar connection staged. OAuth can be connected next.");
+    await loadData();
+  }
+
+  async function saveCalendarCredentials(provider: string) {
+    await api(`/calendar/oauth/${provider}/credentials`, {
+      method: "PUT",
+      body: JSON.stringify({
+        client_id: calendarClientIds[provider] || "",
+        client_secret: calendarClientSecrets[provider] || "",
+      }),
+    });
+    setMessage(`${provider} credentials saved.`);
+    setCalendarClientSecrets((current) => ({ ...current, [provider]: "" }));
+    await loadData();
+  }
+
+  async function startCalendarOAuth(provider: string) {
+    const data = await api(`/calendar/oauth/${provider}/start`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (data.authorization_url) {
+      window.open(data.authorization_url, "_blank", "noopener,noreferrer");
+      setMessage(`${provider} authorization opened.`);
+    }
+  }
+
+  async function disconnectCalendar(provider: string) {
+    await api(`/calendar/oauth/${provider}/disconnect`, { method: "POST" });
+    setMessage(`${provider} disconnected.`);
     await loadData();
   }
 
@@ -406,14 +442,51 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 {Object.entries(calendar.providers).map(([provider, details]) => {
                   const connection = calendar.connections.find((item) => item.provider === provider);
                   return (
-                    <div key={provider} className="flex items-center justify-between gap-3 rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-2">
-                      <div>
-                        <div className="text-xs text-jarvis-text/70">{details.name}</div>
-                        <div className="text-2xs text-jarvis-text-dim/45">{connection?.status || "not_connected"}</div>
+                    <div key={provider} className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs text-jarvis-text/70">{details.name}</div>
+                          <div className="text-2xs text-jarvis-text-dim/45">{connection?.status || "not_connected"}</div>
+                        </div>
+                        <span className={`status-dot ${connection?.status === "connected" ? "connected" : "disconnected"}`} />
                       </div>
-                      <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => upsertCalendar(provider)}>
-                        Stage
-                      </button>
+                      {details.oauth_required ? (
+                        <div className="space-y-2">
+                          <input
+                            className="jarvis-input"
+                            value={calendarClientIds[provider] || ""}
+                            onChange={(event) => setCalendarClientIds((current) => ({ ...current, [provider]: event.target.value }))}
+                            placeholder={connection?.client_id_configured ? "Client ID saved" : "Client ID"}
+                          />
+                          <input
+                            className="jarvis-input"
+                            type="password"
+                            value={calendarClientSecrets[provider] || ""}
+                            onChange={(event) => setCalendarClientSecrets((current) => ({ ...current, [provider]: event.target.value }))}
+                            placeholder="Client secret"
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => saveCalendarCredentials(provider)}>
+                              Save
+                            </button>
+                            <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => startCalendarOAuth(provider)}>
+                              Connect
+                            </button>
+                            <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => disconnectCalendar(provider)}>
+                              Disconnect
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => upsertCalendar(provider)}>
+                          Stage
+                        </button>
+                      )}
+                      {connection?.last_error && (
+                        <div className="text-2xs text-red-300/75">
+                          {connection.last_error}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

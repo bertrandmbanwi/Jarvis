@@ -25,6 +25,10 @@ settings_router = APIRouter(prefix="/api/settings", tags=["settings"])
 # Safe configuration keys that can be updated via API
 SAFE_CONFIG_KEYS = {
     "ANTHROPIC_API_KEY",
+    "GOOGLE_CALENDAR_CLIENT_ID",
+    "GOOGLE_CALENDAR_CLIENT_SECRET",
+    "OUTLOOK_CALENDAR_CLIENT_ID",
+    "OUTLOOK_CALENDAR_CLIENT_SECRET",
     "CLAUDE_DEFAULT_TIER",
     "CLAUDE_FAST_MODEL",
     "CLAUDE_BRAIN_MODEL",
@@ -204,6 +208,8 @@ async def get_settings() -> dict:
             "ollama_url": settings.OLLAMA_BASE_URL,
             "ollama_model": settings.OLLAMA_MODEL,
             "ollama_fast_model": settings.OLLAMA_FAST_MODEL,
+            "google_calendar_configured": bool(settings.GOOGLE_CALENDAR_CLIENT_ID),
+            "outlook_calendar_configured": bool(settings.OUTLOOK_CALENDAR_CLIENT_ID),
         },
         "secrets": get_secret_backend_status(),
     }
@@ -383,7 +389,11 @@ async def update_settings(
         # Update with new values
         updated = []
         for key, value in updates.items():
-            if key == "ANTHROPIC_API_KEY":
+            if key in {
+                "ANTHROPIC_API_KEY",
+                "GOOGLE_CALENDAR_CLIENT_SECRET",
+                "OUTLOOK_CALENDAR_CLIENT_SECRET",
+            }:
                 secret_value = str(value)
                 env_content.pop(key, None)
                 if secret_value:
