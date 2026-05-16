@@ -56,7 +56,10 @@ Complex requests are automatically decomposed into subtasks by the planner agent
 SQLite-backed semantic memory with full-text search stores conversation context. JARVIS learns your implicit preferences, remembers explicit facts ("my dog's name is Max"), and improves its task planning based on past successes and failures. An evolution pipeline with A/B testing tracks performance across sessions, and a success tracker logs task outcomes for long-term analysis.
 
 **Settings and Runtime Configuration**
-A REST API (`/api/settings`) and an in-UI Settings Panel let you adjust preferences at runtime: model tiers, cost alerts, TTS voice, and more. Changes persist across restarts.
+A REST API (`/api/settings`) and an in-UI Settings Panel let you adjust preferences at runtime: model tiers, cost alerts, TTS voice, and more. Non-secret changes persist to `.env`; API keys updated through the API are stored in the secure keyring backend, which maps to macOS Keychain on a normal Mac install.
+
+**Operational Guardrails**
+Every tool has a formal permission classification and redacted audit trail. Requests, background jobs, and tool executions share trace IDs, with spans written to JSONL for local diagnostics. SQLite stores are versioned through migrations, and long-running chat jobs can be queued through durable `/jobs` endpoints.
 
 **Conversation Quality Monitor**
 Responses are automatically checked for quality issues: length limits for TTS, character consistency, response structure, and formatting. The QA verification agent retries tasks that do not meet quality thresholds.
@@ -163,7 +166,12 @@ python -m pytest tests/ -v
 
 # With coverage
 python -m pytest tests/ -v --cov=jarvis --cov-report=term-missing
+
+# Full validation stack
+bash scripts/validate.sh
 ```
+
+CI runs backend lint/type/test/security checks, tool contract checks, offline evals, frontend lint/build/audit, and Playwright UI smoke tests. See **[docs/OPERATIONS.md](docs/OPERATIONS.md)** for traces, audits, jobs, install, and update operations.
 
 ## Tech Stack
 

@@ -7,6 +7,7 @@ All endpoints validate input and reject attempts to execute arbitrary code.
 Only safe configuration keys are allowed for updates.
 """
 import logging
+import os
 import time
 from typing import Annotated, Any
 
@@ -15,6 +16,7 @@ from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
 
 from jarvis.config import settings
+from jarvis.core.secrets import SecretStoreError, delete_secret, get_secret_backend_status, set_secret
 
 logger = logging.getLogger("jarvis.settings_api")
 
@@ -148,6 +150,7 @@ async def get_settings() -> dict:
             "ollama_model": settings.OLLAMA_MODEL,
             "ollama_fast_model": settings.OLLAMA_FAST_MODEL,
         },
+        "secrets": get_secret_backend_status(),
     }
 
 
@@ -272,6 +275,7 @@ async def get_status() -> dict:
         "stt": settings.STT_ENGINE,
         "memory_count": memory_count,
         "uptime_seconds": round(uptime, 1),
+        "secrets": get_secret_backend_status(),
     }
 
 
@@ -280,7 +284,8 @@ async def update_settings(
     body: Annotated[dict[str, Any] | None, Body()] = None,
 ) -> dict:
     """
-    Update JARVIS settings and write to .env file.
+    Update JARVIS settings. Non-secret values are written to .env; secrets are
+    stored in the secure backend (macOS Keychain via keyring when available).
 
     Args:
         updates: Dict of safe configuration keys to update
@@ -311,7 +316,7 @@ async def update_settings(
         # Read existing .env
         env_content = {}
         if env_path.exists():
-            with open(env_path) as f:
+            with open(env_path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#"):
@@ -323,13 +328,28 @@ async def update_settings(
         # Update with new values
         updated = []
         for key, value in updates.items():
-            env_content[key] = _env_value(value)
+            if key == "ANTHROPIC_API_KEY":
+                secret_value = str(value)
+                env_content.pop(key, None)
+                if secret_value:
+                    set_secret(key, secret_value)
+                    os.environ[key] = secret_value
+                else:
+                    delete_secret(key)
+                    os.environ.pop(key, None)
+                settings.ANTHROPIC_API_KEY = secret_value
+            else:
+                env_content[key] = _env_value(value)
+                os.environ[key] = _env_value(value)
+                if hasattr(settings, key):
+                    setattr(settings, key, value)
             updated.append(key)
 
         # Write back to .env
-        with open(env_path, "w") as f:
+        with open(env_path, "w", encoding="utf-8") as f:
             f.write("# JARVIS Configuration\n")
-            f.write("# Auto-generated; edits may be overwritten\n\n")
+            f.write("# Auto-generated; edits may be overwritten\n")
+            f.write("# Secrets such as ANTHROPIC_API_KEY are stored in macOS Keychain.\n\n")
             for key, value in sorted(env_content.items()):
                 f.write(f"{key}={value}\n")
 
@@ -341,6 +361,12 @@ async def update_settings(
             "error": None,
         }
 
+    except SecretStoreError as e:
+        logger.error("Secret update failed: %s", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update secret: {str(e)}",
+        ) from e
     except Exception as e:
         logger.error("Settings update failed: %s", str(e))
         raise HTTPException(

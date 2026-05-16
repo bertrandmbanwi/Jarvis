@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 
 from jarvis.config import settings
+from jarvis.core.migrations import Migration, add_column_if_missing, ensure_migrations
 
 logger = logging.getLogger("jarvis.memory.conversation")
 
@@ -38,6 +39,7 @@ class ConversationTurn:
     tier_used: str = ""
     tool_calls: list = field(default_factory=list)
     request_id: str = ""
+    trace_id: str = ""
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -72,6 +74,27 @@ def init_conversation_db() -> None:
         conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_turns_request_id
         ON conversation_turns(request_id)
+        """)
+        ensure_migrations(
+            conn,
+            "conversation",
+            [
+                Migration(1, "baseline_conversation_schema", lambda _conn: None),
+                Migration(
+                    2,
+                    "conversation_trace_id",
+                    lambda conn_: add_column_if_missing(
+                        conn_,
+                        "conversation_turns",
+                        "trace_id",
+                        "TEXT DEFAULT ''",
+                    ),
+                ),
+            ],
+        )
+        conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_turns_trace_id
+        ON conversation_turns(trace_id)
         """)
         conn.commit()
         conn.close()
@@ -137,7 +160,7 @@ def load_conversation(limit: int = 100) -> list[ConversationTurn]:
     try:
         conn = _get_conn()
         rows = conn.execute(
-            "SELECT role, content, timestamp, tier_used, request_id "
+            "SELECT role, content, timestamp, tier_used, request_id, trace_id "
             "FROM conversation_turns ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -151,6 +174,7 @@ def load_conversation(limit: int = 100) -> list[ConversationTurn]:
                 timestamp=row["timestamp"],
                 tier_used=row["tier_used"] or "",
                 request_id=row["request_id"] or "",
+                trace_id=row["trace_id"] or "",
             ))
         return turns
     except Exception as e:
@@ -163,9 +187,9 @@ def save_turn(turn: ConversationTurn) -> None:
     try:
         conn = _get_conn()
         conn.execute(
-            "INSERT INTO conversation_turns (role, content, timestamp, tier_used, request_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (turn.role, turn.content, turn.timestamp, turn.tier_used, turn.request_id),
+            "INSERT INTO conversation_turns (role, content, timestamp, tier_used, request_id, trace_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (turn.role, turn.content, turn.timestamp, turn.tier_used, turn.request_id, turn.trace_id),
         )
         conn.commit()
         conn.close()
@@ -180,10 +204,10 @@ def save_turns_batch(turns: list[ConversationTurn]) -> None:
     try:
         conn = _get_conn()
         conn.executemany(
-            "INSERT INTO conversation_turns (role, content, timestamp, tier_used, request_id) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO conversation_turns (role, content, timestamp, tier_used, request_id, trace_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             [
-                (t.role, t.content, t.timestamp, t.tier_used, t.request_id)
+                (t.role, t.content, t.timestamp, t.tier_used, t.request_id, t.trace_id)
                 for t in turns
             ],
         )

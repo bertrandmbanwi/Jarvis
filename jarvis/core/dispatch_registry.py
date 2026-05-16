@@ -13,10 +13,16 @@ import sqlite3
 from datetime import datetime
 
 from jarvis.config import settings
+from jarvis.core.migrations import Migration, add_column_if_missing, ensure_migrations
 
 logger = logging.getLogger("jarvis.core.dispatch")
 
 DB_PATH = settings.DATA_DIR / "jarvis_dispatch.db"
+
+
+def _add_dispatch_trace_columns(conn: sqlite3.Connection) -> None:
+    add_column_if_missing(conn, "dispatches", "trace_id", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "task_log", "trace_id", "TEXT DEFAULT ''")
 
 
 class DispatchRegistry:
@@ -106,6 +112,17 @@ class DispatchRegistry:
             # Indexes for suggestions
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_task ON suggestions(task_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_suggestions_accepted ON suggestions(accepted)")
+
+            ensure_migrations(
+                conn,
+                "dispatch",
+                [
+                    Migration(1, "baseline_dispatch_schema", lambda _conn: None),
+                    Migration(2, "dispatch_trace_columns", _add_dispatch_trace_columns),
+                ],
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_dispatches_trace ON dispatches(trace_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_log_trace ON task_log(trace_id)")
 
             conn.commit()
             conn.close()

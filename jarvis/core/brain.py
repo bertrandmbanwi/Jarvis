@@ -27,6 +27,7 @@ from jarvis.core.llm import JarvisLLM
 from jarvis.core.monitor import ConversationMonitor
 from jarvis.core.perf import estimate_request_cost, estimate_tokens, perf_tracker
 from jarvis.core.proactive import ProactiveEngine
+from jarvis.core.tracing import get_trace_id, record_event, trace_span
 from jarvis.memory.conversation_store import (
     ConversationTurn,
     load_conversation,
@@ -295,11 +296,13 @@ class JarvisBrain:
             return "I didn't catch that. Could you say something?"
 
         start_time = time.time()
+        trace_id = get_trace_id()
         self._current_request_id = uuid.uuid4().hex[:12]
         logger.info(
             "[req:%s] Processing: '%s'",
             self._current_request_id, user_input[:100],
         )
+        record_event("brain.request.started", request_id=self._current_request_id, trace_id=trace_id)
 
         self.proactive.mark_interaction()
 
@@ -311,6 +314,7 @@ class JarvisBrain:
         user_turn = ConversationTurn(
             role="user", content=user_input,
             request_id=self._current_request_id,
+            trace_id=trace_id,
         )
         self.conversation.append(user_turn)
         self._save_turn(user_turn)
@@ -329,20 +333,24 @@ class JarvisBrain:
             logger.info("[req:%s] Routing to CHAT mode [tier: fast].", self._current_request_id)
             enriched_context = self.memory.get_enriched_context(user_input, top_k=3)
             enriched_input = f"{enriched_context}\n\nUser: {user_input}" if enriched_context else user_input
-            response = await self.llm.chat(enriched_input, history, tier="fast")
+            with trace_span("brain.chat", request_id=self._current_request_id, tier="fast"):
+                response = await self.llm.chat(enriched_input, history, tier="fast")
         else:
             should_plan = await self.planner.should_decompose(user_input)
 
             if should_plan:
                 logger.info("[req:%s] Routing to PLAN+EXECUTE mode [tier: %s].", self._current_request_id, tier)
-                response = await self._execute_plan(user_input, history, tier)
+                with trace_span("brain.plan_execute", request_id=self._current_request_id, tier=tier):
+                    response = await self._execute_plan(user_input, history, tier)
             else:
                 logger.info("[req:%s] Routing to AGENT mode [tier: %s].", self._current_request_id, tier)
-                response = await self.agent.execute(user_input, history, tier=tier)
+                with trace_span("brain.agent_execute", request_id=self._current_request_id, tier=tier):
+                    response = await self.agent.execute(user_input, history, tier=tier)
 
         assistant_turn = ConversationTurn(
             role="assistant", content=response, tier_used=tier,
             request_id=self._current_request_id,
+            trace_id=trace_id,
         )
         self.conversation.append(assistant_turn)
 
@@ -430,6 +438,7 @@ class JarvisBrain:
             "[req:%s] Response generated in %.2fs [tier: %s]: '%s'",
             self._current_request_id, elapsed, tier, response[:100],
         )
+        record_event("brain.request.completed", request_id=self._current_request_id, tier=tier, elapsed_s=elapsed)
 
         return response
 
@@ -449,9 +458,10 @@ class JarvisBrain:
         tier = _select_tier(user_input)
 
         request_id = uuid.uuid4().hex[:12]
+        trace_id = get_trace_id()
 
         if tier == "fast" and _is_chat_only(user_input):
-            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id)
+            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
             self.conversation.append(user_turn)
             self._save_turn(user_turn)
 
@@ -470,7 +480,7 @@ class JarvisBrain:
 
             complete = "".join(full_response)
             assistant_turn = ConversationTurn(
-                role="assistant", content=complete, tier_used="fast", request_id=request_id,
+                role="assistant", content=complete, tier_used="fast", request_id=request_id, trace_id=trace_id,
             )
             self.conversation.append(assistant_turn)
             self._save_turn(assistant_turn)
@@ -479,7 +489,7 @@ class JarvisBrain:
                 metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
             )
         else:
-            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id)
+            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
             self.conversation.append(user_turn)
             self._save_turn(user_turn)
 
@@ -506,7 +516,7 @@ class JarvisBrain:
                 complete = "".join(full_response)
 
             assistant_turn = ConversationTurn(
-                role="assistant", content=complete, tier_used=tier, request_id=request_id,
+                role="assistant", content=complete, tier_used=tier, request_id=request_id, trace_id=trace_id,
             )
             self.conversation.append(assistant_turn)
             self._save_turn(assistant_turn)
