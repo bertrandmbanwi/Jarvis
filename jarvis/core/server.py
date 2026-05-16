@@ -846,6 +846,7 @@ class WorkflowRequest(BaseModel):
     permissions: list[str] = []
     actor_id: str = "local-owner"
     version_note: str = ""
+    active_release_channel: str | None = None
 
 
 class WorkflowTemplateRequest(BaseModel):
@@ -857,6 +858,7 @@ class WorkflowTemplateRequest(BaseModel):
 class WorkflowRunRequest(BaseModel):
     background: bool = False
     dry_run: bool = False
+    release_channel: str | None = None
 
 
 class WorkflowApprovalRequest(BaseModel):
@@ -867,6 +869,13 @@ class WorkflowApprovalRequest(BaseModel):
 class WorkflowVersionRestoreRequest(BaseModel):
     actor_id: str = "local-owner"
     note: str = ""
+
+
+class WorkflowPublishRequest(BaseModel):
+    channel: str = "stable"
+    actor_id: str = "local-owner"
+    note: str = ""
+    activate: bool = True
 
 
 class SchedulerRunRequest(BaseModel):
@@ -986,7 +995,12 @@ async def _run_chat_job(job_id: str, message: str) -> None:
         reset_trace_id(token)
 
 
-async def _run_workflow_job(job_id: str, workflow_id: str, dry_run: bool = False) -> None:
+async def _run_workflow_job(
+    job_id: str,
+    workflow_id: str,
+    dry_run: bool = False,
+    release_channel: str | None = None,
+) -> None:
     job = jobs.get_job(job_id)
     if job is None or job.status == jobs.JobStatus.CANCELLED.value:
         return
@@ -1000,6 +1014,7 @@ async def _run_workflow_job(job_id: str, workflow_id: str, dry_run: bool = False
             runner=brain.process if not dry_run else None,
             triggered_by="background",
             dry_run=dry_run,
+            release_channel=release_channel,
         )
         latest = jobs.get_job(job_id)
         if latest is not None and latest.status == jobs.JobStatus.CANCELLED.value:
@@ -1282,6 +1297,13 @@ async def reject_workflow_approval(approval_id: str, request: WorkflowApprovalRe
     return approval
 
 
+@app.get("/workflows/releases", dependencies=[Depends(require_auth)])
+async def list_workflow_releases(workflow_id: str = "", channel: str = "", limit: int = 50):
+    """List workflow release channel history."""
+    releases = workflows.list_workflow_releases(workflow_id=workflow_id, channel=channel, limit=limit)
+    return {"releases": releases, "count": len(releases)}
+
+
 @app.get("/workflows/{workflow_id}/versions", dependencies=[Depends(require_auth)])
 async def list_workflow_versions(workflow_id: str, limit: int = 50):
     """List version history for one workflow."""
@@ -1315,6 +1337,22 @@ async def restore_workflow_version(workflow_id: str, version_id: str, request: W
     return workflow
 
 
+@app.post("/workflows/{workflow_id}/versions/{version_id}/publish", dependencies=[Depends(require_auth)])
+async def publish_workflow_version(workflow_id: str, version_id: str, request: WorkflowPublishRequest):
+    """Publish a workflow version to a release channel."""
+    release = workflows.publish_workflow_version(
+        workflow_id,
+        version_id,
+        channel=request.channel,
+        actor_id=request.actor_id,
+        note=request.note,
+        activate=request.activate,
+    )
+    if release is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
+    return release
+
+
 @app.get("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
 async def get_workflow(workflow_id: str):
     """Get one workflow definition."""
@@ -1327,18 +1365,21 @@ async def get_workflow(workflow_id: str):
 @app.put("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
 async def update_workflow(workflow_id: str, request: WorkflowRequest):
     """Update a workflow definition."""
+    updates = {
+        "name": request.name,
+        "description": request.description,
+        "trigger": request.trigger,
+        "actions": request.actions,
+        "enabled": request.enabled,
+        "tags": request.tags,
+        "visibility": request.visibility,
+        "permissions": request.permissions,
+    }
+    if request.active_release_channel is not None:
+        updates["active_release_channel"] = request.active_release_channel
     workflow = workflows.update_workflow(
         workflow_id,
-        {
-            "name": request.name,
-            "description": request.description,
-            "trigger": request.trigger,
-            "actions": request.actions,
-            "enabled": request.enabled,
-            "tags": request.tags,
-            "visibility": request.visibility,
-            "permissions": request.permissions,
-        },
+        updates,
         actor_id=request.actor_id,
         note=request.version_note,
     )
@@ -1364,16 +1405,17 @@ async def run_workflow(workflow_id: str, request: WorkflowRunRequest):
     if request.background:
         job = jobs.create_job(
             "workflow",
-            {"workflow_id": workflow_id, "dry_run": request.dry_run},
+            {"workflow_id": workflow_id, "dry_run": request.dry_run, "release_channel": request.release_channel},
             trace_id=get_trace_id(),
         )
-        asyncio.create_task(_run_workflow_job(job.id, workflow_id, request.dry_run))
+        asyncio.create_task(_run_workflow_job(job.id, workflow_id, request.dry_run, request.release_channel))
         return {"workflow": workflow, "job": _serialize_job(job)}
     run = await workflows.run_workflow(
         workflow_id,
         runner=brain.process if not request.dry_run else None,
         triggered_by="manual",
         dry_run=request.dry_run,
+        release_channel=request.release_channel,
     )
     return {"workflow": workflows.get_workflow(workflow_id), "run": run}
 

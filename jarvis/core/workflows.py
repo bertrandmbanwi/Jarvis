@@ -19,6 +19,7 @@ WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
 WORKFLOW_APPROVALS_FILE = settings.DATA_DIR / "workflow_approvals.json"
 WORKFLOW_VERSIONS_FILE = settings.DATA_DIR / "workflow_versions.json"
+WORKFLOW_RELEASES_FILE = settings.DATA_DIR / "workflow_releases.json"
 
 TRIGGER_TYPES = {"manual", "schedule", "calendar_event", "startup", "hotkey", "webhook"}
 ACTION_TYPES = {
@@ -34,6 +35,7 @@ OAUTH_CALENDAR_PROVIDERS = {"google", "outlook"}
 CONDITION_TYPES = {"always", "previous_status", "previous_response_contains", "previous_response_not_contains"}
 ON_ERROR_POLICIES = {"stop", "continue"}
 VISIBILITY = {"private", "team"}
+RELEASE_CHANNELS = {"stable", "production"}
 
 WorkflowRunner = Callable[[str], Awaitable[str]]
 
@@ -252,6 +254,14 @@ def _save_versions(items: list[dict[str, Any]]) -> None:
     _save_list("workflow_versions", items[-1000:])
 
 
+def _load_releases() -> list[dict[str, Any]]:
+    return _load_list("workflow_releases", WORKFLOW_RELEASES_FILE, [])
+
+
+def _save_releases(items: list[dict[str, Any]]) -> None:
+    _save_list("workflow_releases", items[-1000:])
+
+
 def _record_workflow_version(
     workflow: dict[str, Any],
     *,
@@ -278,6 +288,18 @@ def _record_workflow_version(
     versions.append(record)
     _save_versions(versions)
     return record
+
+
+def _set_active_release_channel(workflow_id: str, channel: str) -> dict[str, Any] | None:
+    items = _load_workflows()
+    for item in items:
+        if item.get("id") != workflow_id:
+            continue
+        item["active_release_channel"] = channel
+        item["updated_at"] = _now()
+        _save_workflows(items)
+        return item
+    return None
 
 
 def list_templates() -> list[dict[str, Any]]:
@@ -311,6 +333,23 @@ def get_workflow_version(workflow_id: str, version_id: str) -> dict[str, Any] | 
     )
 
 
+def list_workflow_releases(
+    workflow_id: str = "",
+    channel: str = "",
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    releases = _load_releases()
+    if workflow_id:
+        releases = [item for item in releases if item.get("workflow_id") == workflow_id]
+    if channel:
+        releases = [item for item in releases if item.get("channel") == channel]
+    return sorted(releases, key=lambda item: float(item.get("created_at", 0)), reverse=True)[: max(1, min(limit, 200))]
+
+
+def get_workflow_release(workflow_id: str, channel: str = "stable") -> dict[str, Any] | None:
+    return next(iter(list_workflow_releases(workflow_id=workflow_id, channel=channel, limit=1)), None)
+
+
 def create_workflow(
     *,
     name: str,
@@ -338,6 +377,7 @@ def create_workflow(
         "owner_id": _clean_text(owner_id or "local-owner", 80),
         "visibility": visibility if visibility in VISIBILITY else "private",
         "permissions": sorted({_clean_text(permission, 80) for permission in (permissions or []) if permission}),
+        "active_release_channel": "",
         "created_at": now,
         "updated_at": now,
         "last_run_at": None,
@@ -394,6 +434,7 @@ def update_workflow(
             "tags",
             "visibility",
             "permissions",
+            "active_release_channel",
         }]
         if "name" in updates:
             item["name"] = _clean_text(updates["name"], 120)
@@ -412,6 +453,9 @@ def update_workflow(
             item["visibility"] = visibility if visibility in VISIBILITY else item.get("visibility", "private")
         if "permissions" in updates:
             item["permissions"] = sorted({_clean_text(permission, 80) for permission in updates["permissions"]})
+        if "active_release_channel" in updates:
+            channel = str(updates["active_release_channel"] or "").strip().lower()
+            item["active_release_channel"] = channel if channel in RELEASE_CHANNELS else ""
         item["version"] = int(item.get("version", 1)) + 1
         item["updated_at"] = _now()
         _save_workflows(items)
@@ -466,6 +510,47 @@ def restore_workflow_version(
         changed_fields=["restore"],
     )
     return restored
+
+
+def publish_workflow_version(
+    workflow_id: str,
+    version_id: str = "",
+    *,
+    channel: str = "stable",
+    actor_id: str = "local-owner",
+    note: str = "",
+    activate: bool = True,
+) -> dict[str, Any] | None:
+    channel = str(channel or "stable").strip().lower()
+    if channel not in RELEASE_CHANNELS:
+        channel = "stable"
+
+    current = get_workflow(workflow_id)
+    version = get_workflow_version(workflow_id, version_id) if version_id else None
+    if version_id and version is None:
+        return None
+    snapshot = copy.deepcopy(version.get("snapshot")) if version else copy.deepcopy(current)
+    if not isinstance(snapshot, dict):
+        return None
+
+    release = {
+        "id": uuid.uuid4().hex,
+        "workflow_id": workflow_id,
+        "workflow_name": _clean_text(snapshot.get("name"), 120),
+        "channel": channel,
+        "version_id": str(version.get("id") if version else ""),
+        "version": int(snapshot.get("version", 1) or 1),
+        "actor_id": _clean_text(actor_id or "local-owner", 120),
+        "note": _clean_text(note, 500),
+        "snapshot": snapshot,
+        "created_at": _now(),
+    }
+    releases = _load_releases()
+    releases.append(release)
+    _save_releases(releases)
+    if activate and current is not None:
+        _set_active_release_channel(workflow_id, channel)
+    return release
 
 
 def delete_workflow(workflow_id: str, *, actor_id: str = "local-owner", note: str = "") -> bool:
@@ -1016,10 +1101,21 @@ async def run_workflow(
     triggered_by: str = "manual",
     dry_run: bool = False,
     run_time: float | None = None,
+    release_channel: str | None = None,
 ) -> dict[str, Any] | None:
-    workflow = get_workflow(workflow_id)
-    if workflow is None:
+    current_workflow = get_workflow(workflow_id)
+    if current_workflow is None:
         return None
+    workflow = copy.deepcopy(current_workflow)
+    resolved_release: dict[str, Any] | None = None
+    channel = str(current_workflow.get("active_release_channel") or "") if release_channel is None else str(release_channel or "")
+    if channel:
+        resolved_release = get_workflow_release(workflow_id, channel)
+        snapshot = copy.deepcopy(resolved_release.get("snapshot")) if resolved_release else None
+        if not isinstance(snapshot, dict):
+            return None
+        workflow = snapshot
+        workflow["id"] = workflow_id
 
     started_at = run_time or _now()
     run_id = uuid.uuid4().hex
@@ -1122,6 +1218,9 @@ async def run_workflow(
         "id": run_id,
         "workflow_id": workflow_id,
         "workflow_name": workflow.get("name", ""),
+        "workflow_version": int(workflow.get("version", 1) or 1),
+        "release_channel": channel,
+        "release_id": str(resolved_release.get("id") if resolved_release else ""),
         "status": status,
         "triggered_by": triggered_by,
         "dry_run": dry_run,
@@ -1149,6 +1248,6 @@ def get_overview() -> dict[str, Any]:
         "next_foundation_steps": [
             "Move high-volume workflow runs from document snapshots into queryable relational tables.",
             "Add team presence and conflict handling for simultaneous workflow edits.",
-            "Attach workflow versions to release channels so stable automations can be promoted safely.",
+            "Add release approval policies before stable automation promotion.",
         ],
     }
