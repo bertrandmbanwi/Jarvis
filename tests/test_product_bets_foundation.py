@@ -331,6 +331,75 @@ def test_workflow_run_history_imports_to_indexed_sqlite(product_bet_files):
     assert status["attempts"] == 1
 
 
+@pytest.mark.asyncio
+async def test_workflow_run_analytics_reports_health_and_action_failures(product_bet_files):
+    success = workflows.create_workflow(
+        name="Healthy workflow",
+        actions=[{"type": "prompt", "title": "Healthy step", "prompt": "ok"}],
+    )
+    failure = workflows.create_workflow(
+        name="Failing workflow",
+        actions=[{"type": "prompt", "title": "Unstable step", "prompt": "fail"}],
+    )
+
+    async def runner(prompt: str) -> str:
+        if prompt == "fail":
+            raise RuntimeError("model outage")
+        return "done"
+
+    await workflows.run_workflow(success["id"], runner=runner)
+    await workflows.run_workflow(failure["id"], runner=runner)
+
+    analytics = workflows.get_run_analytics()
+
+    assert analytics["total_runs"] == 2
+    assert analytics["status_counts"]["completed"] == 1
+    assert analytics["status_counts"]["failed"] == 1
+    assert analytics["success_rate"] == 0.5
+    assert analytics["failure_rate"] == 0.5
+    assert analytics["recent_errors"][0]["error"] == "model outage"
+    assert analytics["action_stats"][0]["title"] == "Unstable step"
+    assert analytics["action_stats"][0]["failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_replay_uses_original_version_snapshot(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Replay workflow",
+        actions=[{"type": "prompt", "title": "Original", "prompt": "original prompt"}],
+    )
+    original_version = workflows.list_workflow_versions(workflow["id"])[0]
+    source_prompts: list[str] = []
+
+    async def runner(prompt: str) -> str:
+        source_prompts.append(prompt)
+        return f"ok:{prompt}"
+
+    source_run = await workflows.run_workflow_version(
+        workflow["id"],
+        original_version["id"],
+        runner=runner,
+        dry_run=False,
+    )
+    updated = workflows.update_workflow(
+        workflow["id"],
+        {"actions": [{"type": "prompt", "title": "Changed", "prompt": "changed prompt"}]},
+    )
+
+    assert source_run is not None
+    assert updated is not None
+    assert source_prompts == ["original prompt"]
+
+    source_prompts.clear()
+    replay = await workflows.replay_run(source_run["id"], runner=runner, dry_run=False)
+
+    assert replay is not None
+    assert replay["strategy"] == "version_snapshot"
+    assert replay["replay_run"]["replayed_from_run_id"] == source_run["id"]
+    assert replay["replay_run"]["replay"]["source_status"] == "completed"
+    assert source_prompts == ["original prompt"]
+
+
 def test_workflow_version_history_can_restore_snapshots(product_bet_files):
     workflow = workflows.create_workflow(
         name="Versioned workflow",

@@ -861,6 +861,10 @@ class WorkflowRunRequest(BaseModel):
     release_channel: str | None = None
 
 
+class WorkflowReplayRequest(BaseModel):
+    dry_run: bool = True
+
+
 class WorkflowApprovalRequest(BaseModel):
     actor: str = "local-owner"
     note: str = ""
@@ -1284,6 +1288,22 @@ async def list_workflow_runs(
     return {"runs": runs, "count": len(runs)}
 
 
+@app.get("/workflows/analytics", dependencies=[Depends(require_auth)])
+async def workflow_run_analytics(
+    workflow_id: str = "",
+    started_after: float | None = None,
+    started_before: float | None = None,
+    limit: int = 500,
+):
+    """Summarize workflow run health, latency, and failure patterns."""
+    return workflows.get_run_analytics(
+        workflow_id=workflow_id,
+        started_after=started_after,
+        started_before=started_before,
+        limit=limit,
+    )
+
+
 @app.get("/workflows/runs/{run_id}", dependencies=[Depends(require_auth)])
 async def get_workflow_run(run_id: str):
     """Get one workflow run with its timeline/audit trace."""
@@ -1291,6 +1311,21 @@ async def get_workflow_run(run_id: str):
     if run is None:
         return JSONResponse(status_code=404, content={"error": "Workflow run not found."})
     return run
+
+
+@app.post("/workflows/runs/{run_id}/replay", dependencies=[Depends(require_auth)])
+async def replay_workflow_run(run_id: str, request: WorkflowReplayRequest):
+    """Replay a previous workflow run, preferring its original version snapshot."""
+    result = await workflows.replay_run(
+        run_id,
+        runner=brain.process if not request.dry_run else None,
+        dry_run=request.dry_run,
+    )
+    if result is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow run not found."})
+    if result.get("replay_run") is None:
+        return JSONResponse(status_code=400, content={"error": "; ".join(result.get("warnings", [])), **result})
+    return result
 
 
 @app.get("/workflows/approvals", dependencies=[Depends(require_auth)])

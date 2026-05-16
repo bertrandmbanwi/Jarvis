@@ -101,6 +101,14 @@ interface WorkflowRun {
   completed_at?: number;
   duration_ms?: number;
   error?: string;
+  replayed_from_run_id?: string;
+  replay?: {
+    source_run_id?: string;
+    source_started_at?: number;
+    source_status?: string;
+    strategy?: string;
+    dry_run?: boolean;
+  };
   action_results?: Array<{ title?: string; status?: string; response?: string; message?: string; error?: string; approval_id?: string }>;
   timeline?: WorkflowTimelineEntry[];
 }
@@ -126,6 +134,42 @@ interface WorkflowTimelineEntry {
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   attempts?: WorkflowTimelineAttempt[];
+}
+
+interface WorkflowAnalytics {
+  total_runs: number;
+  dry_runs: number;
+  live_runs: number;
+  status_counts: Record<string, number>;
+  success_rate: number;
+  failure_rate: number;
+  avg_duration_ms: number;
+  p95_duration_ms: number;
+  recent_errors?: Array<{
+    run_id: string;
+    workflow_id: string;
+    workflow_name: string;
+    status: string;
+    error: string;
+    started_at: number;
+  }>;
+  workflow_stats?: Array<{
+    workflow_id: string;
+    workflow_name: string;
+    total_runs: number;
+    failed_runs: number;
+    completed_runs: number;
+    last_run_at: number;
+  }>;
+  action_stats?: Array<{
+    type: string;
+    title: string;
+    total: number;
+    failed: number;
+    skipped: number;
+    approval_required: number;
+    avg_duration_ms: number;
+  }>;
 }
 
 interface WorkflowApproval {
@@ -258,6 +302,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<WorkflowRun | null>(null);
+  const [runAnalytics, setRunAnalytics] = useState<WorkflowAnalytics | null>(null);
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([]);
   const [selectedWorkflowForHistory, setSelectedWorkflowForHistory] = useState<Workflow | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -308,6 +353,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         templateData,
         workflowData,
         runData,
+        analyticsData,
         teamData,
         calendarData,
         schedulerData,
@@ -316,6 +362,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         api("/workflows/templates"),
         api("/workflows"),
         api(`/workflows/runs?${runParams.toString()}`),
+        api("/workflows/analytics?limit=200"),
         api("/team"),
         api("/calendar/connections"),
         api("/workflows/scheduler/status"),
@@ -324,6 +371,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
       setTemplates(templateData.templates || []);
       setWorkflows(workflowData.workflows || []);
       setRuns(runData.runs || []);
+      setRunAnalytics(analyticsData || null);
       setMembers(teamData.members || []);
       setCalendar({ ...emptyCalendar, ...calendarData });
       setScheduler(schedulerData);
@@ -495,6 +543,20 @@ export default function ProductView({ authToken }: ProductViewProps) {
   async function inspectRun(id: string) {
     const data = await api(`/workflows/runs/${id}`);
     setSelectedRun(data);
+  }
+
+  async function replayRun(id: string, dryRun: boolean) {
+    const data = await api(`/workflows/runs/${id}/replay`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+    const replayed = data.replay_run;
+    const warning = Array.isArray(data.warnings) && data.warnings.length ? ` ${data.warnings[0]}` : "";
+    setMessage(`${dryRun ? "Dry replay" : "Live replay"} complete via ${data.strategy || "workflow"}.${warning}`);
+    if (replayed?.id) {
+      setSelectedRun(replayed);
+    }
+    await loadData();
   }
 
   function updateBuilderAction(index: number, updates: Partial<WorkflowAction>) {
@@ -888,6 +950,65 @@ export default function ProductView({ authToken }: ProductViewProps) {
 
             <section className="jarvis-card">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
+                <div className="jarvis-card-header mb-0">Run Analytics</div>
+                <span className="jarvis-badge">{runAnalytics?.total_runs || 0} indexed</span>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <MetricTile label="Success" value={formatPercent(runAnalytics?.success_rate)} />
+                <MetricTile label="Failure" value={formatPercent(runAnalytics?.failure_rate)} />
+                <MetricTile label="Avg Run" value={formatDuration(runAnalytics?.avg_duration_ms)} />
+                <MetricTile label="P95 Run" value={formatDuration(runAnalytics?.p95_duration_ms)} />
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+                <div className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
+                  <div className="text-2xs uppercase tracking-wider text-jarvis-text-dim/45 mb-2">Status Mix</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(runAnalytics?.status_counts || {}).length === 0 ? (
+                      <span className="text-xs text-jarvis-text-dim/45">No runs yet.</span>
+                    ) : Object.entries(runAnalytics?.status_counts || {}).map(([status, count]) => (
+                      <span key={status} className="jarvis-badge">{status}: {count}</span>
+                    ))}
+                    <span className="jarvis-badge">dry: {runAnalytics?.dry_runs || 0}</span>
+                    <span className="jarvis-badge">live: {runAnalytics?.live_runs || 0}</span>
+                  </div>
+                </div>
+                <div className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
+                  <div className="text-2xs uppercase tracking-wider text-jarvis-text-dim/45 mb-2">Recent Errors</div>
+                  <div className="space-y-2">
+                    {(runAnalytics?.recent_errors || []).length === 0 ? (
+                      <span className="text-xs text-jarvis-text-dim/45">No recent workflow errors.</span>
+                    ) : runAnalytics?.recent_errors?.slice(0, 3).map((error) => (
+                      <button
+                        key={error.run_id}
+                        className="block w-full text-left rounded-md border border-white/[0.04] bg-black/20 px-2 py-2"
+                        onClick={() => inspectRun(error.run_id)}
+                      >
+                        <div className="text-xs text-jarvis-text/65">{error.workflow_name}</div>
+                        <div className="text-2xs text-jarvis-text-dim/45 break-words">{error.status} · {error.error}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {(runAnalytics?.action_stats || []).length > 0 && (
+                <div className="mt-3 rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
+                  <div className="text-2xs uppercase tracking-wider text-jarvis-text-dim/45 mb-2">Action Health</div>
+                  <div className="space-y-1">
+                    {runAnalytics?.action_stats?.slice(0, 4).map((action) => (
+                      <div key={`${action.type}-${action.title}`} className="flex items-center justify-between gap-3 text-2xs">
+                        <span className="text-jarvis-text/60 truncate">{action.title || action.type}</span>
+                        <span className="text-jarvis-text-dim/45 shrink-0">
+                          {action.failed} failed · {action.skipped} skipped · {formatDuration(action.avg_duration_ms)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="jarvis-card">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
                 <div className="jarvis-card-header mb-0">Recent Runs</div>
                 <div className="flex flex-wrap gap-2">
                   <select
@@ -926,6 +1047,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => inspectRun(run.id)}>
                         Inspect
                       </button>
+                      <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => replayRun(run.id, true)}>
+                        Replay
+                      </button>
                       <span className="jarvis-badge">{run.status}</span>
                     </div>
                   </div>
@@ -943,8 +1067,21 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       <div className="text-2xs text-jarvis-text-dim/45 font-mono">
                         {selectedRun.triggered_by} · {selectedRun.dry_run ? "dry" : "live"} · v{selectedRun.workflow_version || 1}{selectedRun.release_channel ? ` · ${selectedRun.release_channel}` : ""} · {formatDuration(selectedRun.duration_ms)}
                       </div>
+                      {selectedRun.replay?.source_run_id && (
+                        <div className="text-2xs text-jarvis-text-dim/45 font-mono mt-1">
+                          replayed from {selectedRun.replay.source_run_id.slice(0, 8)} via {selectedRun.replay.strategy || "workflow"}
+                        </div>
+                      )}
                     </div>
-                    <span className="jarvis-badge">{selectedRun.status}</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => replayRun(selectedRun.id, true)}>
+                        Replay Dry
+                      </button>
+                      <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => replayRun(selectedRun.id, false)}>
+                        Replay Live
+                      </button>
+                      <span className="jarvis-badge">{selectedRun.status}</span>
+                    </div>
                   </div>
                   {selectedRun.error && <div className="text-xs text-red-300/75 mt-2">{selectedRun.error}</div>}
                 </div>
@@ -1133,6 +1270,20 @@ function formatDuration(value?: number) {
   if (typeof value !== "number") return "0 ms";
   if (value >= 1000) return `${(value / 1000).toFixed(1)} s`;
   return `${Math.max(0, Math.round(value))} ms`;
+}
+
+function formatPercent(value?: number) {
+  if (typeof value !== "number") return "0%";
+  return `${Math.round(value * 100)}%`;
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
+      <div className="text-2xs uppercase tracking-wider text-jarvis-text-dim/45">{label}</div>
+      <div className="text-lg text-jarvis-text/75 font-mono mt-1">{value}</div>
+    </div>
+  );
 }
 
 function formatTraceValue(value: unknown) {
