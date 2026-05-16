@@ -42,6 +42,16 @@ const tabs: { mode: ViewMode; label: string; iconPaths: string[] }[] = [
       "M14 14h7v7h-7z",
     ],
   },
+  {
+    mode: "product",
+    label: "Flows",
+    iconPaths: [
+      "M4 6h16",
+      "M4 12h10",
+      "M4 18h7",
+      "M17 15l3 3 3-5",
+    ],
+  },
 ];
 
 export default function StatusBar({

@@ -58,6 +58,7 @@ ANTHROPIC_LAZY_HEALTHCHECK = os.getenv("ANTHROPIC_LAZY_HEALTHCHECK", "true").low
 ANTHROPIC_CACHE_TOOLS = os.getenv("ANTHROPIC_CACHE_TOOLS", "true").lower() in {"1", "true", "yes", "on"}
 ANTHROPIC_PROMPT_CACHE_TTL = os.getenv("ANTHROPIC_PROMPT_CACHE_TTL", "5m").strip().lower()
 ANTHROPIC_BATCH_FOR_BACKGROUND = os.getenv("ANTHROPIC_BATCH_FOR_BACKGROUND", "false").lower() in {"1", "true", "yes", "on"}
+WORKFLOW_SCHEDULER_ENABLED = os.getenv("WORKFLOW_SCHEDULER_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 CONTEXT_RECENT_MESSAGES = int(os.getenv("CONTEXT_RECENT_MESSAGES", "10"))
 CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("CONTEXT_SUMMARY_MAX_CHARS", "1800"))
 

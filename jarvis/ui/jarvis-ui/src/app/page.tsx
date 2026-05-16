@@ -11,6 +11,7 @@ import PlanProgress from "@/components/shared/PlanProgress";
 import CinematicView from "@/components/cinematic/CinematicView";
 import ChatView from "@/components/chat/ChatView";
 import DashboardView from "@/components/dashboard/DashboardView";
+import ProductView from "@/components/product/ProductView";
 import LoginScreen from "@/components/auth/LoginScreen";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 
@@ -168,6 +169,10 @@ export default function Page() {
           onClearConversation={clearMessages}
           authToken={authState.token}
         />
+      )}
+
+      {viewMode === "product" && (
+        <ProductView authToken={authState.token} />
       )}
 
       <ProactiveToast
