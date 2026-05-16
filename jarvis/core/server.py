@@ -860,6 +860,13 @@ class WorkflowTemplateRequest(BaseModel):
     actor_id: str = "local-owner"
 
 
+class WorkflowPackageImportRequest(BaseModel):
+    package: dict[str, Any]
+    owner_id: str = "local-owner"
+    actor_id: str = "local-owner"
+    name: str = ""
+
+
 class WorkflowRunRequest(BaseModel):
     background: bool = False
     dry_run: bool = False
@@ -1279,6 +1286,35 @@ async def create_workflow_from_template(request: WorkflowTemplateRequest):
     return workflow
 
 
+@app.get("/workflows/templates/{template_id}/package", dependencies=[Depends(require_auth)])
+async def export_workflow_template_package(template_id: str):
+    """Export a starter workflow template as a portable workflow package."""
+    package = workflows.export_template_package(template_id)
+    if package is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow template not found."})
+    return {"package": package}
+
+
+@app.post("/workflows/import-package", dependencies=[Depends(require_auth)])
+async def import_workflow_package(request: WorkflowPackageImportRequest):
+    """Import a portable workflow package as a new workflow."""
+    result = workflows.import_workflow_package(
+        request.package,
+        owner_id=request.owner_id,
+        actor_id=request.actor_id,
+        name=request.name,
+    )
+    if result["status"] == "invalid":
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "; ".join(result.get("validation", {}).get("errors", [])) or "Invalid workflow package.",
+                **result,
+            },
+        )
+    return result
+
+
 @app.get("/workflows/runs", dependencies=[Depends(require_auth)])
 async def list_workflow_runs(
     workflow_id: str = "",
@@ -1548,6 +1584,15 @@ async def get_workflow(workflow_id: str):
     if workflow is None:
         return JSONResponse(status_code=404, content={"error": "Workflow not found."})
     return workflow
+
+
+@app.get("/workflows/{workflow_id}/package", dependencies=[Depends(require_auth)])
+async def export_workflow_package(workflow_id: str, version_id: str = ""):
+    """Export a saved workflow or version as a portable workflow package."""
+    package = workflows.export_workflow_package(workflow_id, version_id=version_id)
+    if package is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow or workflow version not found."})
+    return {"package": package}
 
 
 @app.put("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
