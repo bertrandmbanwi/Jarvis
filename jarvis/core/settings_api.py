@@ -42,6 +42,7 @@ SAFE_CONFIG_KEYS = {
     "ANTHROPIC_CACHE_TOOLS",
     "ANTHROPIC_PROMPT_CACHE_TTL",
     "ANTHROPIC_BATCH_FOR_BACKGROUND",
+    "WORKFLOW_SCHEDULER_ENABLED",
     "CONTEXT_RECENT_MESSAGES",
     "CONTEXT_SUMMARY_MAX_CHARS",
     "TTS_ENGINE",
@@ -134,6 +135,7 @@ def _normalize_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
             "PREFER_CLAUDE", "LOCAL_FIRST_ENABLED", "MEMORY_ENABLED",
             "PRIVACY_MODE_DEFAULT", "ANTHROPIC_LAZY_HEALTHCHECK",
             "ANTHROPIC_CACHE_TOOLS", "ANTHROPIC_BATCH_FOR_BACKGROUND",
+            "WORKFLOW_SCHEDULER_ENABLED",
         }:
             if isinstance(value, bool):
                 normalized[key] = value
@@ -187,6 +189,7 @@ async def get_settings() -> dict:
             "cache_tools": settings.ANTHROPIC_CACHE_TOOLS,
             "prompt_cache_ttl": settings.ANTHROPIC_PROMPT_CACHE_TTL,
             "batch_for_background": settings.ANTHROPIC_BATCH_FOR_BACKGROUND,
+            "workflow_scheduler_enabled": settings.WORKFLOW_SCHEDULER_ENABLED,
             "context_recent_messages": settings.CONTEXT_RECENT_MESSAGES,
             "context_summary_max_chars": settings.CONTEXT_SUMMARY_MAX_CHARS,
         },

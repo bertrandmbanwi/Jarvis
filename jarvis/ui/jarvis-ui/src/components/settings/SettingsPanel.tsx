@@ -26,6 +26,7 @@ interface Settings {
     cache_tools: boolean;
     prompt_cache_ttl: string;
     batch_for_background: boolean;
+    workflow_scheduler_enabled: boolean;
     context_recent_messages: number;
     context_summary_max_chars: number;
   };
@@ -605,6 +606,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                 label="Lazy Claude healthcheck"
                 checked={settings.cost_controls.lazy_healthcheck}
                 onChange={(checked) => saveSettings({ ANTHROPIC_LAZY_HEALTHCHECK: checked })}
+              />
+              <ToggleRow
+                label="Workflow scheduler"
+                checked={settings.cost_controls.workflow_scheduler_enabled}
+                onChange={(checked) => saveSettings({ WORKFLOW_SCHEDULER_ENABLED: checked })}
               />
             </div>
           )}

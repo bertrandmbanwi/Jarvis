@@ -26,6 +26,7 @@ from jarvis.core import (
     jobs,
     routines,
     team,
+    workflow_scheduler,
     workflows,
 )
 from jarvis.core import profile as user_profile
@@ -536,12 +537,16 @@ async def lifespan(app: FastAPI):
     brain._on_plan_progress = broadcast_plan_progress
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
+    scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
 
     yield
 
     cleanup_task.cancel()
+    scheduler_task.cancel()
     with suppress(asyncio.CancelledError):
         await cleanup_task
+    with suppress(asyncio.CancelledError):
+        await scheduler_task
     with suppress(Exception):
         await asyncio.wait_for(brain.shutdown(), timeout=5)
     logger.info("JARVIS server shut down.")
@@ -772,6 +777,19 @@ async def _session_cleanup_loop():
         auth.cleanup_expired_sessions()
 
 
+async def _workflow_scheduler_loop():
+    while True:
+        await asyncio.sleep(60)
+        if not settings.WORKFLOW_SCHEDULER_ENABLED:
+            continue
+        try:
+            runs = await workflow_scheduler.run_due_workflows(runner=brain.process)
+            if runs:
+                logger.info("Scheduled workflows completed: %d", len(runs))
+        except Exception as exc:
+            logger.error("Workflow scheduler tick failed: %s", exc)
+
+
 # ============================================================
 # Request/Response Models
 # ============================================================
@@ -835,6 +853,10 @@ class WorkflowTemplateRequest(BaseModel):
 class WorkflowRunRequest(BaseModel):
     background: bool = False
     dry_run: bool = False
+
+
+class SchedulerRunRequest(BaseModel):
+    dry_run: bool = True
 
 
 class TeamMemberRequest(BaseModel):
@@ -1112,7 +1134,30 @@ async def run_routine(routine_id: str, request: RoutineRunRequest):
 @app.get("/workflows/overview", dependencies=[Depends(require_auth)])
 async def workflow_overview():
     """Get workflow-builder foundation status."""
-    return workflows.get_overview()
+    return {
+        **workflows.get_overview(),
+        "scheduler": workflow_scheduler.get_scheduler_status(),
+    }
+
+
+@app.get("/workflows/scheduler/status", dependencies=[Depends(require_auth)])
+async def workflow_scheduler_status():
+    """Get scheduled workflow runner status."""
+    return workflow_scheduler.get_scheduler_status()
+
+
+@app.post("/workflows/scheduler/run-due", dependencies=[Depends(require_auth)])
+async def run_due_workflows(request: SchedulerRunRequest):
+    """Run workflows due in the current minute.
+
+    Defaults to dry-run so the UI can preview due work without spending API
+    budget. Pass dry_run=false for an explicit manual execution.
+    """
+    runs = await workflow_scheduler.run_due_workflows(
+        runner=brain.process if not request.dry_run else None,
+        dry_run=request.dry_run,
+    )
+    return {"runs": runs, "count": len(runs)}
 
 
 @app.get("/workflows/templates", dependencies=[Depends(require_auth)])

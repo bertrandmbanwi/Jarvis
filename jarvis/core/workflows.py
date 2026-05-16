@@ -280,9 +280,9 @@ def _record_run(run: dict[str, Any]) -> dict[str, Any]:
     return run
 
 
-def _mark_workflow_run(workflow_id: str) -> None:
+def _mark_workflow_run(workflow_id: str, timestamp: float | None = None) -> None:
     items = _load_workflows()
-    now = _now()
+    now = timestamp or _now()
     for item in items:
         if item.get("id") == workflow_id:
             item["last_run_at"] = now
@@ -307,12 +307,13 @@ async def run_workflow(
     runner: WorkflowRunner | None = None,
     triggered_by: str = "manual",
     dry_run: bool = False,
+    run_time: float | None = None,
 ) -> dict[str, Any] | None:
     workflow = get_workflow(workflow_id)
     if workflow is None:
         return None
 
-    started_at = _now()
+    started_at = run_time or _now()
     action_results: list[dict[str, Any]] = []
     status = "completed"
     error = ""
@@ -373,7 +374,7 @@ async def run_workflow(
         "duration_ms": round((completed_at - started_at) * 1000, 1),
     }
     _record_run(run)
-    _mark_workflow_run(workflow_id)
+    _mark_workflow_run(workflow_id, timestamp=started_at)
     return run
 
 
