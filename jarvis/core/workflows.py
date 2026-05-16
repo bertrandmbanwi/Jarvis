@@ -19,6 +19,7 @@ from jarvis.core import routines
 
 WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
+WORKFLOW_APPROVALS_FILE = settings.DATA_DIR / "workflow_approvals.json"
 
 TRIGGER_TYPES = {"manual", "schedule", "calendar_event", "startup", "hotkey", "webhook"}
 ACTION_TYPES = {
@@ -202,6 +203,14 @@ def _save_runs(items: list[dict[str, Any]]) -> None:
     _save_json(WORKFLOW_RUNS_FILE, items[-500:])
 
 
+def _load_approvals() -> list[dict[str, Any]]:
+    return _load_json(WORKFLOW_APPROVALS_FILE, [])
+
+
+def _save_approvals(items: list[dict[str, Any]]) -> None:
+    _save_json(WORKFLOW_APPROVALS_FILE, items[-500:])
+
+
 def list_templates() -> list[dict[str, Any]]:
     return [dict(template) for template in TEMPLATES]
 
@@ -314,11 +323,60 @@ def list_runs(workflow_id: str = "", limit: int = 50) -> list[dict[str, Any]]:
     return sorted(runs, key=lambda run: float(run.get("started_at", 0)), reverse=True)[: max(1, min(limit, 200))]
 
 
+def list_approvals(status: str = "pending", limit: int = 50) -> list[dict[str, Any]]:
+    approvals = _load_approvals()
+    if status:
+        approvals = [item for item in approvals if item.get("status") == status]
+    return sorted(approvals, key=lambda item: float(item.get("created_at", 0)), reverse=True)[: max(1, min(limit, 200))]
+
+
 def _record_run(run: dict[str, Any]) -> dict[str, Any]:
     runs = _load_runs()
     runs.append(run)
     _save_runs(runs)
     return run
+
+
+def _record_approval(
+    *,
+    workflow: dict[str, Any],
+    run_id: str,
+    action: dict[str, Any],
+    message: str,
+    triggered_by: str,
+) -> dict[str, Any]:
+    now = _now()
+    approval = {
+        "id": uuid.uuid4().hex,
+        "workflow_id": workflow.get("id", ""),
+        "workflow_name": workflow.get("name", ""),
+        "run_id": run_id,
+        "action_id": action.get("id", ""),
+        "action_type": action.get("type", ""),
+        "title": action.get("title", ""),
+        "message": message,
+        "action": dict(action),
+        "status": "pending",
+        "triggered_by": triggered_by,
+        "created_at": now,
+        "updated_at": now,
+    }
+    approvals = _load_approvals()
+    approvals.append(approval)
+    _save_approvals(approvals)
+    return approval
+
+
+def _update_approval(approval_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+    approvals = _load_approvals()
+    for item in approvals:
+        if item.get("id") != approval_id:
+            continue
+        item.update(updates)
+        item["updated_at"] = _now()
+        _save_approvals(approvals)
+        return item
+    return None
 
 
 def _mark_workflow_run(workflow_id: str, timestamp: float | None = None) -> None:
@@ -432,7 +490,7 @@ async def _execute_notification(action: dict[str, Any], workflow_name: str) -> s
     return str(result)
 
 
-async def _execute_calendar_event(action: dict[str, Any]) -> str:
+async def _execute_calendar_event(action: dict[str, Any], *, approved: bool = False) -> str:
     from jarvis.tools.calendar_email import create_calendar_event
 
     title = str(action.get("title") or action.get("message") or "JARVIS Event")
@@ -455,8 +513,10 @@ async def _execute_calendar_event(action: dict[str, Any]) -> str:
             provider=provider,
         )
         if not assessment.get("can_auto_schedule"):
-            blockers = ", ".join(str(item) for item in assessment.get("blockers", []))
-            return f"Calendar event skipped: {blockers or 'Scheduling policy requires confirmation.'}"
+            blockers_list = [str(item) for item in assessment.get("blockers", [])]
+            if not approved or "No connected calendar provider is enabled." in blockers_list:
+                blockers = ", ".join(blockers_list)
+                return f"Calendar event skipped: {blockers or 'Scheduling policy requires confirmation.'}"
 
         created = await _with_timeout(
             "Provider calendar event creation",
@@ -495,6 +555,56 @@ async def _execute_calendar_event(action: dict[str, Any]) -> str:
     return str(result)
 
 
+async def approve_approval(approval_id: str, *, actor: str = "local-owner", note: str = "") -> dict[str, Any] | None:
+    approvals = _load_approvals()
+    approval = next((item for item in approvals if item.get("id") == approval_id), None)
+    if approval is None:
+        return None
+    if approval.get("status") != "pending":
+        return approval
+
+    action = dict(approval.get("action") or {})
+    response = "Approval granted."
+    execution_status = "approved"
+    try:
+        if action.get("type") == "create_calendar_event":
+            action["requires_approval"] = False
+            response = await _execute_calendar_event(action, approved=True)
+            execution_status = "completed"
+    except Exception as exc:
+        response = str(exc)
+        execution_status = "failed"
+
+    return _update_approval(
+        approval_id,
+        {
+            "status": "approved",
+            "actor": _clean_text(actor, 120),
+            "note": _clean_text(note, 500),
+            "response": response,
+            "execution_status": execution_status,
+            "completed_at": _now(),
+        },
+    )
+
+
+def reject_approval(approval_id: str, *, actor: str = "local-owner", note: str = "") -> dict[str, Any] | None:
+    approval = next((item for item in _load_approvals() if item.get("id") == approval_id), None)
+    if approval is None:
+        return None
+    if approval.get("status") != "pending":
+        return approval
+    return _update_approval(
+        approval_id,
+        {
+            "status": "rejected",
+            "actor": _clean_text(actor, 120),
+            "note": _clean_text(note, 500),
+            "completed_at": _now(),
+        },
+    )
+
+
 async def run_workflow(
     workflow_id: str,
     *,
@@ -508,6 +618,7 @@ async def run_workflow(
         return None
 
     started_at = run_time or _now()
+    run_id = uuid.uuid4().hex
     action_results: list[dict[str, Any]] = []
     status = "completed"
     error = ""
@@ -523,7 +634,17 @@ async def run_workflow(
             }
 
             if action.get("requires_approval"):
-                result.update({"status": "approval_required", "message": "This action requires user approval."})
+                message = "This action requires user approval."
+                result.update({"status": "approval_required", "message": message})
+                if not dry_run:
+                    approval = _record_approval(
+                        workflow=workflow,
+                        run_id=run_id,
+                        action=action,
+                        message=message,
+                        triggered_by=triggered_by,
+                    )
+                    result["approval_id"] = approval["id"]
             elif action_type == "prompt":
                 prompt = str(action.get("prompt") or action.get("message") or workflow.get("description") or workflow["name"])
                 result["prompt"] = prompt
@@ -569,7 +690,17 @@ async def run_workflow(
                 else:
                     result.update({"status": "approval_required", "message": "Calendar writes require explicit approval."})
             elif action_type == "wait_for_approval":
-                result.update({"status": "approval_required", "message": "Workflow paused for explicit approval."})
+                message = "Workflow paused for explicit approval."
+                result.update({"status": "approval_required", "message": message})
+                if not dry_run:
+                    approval = _record_approval(
+                        workflow=workflow,
+                        run_id=run_id,
+                        action=action,
+                        message=message,
+                        triggered_by=triggered_by,
+                    )
+                    result["approval_id"] = approval["id"]
             action_results.append(result)
     except Exception as exc:
         status = "failed"
@@ -577,7 +708,7 @@ async def run_workflow(
 
     completed_at = _now()
     run = {
-        "id": uuid.uuid4().hex,
+        "id": run_id,
         "workflow_id": workflow_id,
         "workflow_name": workflow.get("name", ""),
         "status": status,
@@ -601,10 +732,11 @@ def get_overview() -> dict[str, Any]:
         "workflow_count": len(workflows),
         "enabled_count": sum(1 for item in workflows if item.get("enabled", True)),
         "template_count": len(TEMPLATES),
+        "pending_approval_count": len(list_approvals(status="pending", limit=200)),
         "recent_runs": runs,
         "next_foundation_steps": [
-            "Connect OAuth-backed calendar providers.",
             "Replace JSON storage with a multi-user database when team mode is enabled.",
-            "Add a visual builder for triggers, conditions, and actions.",
+            "Add branching conditions and per-step retry policies.",
+            "Add collaborative workflow editing with audit history.",
         ],
     }
