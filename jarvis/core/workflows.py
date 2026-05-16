@@ -1,21 +1,18 @@
 """Team-ready workflow definitions and execution history.
 
-This is the foundation for a future visual workflow builder. Workflows are
-stored as plain JSON for now so the local app remains easy to inspect, backup,
-and migrate to SQLite/Postgres later.
+This is the foundation for a visual workflow builder. Workflow state is stored
+in SQLite, with a lazy importer for the earlier JSON files.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import Any
 
 from jarvis.config import settings
-from jarvis.core import routines
+from jarvis.core import routines, sqlite_state
 
 WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
@@ -93,24 +90,6 @@ TEMPLATES: list[dict[str, Any]] = [
 
 def _now() -> float:
     return time.time()
-
-
-def _load_json(path: Path, default: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not path.exists():
-        _save_json(path, default)
-        return default
-    try:
-        data: Any = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
-        return default
-    except (OSError, json.JSONDecodeError):
-        return default
-
-
-def _save_json(path: Path, data: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _clean_text(value: Any, limit: int = 500) -> str:
@@ -215,28 +194,52 @@ def _normalize_actions(actions: list[dict[str, Any]] | None) -> list[dict[str, A
     return normalized[:20]
 
 
+def _state_db_path():
+    return sqlite_state.db_path_for(WORKFLOWS_FILE)
+
+
+def _load_list(namespace: str, legacy_path, default: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    data = sqlite_state.load_document(
+        db_path=_state_db_path(),
+        namespace=namespace,
+        legacy_path=legacy_path,
+        default=default,
+    )
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    return default
+
+
+def _save_list(namespace: str, data: list[dict[str, Any]]) -> None:
+    sqlite_state.save_document(
+        db_path=_state_db_path(),
+        namespace=namespace,
+        data=data,
+    )
+
+
 def _load_workflows() -> list[dict[str, Any]]:
-    return _load_json(WORKFLOWS_FILE, [])
+    return _load_list("workflows", WORKFLOWS_FILE, [])
 
 
 def _save_workflows(items: list[dict[str, Any]]) -> None:
-    _save_json(WORKFLOWS_FILE, items)
+    _save_list("workflows", items)
 
 
 def _load_runs() -> list[dict[str, Any]]:
-    return _load_json(WORKFLOW_RUNS_FILE, [])
+    return _load_list("workflow_runs", WORKFLOW_RUNS_FILE, [])
 
 
 def _save_runs(items: list[dict[str, Any]]) -> None:
-    _save_json(WORKFLOW_RUNS_FILE, items[-500:])
+    _save_list("workflow_runs", items[-500:])
 
 
 def _load_approvals() -> list[dict[str, Any]]:
-    return _load_json(WORKFLOW_APPROVALS_FILE, [])
+    return _load_list("workflow_approvals", WORKFLOW_APPROVALS_FILE, [])
 
 
 def _save_approvals(items: list[dict[str, Any]]) -> None:
-    _save_json(WORKFLOW_APPROVALS_FILE, items[-500:])
+    _save_list("workflow_approvals", items[-500:])
 
 
 def list_templates() -> list[dict[str, Any]]:

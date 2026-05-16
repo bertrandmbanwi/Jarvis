@@ -1,12 +1,12 @@
 """Local team and role scaffolding for future multi-user JARVIS installs."""
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from typing import Any
 
 from jarvis.config import settings
+from jarvis.core import sqlite_state
 
 TEAM_FILE = settings.DATA_DIR / "team.json"
 
@@ -50,21 +50,27 @@ def _default_team() -> dict[str, Any]:
     }
 
 
+def _state_db_path():
+    return sqlite_state.db_path_for(TEAM_FILE)
+
+
 def _load() -> dict[str, Any]:
-    if not TEAM_FILE.exists():
-        team = _default_team()
-        _save(team)
-        return team
-    try:
-        data = json.loads(TEAM_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else _default_team()
-    except (OSError, json.JSONDecodeError):
-        return _default_team()
+    default = _default_team()
+    data = sqlite_state.load_document(
+        db_path=_state_db_path(),
+        namespace="team",
+        legacy_path=TEAM_FILE,
+        default=default,
+    )
+    return data if isinstance(data, dict) else default
 
 
 def _save(team: dict[str, Any]) -> None:
-    TEAM_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TEAM_FILE.write_text(json.dumps(team, indent=2, sort_keys=True), encoding="utf-8")
+    sqlite_state.save_document(
+        db_path=_state_db_path(),
+        namespace="team",
+        data=team,
+    )
 
 
 def _clean(value: Any, limit: int = 160) -> str:
