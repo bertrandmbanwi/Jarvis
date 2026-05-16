@@ -1,4 +1,4 @@
-"""PIN-based authentication for remote access; local connections bypass auth."""
+"""Optional PIN-based authentication for remote access."""
 
 import hashlib
 import hmac
@@ -30,6 +30,11 @@ _PBKDF2_ITERATIONS = 600_000
 _LEGACY_PBKDF2_ITERATIONS = 100_000
 
 
+def pin_auth_enabled() -> bool:
+    """Return whether browser/mobile PIN authentication is enabled."""
+    return bool(settings.PIN_AUTH_ENABLED)
+
+
 def _hash_pin_with_iterations(pin: str, salt: bytes, iterations: int) -> str:
     return hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, iterations).hex()
 
@@ -42,6 +47,11 @@ def _hash_pin(pin: str, salt: bytes) -> str:
 def initialize_pin() -> str:
     """Initialize or load PIN from env vars, disk, or generate new."""
     global _current_pin
+
+    if not pin_auth_enabled():
+        _current_pin = None
+        logger.info("PIN authentication disabled.")
+        return ""
 
     custom_pin = os.getenv("JARVIS_PIN", "").strip()
     if custom_pin:
