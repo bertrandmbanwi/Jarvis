@@ -270,6 +270,8 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [dailyTime, setDailyTime] = useState("08:30");
   const [builderActions, setBuilderActions] = useState<WorkflowAction[]>([defaultBuilderAction("prompt", "prompt-initial")]);
   const [approvals, setApprovals] = useState<WorkflowApproval[]>([]);
+  const [runStatusFilter, setRunStatusFilter] = useState("");
+  const [runModeFilter, setRunModeFilter] = useState("all");
   const [memberName, setMemberName] = useState("Operator");
   const [memberEmail, setMemberEmail] = useState("");
   const [memberRole, setMemberRole] = useState("member");
@@ -295,6 +297,13 @@ export default function ProductView({ authToken }: ProductViewProps) {
 
   const loadData = useCallback(async () => {
     try {
+      const runParams = new URLSearchParams({ limit: "8" });
+      if (runStatusFilter) {
+        runParams.set("status", runStatusFilter);
+      }
+      if (runModeFilter !== "all") {
+        runParams.set("dry_run", runModeFilter === "dry" ? "true" : "false");
+      }
       const [
         templateData,
         workflowData,
@@ -306,7 +315,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
       ] = await Promise.all([
         api("/workflows/templates"),
         api("/workflows"),
-        api("/workflows/runs?limit=8"),
+        api(`/workflows/runs?${runParams.toString()}`),
         api("/team"),
         api("/calendar/connections"),
         api("/workflows/scheduler/status"),
@@ -322,7 +331,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load product data.");
     }
-  }, [api]);
+  }, [api, runModeFilter, runStatusFilter]);
 
   useEffect(() => {
     loadData();
@@ -878,7 +887,30 @@ export default function ProductView({ authToken }: ProductViewProps) {
             )}
 
             <section className="jarvis-card">
-              <div className="jarvis-card-header">Recent Runs</div>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
+                <div className="jarvis-card-header mb-0">Recent Runs</div>
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    className="jarvis-input w-32"
+                    value={runModeFilter}
+                    onChange={(event) => setRunModeFilter(event.target.value)}
+                  >
+                    <option value="all">All modes</option>
+                    <option value="dry">Dry</option>
+                    <option value="live">Live</option>
+                  </select>
+                  <select
+                    className="jarvis-input w-40"
+                    value={runStatusFilter}
+                    onChange={(event) => setRunStatusFilter(event.target.value)}
+                  >
+                    <option value="">All statuses</option>
+                    <option value="completed">Completed</option>
+                    <option value="completed_with_errors">With errors</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                </div>
+              </div>
               <div className="space-y-2">
                 {runs.length === 0 ? (
                   <p className="text-sm text-jarvis-text-dim/45">No workflow runs yet.</p>

@@ -273,6 +273,64 @@ def test_product_state_imports_legacy_json_to_sqlite(product_bet_files):
     assert status["calendar_state"]["migrated_from"] == str(calendar_accounts.CALENDAR_STATE_FILE)
 
 
+def test_workflow_run_history_imports_to_indexed_sqlite(product_bet_files):
+    legacy_run = {
+        "id": "legacy-run",
+        "workflow_id": "legacy-workflow",
+        "workflow_name": "Legacy Workflow",
+        "workflow_version": 1,
+        "workflow_version_id": "version-1",
+        "release_channel": "",
+        "release_id": "",
+        "status": "completed",
+        "triggered_by": "manual",
+        "dry_run": True,
+        "action_results": [{"status": "prepared", "message": "ok"}],
+        "timeline": [
+            {
+                "id": "step-1",
+                "action_id": "action-1",
+                "type": "prompt",
+                "title": "Ask",
+                "status": "prepared",
+                "started_at": 1778940000.0,
+                "completed_at": 1778940001.0,
+                "duration_ms": 1000,
+                "input": {"prompt": "hello"},
+                "output": {"message": "ok"},
+                "attempts": [
+                    {
+                        "attempt": 1,
+                        "status": "prepared",
+                        "started_at": 1778940000.0,
+                        "completed_at": 1778940001.0,
+                        "duration_ms": 1000,
+                    }
+                ],
+            }
+        ],
+        "error": "",
+        "started_at": 1778940000.0,
+        "completed_at": 1778940001.0,
+        "duration_ms": 1000,
+    }
+    workflows.WORKFLOW_RUNS_FILE.write_text(json.dumps([legacy_run]), encoding="utf-8")
+
+    runs = workflows.list_runs(
+        workflow_id="legacy-workflow",
+        workflow_version_id="version-1",
+        dry_run=True,
+    )
+    status = workflows.get_run_storage_status()
+
+    assert [run["id"] for run in runs] == ["legacy-run"]
+    assert workflows.get_run("legacy-run")["timeline"][0]["attempts"][0]["status"] == "prepared"
+    assert status["indexed"] is True
+    assert status["runs"] == 1
+    assert status["steps"] == 1
+    assert status["attempts"] == 1
+
+
 def test_workflow_version_history_can_restore_snapshots(product_bet_files):
     workflow = workflows.create_workflow(
         name="Versioned workflow",

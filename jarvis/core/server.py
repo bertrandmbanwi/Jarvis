@@ -1258,9 +1258,29 @@ async def create_workflow_from_template(request: WorkflowTemplateRequest):
 
 
 @app.get("/workflows/runs", dependencies=[Depends(require_auth)])
-async def list_workflow_runs(workflow_id: str = "", limit: int = 50):
+async def list_workflow_runs(
+    workflow_id: str = "",
+    limit: int = 50,
+    status: str = "",
+    dry_run: bool | None = None,
+    release_channel: str = "",
+    workflow_version_id: str = "",
+    workflow_version: int | None = None,
+    started_after: float | None = None,
+    started_before: float | None = None,
+):
     """List workflow execution history."""
-    runs = workflows.list_runs(workflow_id=workflow_id, limit=limit)
+    runs = workflows.list_runs(
+        workflow_id=workflow_id,
+        limit=limit,
+        status=status,
+        dry_run=dry_run,
+        release_channel=release_channel,
+        workflow_version_id=workflow_version_id,
+        workflow_version=workflow_version,
+        started_after=started_after,
+        started_before=started_before,
+    )
     return {"runs": runs, "count": len(runs)}
 
 
