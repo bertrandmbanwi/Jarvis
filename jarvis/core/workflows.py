@@ -41,15 +41,19 @@ RELEASE_POLICIES: dict[str, dict[str, Any]] = {
         "channel": "stable",
         "approval_required": True,
         "required_approvals": 1,
+        "requires_successful_dry_run": True,
+        "dry_run_max_age_seconds": 7 * 24 * 60 * 60,
         "requires_note": False,
-        "description": "Stable promotions require one explicit approval before scheduled automations pin the snapshot.",
+        "description": "Stable promotions require one recent successful dry run and one explicit approval.",
     },
     "production": {
         "channel": "production",
         "approval_required": True,
         "required_approvals": 1,
+        "requires_successful_dry_run": True,
+        "dry_run_max_age_seconds": 7 * 24 * 60 * 60,
         "requires_note": True,
-        "description": "Production promotions require approval and a release note.",
+        "description": "Production promotions require a recent successful dry run, approval, and a release note.",
     },
 }
 
@@ -371,8 +375,118 @@ def get_workflow_release(workflow_id: str, channel: str = "stable") -> dict[str,
     return next(iter(list_workflow_releases(workflow_id=workflow_id, channel=channel, limit=1)), None)
 
 
+def _version_id_for_workflow_version(workflow_id: str, version_number: int) -> str:
+    versions = [
+        item
+        for item in _load_versions()
+        if item.get("workflow_id") == workflow_id and int(item.get("version", 0) or 0) == version_number
+    ]
+    if not versions:
+        return ""
+    latest = sorted(versions, key=lambda item: float(item.get("created_at", 0)), reverse=True)[0]
+    return str(latest.get("id") or "")
+
+
 def get_release_policies() -> dict[str, dict[str, Any]]:
     return copy.deepcopy(RELEASE_POLICIES)
+
+
+def get_release_gate_evidence(
+    workflow_id: str,
+    version_id: str,
+    *,
+    channel: str = "stable",
+) -> dict[str, Any]:
+    normalized_channel = _release_channel(channel)
+    policy = RELEASE_POLICIES[normalized_channel]
+    version = get_workflow_version(workflow_id, version_id)
+    if version is None:
+        return {
+            "status": "missing_version",
+            "ready": False,
+            "dry_run": None,
+            "dry_run_id": "",
+            "max_age_seconds": int(policy.get("dry_run_max_age_seconds", 0) or 0),
+        }
+
+    version_number = int(version.get("version", 0) or 0)
+    dry_runs = [
+        run
+        for run in _load_runs()
+        if run.get("workflow_id") == workflow_id
+        and run.get("dry_run") is True
+        and (
+            run.get("workflow_version_id") == version_id
+            or (
+                not run.get("workflow_version_id")
+                and int(run.get("workflow_version", 0) or 0) == version_number
+            )
+        )
+    ]
+    latest = sorted(dry_runs, key=lambda run: float(run.get("started_at", 0)), reverse=True)[0] if dry_runs else None
+    max_age_seconds = int(policy.get("dry_run_max_age_seconds", 0) or 0)
+    if latest is None:
+        return {
+            "status": "missing_dry_run",
+            "ready": False,
+            "dry_run": None,
+            "dry_run_id": "",
+            "max_age_seconds": max_age_seconds,
+        }
+    age_seconds = max(0, _now() - float(latest.get("completed_at") or latest.get("started_at") or 0))
+    if str(latest.get("status") or "") != "completed":
+        return {
+            "status": "failed_dry_run",
+            "ready": False,
+            "dry_run": latest,
+            "dry_run_id": str(latest.get("id") or ""),
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+        }
+    if max_age_seconds and age_seconds > max_age_seconds:
+        return {
+            "status": "stale_dry_run",
+            "ready": False,
+            "dry_run": latest,
+            "dry_run_id": str(latest.get("id") or ""),
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+        }
+    return {
+        "status": "ready",
+        "ready": True,
+        "dry_run": latest,
+        "dry_run_id": str(latest.get("id") or ""),
+        "age_seconds": age_seconds,
+        "max_age_seconds": max_age_seconds,
+    }
+
+
+def get_release_readiness(
+    workflow_id: str,
+    version_id: str,
+    *,
+    channel: str = "stable",
+    note: str = "",
+) -> dict[str, Any]:
+    assessment = assess_release_request(workflow_id, version_id, channel=channel, note=note)
+    evidence = dict(assessment.get("evidence") or {})
+    dry_run = evidence.get("dry_run")
+    if isinstance(dry_run, dict):
+        evidence["dry_run"] = {
+            "id": dry_run.get("id"),
+            "status": dry_run.get("status"),
+            "started_at": dry_run.get("started_at"),
+            "completed_at": dry_run.get("completed_at"),
+            "duration_ms": dry_run.get("duration_ms"),
+        }
+    return {
+        "ready": bool(assessment.get("can_request")),
+        "status": "ready" if assessment.get("can_request") else str(evidence.get("status") or "blocked"),
+        "channel": assessment.get("channel"),
+        "blockers": assessment.get("blockers", []),
+        "evidence": evidence,
+    }
 
 
 def assess_release_request(
@@ -393,11 +507,21 @@ def assess_release_request(
         blockers.append("Workflow version not found.")
     if policy.get("requires_note") and not _clean_text(note, 500):
         blockers.append(f"{normalized_channel.title()} promotion requires a release note.")
+    evidence = get_release_gate_evidence(workflow_id, version_id, channel=normalized_channel)
+    if policy.get("requires_successful_dry_run") and not evidence.get("ready"):
+        status = str(evidence.get("status") or "")
+        if status == "missing_dry_run":
+            blockers.append("A successful dry run is required for this workflow version before promotion.")
+        elif status == "failed_dry_run":
+            blockers.append("The latest dry run for this workflow version did not complete successfully.")
+        elif status == "stale_dry_run":
+            blockers.append("The successful dry run for this workflow version is stale.")
     return {
         "can_request": not blockers,
         "blockers": blockers,
         "channel": normalized_channel,
         "policy": policy,
+        "evidence": evidence,
         "workflow": workflow,
         "version": version,
     }
@@ -636,6 +760,7 @@ def request_workflow_release_approval(
     policy = dict(assessment["policy"])
     workflow = dict(assessment["workflow"] or {})
     version = dict(assessment["version"] or {})
+    evidence = dict(assessment.get("evidence") or {})
     needs_approval = bool(policy.get("approval_required", True)) if require_approval is None else bool(require_approval)
     if not needs_approval:
         release = publish_workflow_version(
@@ -653,6 +778,7 @@ def request_workflow_release_approval(
             "requires_approval": False,
             "release": release,
             "policy": policy,
+            "evidence": evidence,
         }
 
     pending = _find_pending_release_approval(workflow_id, version_id, normalized_channel)
@@ -662,6 +788,7 @@ def request_workflow_release_approval(
             "requires_approval": True,
             "approval": pending,
             "policy": policy,
+            "evidence": evidence,
         }
 
     action = {
@@ -675,6 +802,7 @@ def request_workflow_release_approval(
         "activate": activate,
         "requested_by": _clean_text(actor_id or "local-owner", 120),
         "note": _clean_text(note, 500),
+        "dry_run_id": str(evidence.get("dry_run_id") or ""),
         "policy": policy,
         "requires_approval": True,
     }
@@ -694,6 +822,7 @@ def request_workflow_release_approval(
         "requires_approval": True,
         "approval": approval,
         "policy": policy,
+        "evidence": evidence,
     }
 
 
@@ -970,17 +1099,29 @@ async def approve_approval(approval_id: str, *, actor: str = "local-owner", note
             response = await _execute_calendar_event(action, approved=True)
             execution_status = "completed"
         elif action.get("type") == "publish_workflow_version":
-            release = publish_workflow_version(
+            assessment = assess_release_request(
                 str(action.get("workflow_id") or ""),
                 str(action.get("version_id") or ""),
                 channel=str(action.get("channel") or "stable"),
-                actor_id=actor,
                 note=note or str(action.get("note") or ""),
-                activate=bool(action.get("activate", True)),
             )
-            if release is None:
-                response = "Release promotion failed: workflow version not found."
+            if not assessment.get("can_request"):
+                response = "Release promotion failed: " + "; ".join(str(item) for item in assessment.get("blockers", []))
                 execution_status = "failed"
+                release = None
+            else:
+                release = publish_workflow_version(
+                    str(action.get("workflow_id") or ""),
+                    str(action.get("version_id") or ""),
+                    channel=str(action.get("channel") or "stable"),
+                    actor_id=actor,
+                    note=note or str(action.get("note") or ""),
+                    activate=bool(action.get("activate", True)),
+                )
+            if release is None:
+                if execution_status != "failed":
+                    response = "Release promotion failed: workflow version not found."
+                    execution_status = "failed"
             else:
                 release_id = str(release.get("id") or "")
                 response = (
@@ -1259,29 +1400,18 @@ async def _run_action_once(
     return result
 
 
-async def run_workflow(
+async def _execute_workflow_snapshot(
     workflow_id: str,
+    workflow: dict[str, Any],
     *,
     runner: WorkflowRunner | None = None,
     triggered_by: str = "manual",
     dry_run: bool = False,
     run_time: float | None = None,
-    release_channel: str | None = None,
+    release_channel: str = "",
+    release_id: str = "",
+    workflow_version_id: str = "",
 ) -> dict[str, Any] | None:
-    current_workflow = get_workflow(workflow_id)
-    if current_workflow is None:
-        return None
-    workflow = copy.deepcopy(current_workflow)
-    resolved_release: dict[str, Any] | None = None
-    channel = str(current_workflow.get("active_release_channel") or "") if release_channel is None else str(release_channel or "")
-    if channel:
-        resolved_release = get_workflow_release(workflow_id, channel)
-        snapshot = copy.deepcopy(resolved_release.get("snapshot")) if resolved_release else None
-        if not isinstance(snapshot, dict):
-            return None
-        workflow = snapshot
-        workflow["id"] = workflow_id
-
     started_at = run_time or _now()
     run_id = uuid.uuid4().hex
     action_results: list[dict[str, Any]] = []
@@ -1384,8 +1514,9 @@ async def run_workflow(
         "workflow_id": workflow_id,
         "workflow_name": workflow.get("name", ""),
         "workflow_version": int(workflow.get("version", 1) or 1),
-        "release_channel": channel,
-        "release_id": str(resolved_release.get("id") if resolved_release else ""),
+        "workflow_version_id": workflow_version_id,
+        "release_channel": release_channel,
+        "release_id": release_id,
         "status": status,
         "triggered_by": triggered_by,
         "dry_run": dry_run,
@@ -1399,6 +1530,74 @@ async def run_workflow(
     _record_run(run)
     _mark_workflow_run(workflow_id, timestamp=started_at)
     return run
+
+
+async def run_workflow(
+    workflow_id: str,
+    *,
+    runner: WorkflowRunner | None = None,
+    triggered_by: str = "manual",
+    dry_run: bool = False,
+    run_time: float | None = None,
+    release_channel: str | None = None,
+) -> dict[str, Any] | None:
+    current_workflow = get_workflow(workflow_id)
+    if current_workflow is None:
+        return None
+    workflow = copy.deepcopy(current_workflow)
+    resolved_release: dict[str, Any] | None = None
+    channel = str(current_workflow.get("active_release_channel") or "") if release_channel is None else str(release_channel or "")
+    version_id = _version_id_for_workflow_version(workflow_id, int(workflow.get("version", 1) or 1))
+    if channel:
+        resolved_release = get_workflow_release(workflow_id, channel)
+        if resolved_release is None:
+            return None
+        snapshot = copy.deepcopy(resolved_release.get("snapshot"))
+        if not isinstance(snapshot, dict):
+            return None
+        workflow = snapshot
+        workflow["id"] = workflow_id
+        version_id = str(resolved_release.get("version_id") or "") or _version_id_for_workflow_version(
+            workflow_id,
+            int(workflow.get("version", 1) or 1),
+        )
+
+    return await _execute_workflow_snapshot(
+        workflow_id,
+        workflow,
+        runner=runner,
+        triggered_by=triggered_by,
+        dry_run=dry_run,
+        run_time=run_time,
+        release_channel=channel,
+        release_id=str(resolved_release.get("id") if resolved_release else ""),
+        workflow_version_id=version_id,
+    )
+
+
+async def run_workflow_version(
+    workflow_id: str,
+    version_id: str,
+    *,
+    runner: WorkflowRunner | None = None,
+    triggered_by: str = "version_dry_run",
+    dry_run: bool = True,
+    run_time: float | None = None,
+) -> dict[str, Any] | None:
+    version = get_workflow_version(workflow_id, version_id)
+    snapshot = copy.deepcopy(version.get("snapshot")) if version else None
+    if not isinstance(snapshot, dict):
+        return None
+    snapshot["id"] = workflow_id
+    return await _execute_workflow_snapshot(
+        workflow_id,
+        snapshot,
+        runner=runner,
+        triggered_by=triggered_by,
+        dry_run=dry_run,
+        run_time=run_time,
+        workflow_version_id=version_id,
+    )
 
 
 def get_overview() -> dict[str, Any]:

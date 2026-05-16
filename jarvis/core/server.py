@@ -1318,6 +1318,18 @@ async def list_workflow_versions(workflow_id: str, limit: int = 50):
     versions = workflows.list_workflow_versions(workflow_id, limit=limit)
     if workflow is None and not versions:
         return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    versions = [
+        {
+            **version,
+            "release_readiness": workflows.get_release_readiness(
+                workflow_id,
+                str(version.get("id") or ""),
+                channel="stable",
+                note="Promoted from workflow history.",
+            ),
+        }
+        for version in versions
+    ]
     return {"versions": versions, "count": len(versions)}
 
 
@@ -1328,6 +1340,24 @@ async def get_workflow_version(workflow_id: str, version_id: str):
     if version is None:
         return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
     return version
+
+
+@app.get("/workflows/{workflow_id}/versions/{version_id}/readiness", dependencies=[Depends(require_auth)])
+async def get_workflow_version_readiness(workflow_id: str, version_id: str, channel: str = "stable", note: str = ""):
+    """Get release gate readiness for one workflow version."""
+    readiness = workflows.get_release_readiness(workflow_id, version_id, channel=channel, note=note)
+    if readiness["status"] == "missing_version":
+        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
+    return readiness
+
+
+@app.post("/workflows/{workflow_id}/versions/{version_id}/dry-run", dependencies=[Depends(require_auth)])
+async def dry_run_workflow_version(workflow_id: str, version_id: str):
+    """Dry-run a specific workflow version as release gate evidence."""
+    run = await workflows.run_workflow_version(workflow_id, version_id, dry_run=True)
+    if run is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
+    return {"run": run}
 
 
 @app.post("/workflows/{workflow_id}/versions/{version_id}/restore", dependencies=[Depends(require_auth)])
