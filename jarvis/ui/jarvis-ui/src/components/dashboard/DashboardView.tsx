@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { ChatMessage, CostSummary, ServerStatus } from "@/lib/types";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { ChatMessage, CostInsights, CostSummary, ServerStatus } from "@/lib/types";
+import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 import AgentBadge from "@/components/shared/AgentBadge";
 
 interface DashboardViewProps {
@@ -10,6 +11,7 @@ interface DashboardViewProps {
   serverStatus: ServerStatus | null;
   isProcessing: boolean;
   onClearConversation: () => void;
+  authToken?: string | null;
 }
 
 export default function DashboardView({
@@ -18,8 +20,49 @@ export default function DashboardView({
   serverStatus,
   isProcessing,
   onClearConversation,
+  authToken,
 }: DashboardViewProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const [costInsights, setCostInsights] = useState<CostInsights | null>(null);
+
+  const loadCostInsights = useCallback(async () => {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/costs`, {
+        headers: jarvisHeaders(authToken),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setCostInsights({
+        cacheHitRatio: data.insights?.cache_hit_ratio || 0,
+        cacheReadTokens: data.insights?.cache_read_tokens || 0,
+        cacheWriteTokens: data.insights?.cache_write_tokens || 0,
+        byTierCostUsd: data.insights?.by_tier_cost_usd || {},
+        recommendations: data.insights?.recommendations || [],
+        budget: {
+          dailyAlertUsd: data.insights?.budget?.daily_alert_usd || 0,
+          dailyHardLimitUsd: data.insights?.budget?.daily_hard_limit_usd || 0,
+          monthlyAlertUsd: data.insights?.budget?.monthly_alert_usd || 0,
+          monthlyHardLimitUsd: data.insights?.budget?.monthly_hard_limit_usd || 0,
+          costMode: data.insights?.budget?.cost_mode || "balanced",
+        },
+        hardLimits: {
+          blocked: Boolean(data.hard_limits?.blocked),
+          dailyBlocked: Boolean(data.hard_limits?.daily_blocked),
+          monthlyBlocked: Boolean(data.hard_limits?.monthly_blocked),
+        },
+        today: {
+          totalCostUsd: data.today?.total_cost_usd || 0,
+          totalRequests: data.today?.total_requests || 0,
+        },
+        month: {
+          totalCostUsd: data.month?.total_cost_usd || 0,
+          projectedMonthlyUsd: data.month?.projected_monthly_usd || 0,
+        },
+      });
+    } catch {
+      // Dashboard metrics are optional; keep the activity log usable.
+    }
+  }, [authToken]);
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -30,9 +73,18 @@ export default function DashboardView({
     }
   }, [messages]);
 
+  useEffect(() => {
+    loadCostInsights();
+    const interval = setInterval(loadCostInsights, 15000);
+    return () => clearInterval(interval);
+  }, [loadCostInsights]);
+
   const visibleMessages = messages.filter(
     (msg) => msg.content || (msg.role === "assistant" && msg.isStreaming)
   );
+  const memoryCount = serverStatus?.memoryStats?.count
+    ?? serverStatus?.memoryStats?.vector_store?.count
+    ?? 0;
 
   return (
     <div className="flex-1 flex flex-col sm:flex-row overflow-hidden">
@@ -157,7 +209,7 @@ export default function DashboardView({
                 label="Memory"
                 value={
                   serverStatus
-                    ? `${serverStatus.memoryStats.count} entries`
+                    ? `${memoryCount} entries`
                     : "..."
                 }
               />
@@ -204,7 +256,57 @@ export default function DashboardView({
                 label="Cache reads"
                 value={formatNumber(costSummary?.cacheReadTokens || 0)}
               />
+              <InfoRow
+                label="Cache writes"
+                value={formatNumber(costSummary?.cacheCreationTokens || 0)}
+              />
             </div>
+          </div>
+
+          <div className="jarvis-card">
+            <div className="jarvis-card-header flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-jarvis-cyan/40">
+                <path d="M3 12h18" />
+                <path d="M12 3v18" />
+                <path d="m5 5 14 14" />
+                <path d="m19 5-14 14" />
+              </svg>
+              Cost Controls
+            </div>
+            <div className="space-y-2.5">
+              <InfoRow
+                label="Mode"
+                value={costInsights?.budget.costMode || "balanced"}
+                highlight={costInsights?.budget.costMode === "economy"}
+              />
+              <InfoRow
+                label="Today"
+                value={`$${(costInsights?.today?.totalCostUsd || 0).toFixed(4)}`}
+              />
+              <InfoRow
+                label="Month"
+                value={`$${(costInsights?.month?.totalCostUsd || 0).toFixed(2)}`}
+              />
+              <InfoRow
+                label="Cache hit"
+                value={`${Math.round((costInsights?.cacheHitRatio || 0) * 100)}%`}
+                highlight={(costInsights?.cacheHitRatio || 0) >= 0.5}
+              />
+              {costInsights?.hardLimits?.blocked && (
+                <div className="text-2xs text-red-300/80 border border-red-400/20 bg-red-500/5 rounded-md px-2 py-1.5">
+                  Hard spend limit is active.
+                </div>
+              )}
+            </div>
+            {costInsights?.recommendations?.length ? (
+              <div className="mt-3 pt-3 border-t border-white/[0.04] space-y-2">
+                {costInsights.recommendations.slice(0, 2).map((rec) => (
+                  <p key={rec} className="text-2xs leading-relaxed text-jarvis-text-dim/55">
+                    {rec}
+                  </p>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {costSummary?.requestsByTier && Object.values(costSummary.requestsByTier).some(c => c > 0) && (

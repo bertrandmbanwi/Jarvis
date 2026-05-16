@@ -24,6 +24,7 @@ from jarvis.config import settings
 from jarvis.core.dispatch_registry import DispatchRegistry, SuccessTracker
 from jarvis.core.hardening import sanitize_user_input
 from jarvis.core.llm import JarvisLLM
+from jarvis.core.local_router import route_local
 from jarvis.core.monitor import ConversationMonitor
 from jarvis.core.perf import estimate_request_cost, estimate_tokens, perf_tracker
 from jarvis.core.proactive import ProactiveEngine
@@ -211,6 +212,7 @@ class JarvisBrain:
         self.evolution: EvolutionPipeline = EvolutionPipeline()
         self.work_session: WorkSession | None = None
         self.conversation: list[ConversationTurn] = []
+        self._privacy_mode = settings.PRIVACY_MODE_DEFAULT
         self._initialized = False
         self._shutdown_requested = False
         self._on_plan_progress = None  # Callback for broadcasting plan progress via WebSocket
@@ -311,13 +313,48 @@ class JarvisBrain:
             self._shutdown_requested = True
             return "Shutting down JARVIS. All systems offline. Goodbye, sir."
 
+        if settings.LOCAL_FIRST_ENABLED:
+            local_result = await route_local(user_input, privacy_mode=self._privacy_mode)
+            if local_result is not None:
+                if local_result.action == "privacy_on":
+                    self._privacy_mode = True
+                elif local_result.action == "privacy_off":
+                    self._privacy_mode = False
+
+                response = local_result.response
+                if local_result.remember and not self._privacy_mode and settings.MEMORY_ENABLED:
+                    user_turn = ConversationTurn(
+                        role="user", content=user_input,
+                        request_id=self._current_request_id,
+                        trace_id=trace_id,
+                    )
+                    assistant_turn = ConversationTurn(
+                        role="assistant", content=response, tier_used=local_result.tier,
+                        request_id=self._current_request_id,
+                        trace_id=trace_id,
+                    )
+                    self.conversation.extend([user_turn, assistant_turn])
+                    self._save_turn(user_turn)
+                    self._save_turn(assistant_turn)
+                    self.memory.process_exchange(user_input, response, tier=local_result.tier)
+
+                elapsed = time.time() - start_time
+                perf_tracker.record_request(elapsed, local_result.tier)
+                perf_tracker.record(f"request.{local_result.tier}.{local_result.action}", elapsed)
+                logger.info(
+                    "[req:%s] Local route '%s' completed in %.2fs.",
+                    self._current_request_id, local_result.action, elapsed,
+                )
+                return response
+
         user_turn = ConversationTurn(
             role="user", content=user_input,
             request_id=self._current_request_id,
             trace_id=trace_id,
         )
         self.conversation.append(user_turn)
-        self._save_turn(user_turn)
+        if not self._privacy_mode:
+            self._save_turn(user_turn)
 
         if len(self.conversation) > MAX_CONVERSATION_TURNS:
             self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
@@ -362,20 +399,21 @@ class JarvisBrain:
         except Exception as e:
             logger.debug("Monitor analysis failed (non-critical): %s", e)
 
-        self.memory.add(
-            text=f"User: {user_input}\nJARVIS: {response}",
-            metadata={
-                "type": "agent" if tier != "fast" else "conversation",
-                "tier": tier,
-                "timestamp": time.time(),
-            },
-        )
+        if not self._privacy_mode and settings.MEMORY_ENABLED:
+            self.memory.add(
+                text=f"User: {user_input}\nJARVIS: {response}",
+                metadata={
+                    "type": "agent" if tier != "fast" else "conversation",
+                    "tier": tier,
+                    "timestamp": time.time(),
+                },
+            )
 
-        self.memory.process_exchange(
-            user_message=user_input,
-            assistant_response=response,
-            tier=tier,
-        )
+            self.memory.process_exchange(
+                user_message=user_input,
+                assistant_response=response,
+                tier=tier,
+            )
 
         # Track experiment outcomes and suggestions for completed plans
         task_elapsed = time.time() - start_time
@@ -429,7 +467,8 @@ class JarvisBrain:
 
             self._last_plan = None
 
-        self._save_turn(assistant_turn)
+        if not self._privacy_mode:
+            self._save_turn(assistant_turn)
         elapsed = time.time() - start_time
         perf_tracker.record_request(elapsed, tier)
         perf_tracker.record(f"request.{tier}", elapsed)
@@ -455,6 +494,24 @@ class JarvisBrain:
 
         self.proactive.mark_interaction()
 
+        if settings.LOCAL_FIRST_ENABLED:
+            local_result = await route_local(user_input, privacy_mode=self._privacy_mode)
+            if local_result is not None:
+                if local_result.action == "privacy_on":
+                    self._privacy_mode = True
+                elif local_result.action == "privacy_off":
+                    self._privacy_mode = False
+                response = local_result.response
+                if local_result.remember and not self._privacy_mode and settings.MEMORY_ENABLED:
+                    user_turn = ConversationTurn(role="user", content=user_input)
+                    assistant_turn = ConversationTurn(role="assistant", content=response, tier_used=local_result.tier)
+                    self.conversation.extend([user_turn, assistant_turn])
+                    self._save_turn(user_turn)
+                    self._save_turn(assistant_turn)
+                    self.memory.process_exchange(user_input, response, tier=local_result.tier)
+                yield response
+                return
+
         tier = _select_tier(user_input)
 
         request_id = uuid.uuid4().hex[:12]
@@ -463,7 +520,8 @@ class JarvisBrain:
         if tier == "fast" and _is_chat_only(user_input):
             user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
             self.conversation.append(user_turn)
-            self._save_turn(user_turn)
+            if not self._privacy_mode:
+                self._save_turn(user_turn)
 
             if len(self.conversation) > MAX_CONVERSATION_TURNS:
                 self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
@@ -483,15 +541,18 @@ class JarvisBrain:
                 role="assistant", content=complete, tier_used="fast", request_id=request_id, trace_id=trace_id,
             )
             self.conversation.append(assistant_turn)
-            self._save_turn(assistant_turn)
-            self.memory.add(
-                text=f"User: {user_input}\nJARVIS: {complete}",
-                metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
-            )
+            if not self._privacy_mode:
+                self._save_turn(assistant_turn)
+            if not self._privacy_mode and settings.MEMORY_ENABLED:
+                self.memory.add(
+                    text=f"User: {user_input}\nJARVIS: {complete}",
+                    metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
+                )
         else:
             user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
             self.conversation.append(user_turn)
-            self._save_turn(user_turn)
+            if not self._privacy_mode:
+                self._save_turn(user_turn)
 
             if len(self.conversation) > MAX_CONVERSATION_TURNS:
                 self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
@@ -519,11 +580,13 @@ class JarvisBrain:
                 role="assistant", content=complete, tier_used=tier, request_id=request_id, trace_id=trace_id,
             )
             self.conversation.append(assistant_turn)
-            self._save_turn(assistant_turn)
-            self.memory.add(
-                text=f"User: {user_input}\nJARVIS: {complete}",
-                metadata={"type": "agent", "tier": tier, "timestamp": time.time()},
-            )
+            if not self._privacy_mode:
+                self._save_turn(assistant_turn)
+            if not self._privacy_mode and settings.MEMORY_ENABLED:
+                self.memory.add(
+                    text=f"User: {user_input}\nJARVIS: {complete}",
+                    metadata={"type": "agent", "tier": tier, "timestamp": time.time()},
+                )
 
     async def _execute_plan(
         self,

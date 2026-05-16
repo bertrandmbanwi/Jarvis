@@ -31,7 +31,19 @@ SAFE_CONFIG_KEYS = {
     "CLAUDE_DEEP_MODEL",
     "COST_DAILY_ALERT",
     "COST_MONTHLY_ALERT",
+    "COST_DAILY_HARD_LIMIT",
+    "COST_MONTHLY_HARD_LIMIT",
+    "COST_MODE",
     "COST_DEEP_PREMIUM_LIMIT",
+    "LOCAL_FIRST_ENABLED",
+    "MEMORY_ENABLED",
+    "PRIVACY_MODE_DEFAULT",
+    "ANTHROPIC_LAZY_HEALTHCHECK",
+    "ANTHROPIC_CACHE_TOOLS",
+    "ANTHROPIC_PROMPT_CACHE_TTL",
+    "ANTHROPIC_BATCH_FOR_BACKGROUND",
+    "CONTEXT_RECENT_MESSAGES",
+    "CONTEXT_SUMMARY_MAX_CHARS",
     "TTS_ENGINE",
     "TTS_VOICE",
     "TTS_SPEED",
@@ -81,7 +93,10 @@ def _normalize_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
             if not 1 <= port <= 65535:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 65535.")
             normalized[key] = port
-        elif key in {"COST_DAILY_ALERT", "COST_MONTHLY_ALERT", "COST_DEEP_PREMIUM_LIMIT"}:
+        elif key in {
+            "COST_DAILY_ALERT", "COST_MONTHLY_ALERT", "COST_DAILY_HARD_LIMIT",
+            "COST_MONTHLY_HARD_LIMIT", "COST_DEEP_PREMIUM_LIMIT",
+        }:
             try:
                 amount = float(value)
             except (TypeError, ValueError) as err:
@@ -97,7 +112,29 @@ def _normalize_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
             if not 0.5 <= speed <= 2.0:
                 raise HTTPException(status_code=400, detail="TTS_SPEED must be between 0.5 and 2.0.")
             normalized[key] = speed
-        elif key == "PREFER_CLAUDE":
+        elif key in {"CONTEXT_RECENT_MESSAGES", "CONTEXT_SUMMARY_MAX_CHARS"}:
+            try:
+                count = int(value)
+            except (TypeError, ValueError) as err:
+                raise HTTPException(status_code=400, detail=f"{key} must be an integer.") from err
+            if count < 1:
+                raise HTTPException(status_code=400, detail=f"{key} must be positive.")
+            normalized[key] = count
+        elif key == "COST_MODE":
+            mode = str(value).lower()
+            if mode not in {"economy", "balanced", "power"}:
+                raise HTTPException(status_code=400, detail="COST_MODE must be economy, balanced, or power.")
+            normalized[key] = mode
+        elif key == "ANTHROPIC_PROMPT_CACHE_TTL":
+            ttl = str(value).lower()
+            if ttl not in {"5m", "1h"}:
+                raise HTTPException(status_code=400, detail="ANTHROPIC_PROMPT_CACHE_TTL must be 5m or 1h.")
+            normalized[key] = ttl
+        elif key in {
+            "PREFER_CLAUDE", "LOCAL_FIRST_ENABLED", "MEMORY_ENABLED",
+            "PRIVACY_MODE_DEFAULT", "ANTHROPIC_LAZY_HEALTHCHECK",
+            "ANTHROPIC_CACHE_TOOLS", "ANTHROPIC_BATCH_FOR_BACKGROUND",
+        }:
             if isinstance(value, bool):
                 normalized[key] = value
             elif str(value).lower() in {"true", "1", "yes", "on"}:
@@ -105,7 +142,7 @@ def _normalize_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
             elif str(value).lower() in {"false", "0", "no", "off"}:
                 normalized[key] = False
             else:
-                raise HTTPException(status_code=400, detail="PREFER_CLAUDE must be boolean.")
+                raise HTTPException(status_code=400, detail=f"{key} must be boolean.")
         else:
             normalized[key] = value
 
@@ -137,6 +174,21 @@ async def get_settings() -> dict:
         "costs": {
             "daily_alert_usd": settings.COST_DAILY_ALERT,
             "monthly_alert_usd": settings.COST_MONTHLY_ALERT,
+            "daily_hard_limit_usd": settings.COST_DAILY_HARD_LIMIT,
+            "monthly_hard_limit_usd": settings.COST_MONTHLY_HARD_LIMIT,
+            "mode": settings.COST_MODE,
+            "deep_premium_limit_usd": settings.COST_DEEP_PREMIUM_LIMIT,
+        },
+        "cost_controls": {
+            "local_first_enabled": settings.LOCAL_FIRST_ENABLED,
+            "memory_enabled": settings.MEMORY_ENABLED,
+            "privacy_mode_default": settings.PRIVACY_MODE_DEFAULT,
+            "lazy_healthcheck": settings.ANTHROPIC_LAZY_HEALTHCHECK,
+            "cache_tools": settings.ANTHROPIC_CACHE_TOOLS,
+            "prompt_cache_ttl": settings.ANTHROPIC_PROMPT_CACHE_TTL,
+            "batch_for_background": settings.ANTHROPIC_BATCH_FOR_BACKGROUND,
+            "context_recent_messages": settings.CONTEXT_RECENT_MESSAGES,
+            "context_summary_max_chars": settings.CONTEXT_SUMMARY_MAX_CHARS,
         },
         "voice": {
             "tts_engine": settings.TTS_ENGINE,

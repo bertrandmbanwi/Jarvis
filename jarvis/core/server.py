@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from jarvis.config import settings
-from jarvis.core import auth, cost_tracker, jobs
+from jarvis.core import anthropic_batch, auth, cost_tracker, feedback, jobs, routines
 from jarvis.core import profile as user_profile
 from jarvis.core.brain import JarvisBrain
 from jarvis.core.permissions import TOOL_PERMISSIONS, list_tool_audit, summarize_permissions
@@ -774,6 +774,36 @@ class JobRequest(BaseModel):
     kind: str = "chat"
 
 
+class CostEstimateRequest(BaseModel):
+    message: str
+    tier: str = "brain"
+
+
+class RoutineRequest(BaseModel):
+    name: str
+    prompt: str
+    enabled: bool = True
+    tags: list[str] = []
+
+
+class RoutineRunRequest(BaseModel):
+    background: bool = False
+
+
+class FeedbackRequest(BaseModel):
+    text: str
+    category: str = "correction"
+
+
+class BatchRequest(BaseModel):
+    prompts: list[str]
+    tier: str = "brain"
+
+
+class PrivacyRequest(BaseModel):
+    enabled: bool
+
+
 class ChatResponse(BaseModel):
     response: str
     elapsed_ms: float
@@ -920,6 +950,118 @@ async def cancel_background_job(job_id: str):
     return _serialize_job(job)
 
 
+@app.get("/routines", dependencies=[Depends(require_auth)])
+async def list_routines():
+    """List saved routines."""
+    return {"routines": routines.list_routines()}
+
+
+@app.post("/routines", dependencies=[Depends(require_auth)])
+async def create_routine(request: RoutineRequest):
+    """Create a repeatable routine."""
+    if not request.name.strip() or not request.prompt.strip():
+        return JSONResponse(status_code=400, content={"error": "Name and prompt are required."})
+    return routines.create_routine(request.name, request.prompt, request.enabled, request.tags)
+
+
+@app.put("/routines/{routine_id}", dependencies=[Depends(require_auth)])
+async def update_routine(routine_id: str, request: RoutineRequest):
+    """Update a routine."""
+    routine = routines.update_routine(
+        routine_id,
+        {
+            "name": request.name.strip(),
+            "prompt": request.prompt.strip(),
+            "enabled": request.enabled,
+            "tags": request.tags,
+        },
+    )
+    if routine is None:
+        return JSONResponse(status_code=404, content={"error": "Routine not found."})
+    return routine
+
+
+@app.delete("/routines/{routine_id}", dependencies=[Depends(require_auth)])
+async def delete_routine(routine_id: str):
+    """Delete a routine."""
+    if not routines.delete_routine(routine_id):
+        return JSONResponse(status_code=404, content={"error": "Routine not found."})
+    return {"status": "deleted"}
+
+
+@app.post("/routines/{routine_id}/run", dependencies=[Depends(require_auth)])
+async def run_routine(routine_id: str, request: RoutineRunRequest):
+    """Run a routine now, either inline or as a background job."""
+    routine = routines.get_routine(routine_id)
+    if routine is None:
+        return JSONResponse(status_code=404, content={"error": "Routine not found."})
+    routines.mark_routine_run(routine_id)
+    prompt = str(routine.get("prompt", ""))
+    if request.background:
+        job = jobs.create_job("routine", {"message": prompt, "routine_id": routine_id}, trace_id=get_trace_id())
+        asyncio.create_task(_run_chat_job(job.id, prompt))
+        return {"routine": routines.get_routine(routine_id), "job": _serialize_job(job)}
+    start = time.time()
+    response = await brain.process(prompt)
+    return {
+        "routine": routines.get_routine(routine_id),
+        "response": response,
+        "elapsed_ms": round((time.time() - start) * 1000, 1),
+    }
+
+
+@app.get("/feedback", dependencies=[Depends(require_auth)])
+async def list_feedback(limit: int = 50, category: str = ""):
+    """List stored feedback/corrections."""
+    return {"feedback": feedback.list_feedback(limit=limit, category=category)}
+
+
+@app.post("/feedback", dependencies=[Depends(require_auth)])
+async def create_feedback(request: FeedbackRequest):
+    """Create a feedback/correction item."""
+    if not request.text.strip():
+        return JSONResponse(status_code=400, content={"error": "Feedback text is required."})
+    return feedback.add_feedback(request.text, category=request.category)
+
+
+@app.delete("/feedback/{feedback_id}", dependencies=[Depends(require_auth)])
+async def delete_feedback(feedback_id: str):
+    """Delete a feedback item."""
+    if not feedback.delete_feedback(feedback_id):
+        return JSONResponse(status_code=404, content={"error": "Feedback item not found."})
+    return {"status": "deleted"}
+
+
+@app.post("/anthropic/batches", dependencies=[Depends(require_auth)])
+async def create_anthropic_batch(request: BatchRequest):
+    """Create an Anthropic Message Batch for non-urgent work."""
+    if not request.prompts:
+        return JSONResponse(status_code=400, content={"error": "At least one prompt is required."})
+    try:
+        return await anthropic_batch.create_batch(request.prompts, tier=request.tier)
+    except Exception as exc:
+        logger.warning("Batch creation failed: %s", exc)
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.get("/anthropic/batches/{batch_id}", dependencies=[Depends(require_auth)])
+async def get_anthropic_batch(batch_id: str):
+    """Get Anthropic Message Batch status."""
+    try:
+        return await anthropic_batch.get_batch(batch_id)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.post("/anthropic/batches/{batch_id}/cancel", dependencies=[Depends(require_auth)])
+async def cancel_anthropic_batch(batch_id: str):
+    """Cancel an Anthropic Message Batch."""
+    try:
+        return await anthropic_batch.cancel_batch(batch_id)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
 @app.post("/clear", dependencies=[Depends(require_auth)])
 async def clear_conversation():
     """Clear the current conversation."""
@@ -1006,7 +1148,48 @@ async def costs():
         "session": brain.llm.get_cost_summary(),
         "today": cost_tracker.get_today_summary(),
         "month": cost_tracker.get_month_summary(),
+        "insights": cost_tracker.get_cost_insights(),
+        "hard_limits": cost_tracker.hard_limit_status(),
+        "privacy_mode": brain._privacy_mode,
     }
+
+
+@app.post("/costs/estimate", dependencies=[Depends(require_auth)])
+async def estimate_cost(request: CostEstimateRequest):
+    """Estimate request tokens and cost before sending to Claude."""
+    from jarvis.agent.tool_selector import select_tools_for_request
+    from jarvis.agent.tools_schema import TOOL_SCHEMAS
+    from jarvis.core.perf import estimate_request_cost
+
+    tools = select_tools_for_request(request.message, TOOL_SCHEMAS)
+    token_info = await brain.llm.count_input_tokens(
+        request.message,
+        conversation_history=[
+            {"role": turn.role, "content": turn.content}
+            for turn in brain.conversation[-settings.CONTEXT_RECENT_MESSAGES:]
+        ],
+        tier=request.tier,
+        tools=tools,
+    )
+    input_tokens = int(token_info.get("input_tokens", 0) or 0)
+    return {
+        **token_info,
+        "selected_tool_count": len(tools),
+        "estimated_cost_usd": round(estimate_request_cost(input_tokens, 512, request.tier), 6),
+    }
+
+
+@app.get("/privacy", dependencies=[Depends(require_auth)])
+async def get_privacy_mode():
+    """Get current privacy mode state."""
+    return {"enabled": brain._privacy_mode, "memory_enabled": settings.MEMORY_ENABLED}
+
+
+@app.post("/privacy", dependencies=[Depends(require_auth)])
+async def set_privacy_mode(request: PrivacyRequest):
+    """Enable or disable runtime privacy mode."""
+    brain._privacy_mode = request.enabled
+    return {"enabled": brain._privacy_mode}
 
 
 @app.get("/models", dependencies=[Depends(require_auth)])

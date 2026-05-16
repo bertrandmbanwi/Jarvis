@@ -10,6 +10,7 @@ import numpy as np
 
 from jarvis.config import settings
 from jarvis.core import profile
+from jarvis.core.local_router import is_probable_noise
 
 logger = logging.getLogger("jarvis.voice.listener")
 
@@ -573,6 +574,9 @@ class VoiceListener:
             return False
 
         cleaned = text.strip().lower().rstrip(".!?, ")
+        if is_probable_noise(cleaned):
+            logger.info("Filtered probable STT noise: '%s'", text)
+            return False
 
         hallucination_exact = {
             "thank you for watching",

@@ -13,6 +13,21 @@ interface Settings {
   costs: {
     daily_alert_usd: number;
     monthly_alert_usd: number;
+    daily_hard_limit_usd: number;
+    monthly_hard_limit_usd: number;
+    mode: string;
+    deep_premium_limit_usd: number;
+  };
+  cost_controls: {
+    local_first_enabled: boolean;
+    memory_enabled: boolean;
+    privacy_mode_default: boolean;
+    lazy_healthcheck: boolean;
+    cache_tools: boolean;
+    prompt_cache_ttl: string;
+    batch_for_background: boolean;
+    context_recent_messages: number;
+    context_summary_max_chars: number;
   };
   voice: {
     tts_engine: string;
@@ -489,6 +504,20 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
             <div className="space-y-3">
               <div>
                 <label className="text-sm font-semibold text-slate-300">
+                  Cost Mode
+                </label>
+                <select
+                  defaultValue={settings.costs.mode}
+                  onChange={(e) => saveSettings({ COST_MODE: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="economy">Economy</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="power">Power</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-slate-300">
                   Daily Alert Threshold (USD)
                 </label>
                 <input
@@ -497,6 +526,19 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   step="0.01"
                   defaultValue={settings.costs.daily_alert_usd}
                   onChange={(e) => saveSettings({ COST_DAILY_ALERT: parseFloat(e.target.value) })}
+                  className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-slate-300">
+                  Daily Hard Limit (USD)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={settings.costs.daily_hard_limit_usd}
+                  onChange={(e) => saveSettings({ COST_DAILY_HARD_LIMIT: parseFloat(e.target.value) })}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -513,6 +555,57 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
+              <div>
+                <label className="text-sm font-semibold text-slate-300">
+                  Monthly Hard Limit (USD)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={settings.costs.monthly_hard_limit_usd}
+                  onChange={(e) => saveSettings({ COST_MONTHLY_HARD_LIMIT: parseFloat(e.target.value) })}
+                  className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-slate-300">
+                  Prompt Cache TTL
+                </label>
+                <select
+                  defaultValue={settings.cost_controls.prompt_cache_ttl}
+                  onChange={(e) => saveSettings({ ANTHROPIC_PROMPT_CACHE_TTL: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="5m">5 minutes</option>
+                  <option value="1h">1 hour</option>
+                </select>
+              </div>
+              <ToggleRow
+                label="Local-first routing"
+                checked={settings.cost_controls.local_first_enabled}
+                onChange={(checked) => saveSettings({ LOCAL_FIRST_ENABLED: checked })}
+              />
+              <ToggleRow
+                label="Memory storage"
+                checked={settings.cost_controls.memory_enabled}
+                onChange={(checked) => saveSettings({ MEMORY_ENABLED: checked })}
+              />
+              <ToggleRow
+                label="Privacy by default"
+                checked={settings.cost_controls.privacy_mode_default}
+                onChange={(checked) => saveSettings({ PRIVACY_MODE_DEFAULT: checked })}
+              />
+              <ToggleRow
+                label="Cache tool schemas"
+                checked={settings.cost_controls.cache_tools}
+                onChange={(checked) => saveSettings({ ANTHROPIC_CACHE_TOOLS: checked })}
+              />
+              <ToggleRow
+                label="Lazy Claude healthcheck"
+                checked={settings.cost_controls.lazy_healthcheck}
+                onChange={(checked) => saveSettings({ ANTHROPIC_LAZY_HEALTHCHECK: checked })}
+              />
             </div>
           )}
 
@@ -526,5 +619,27 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
         </div>
       </div>
     </>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 rounded border border-slate-700 bg-slate-800/50 px-3 py-2">
+      <span className="text-sm font-semibold text-slate-300">{label}</span>
+      <input
+        type="checkbox"
+        defaultChecked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-4 w-4 accent-blue-500"
+      />
+    </label>
   );
 }
