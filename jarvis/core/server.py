@@ -840,6 +840,7 @@ class WorkflowRequest(BaseModel):
     trigger: dict[str, Any] = {}
     actions: list[dict[str, Any]] = []
     assertions: list[dict[str, Any]] = []
+    budget: dict[str, Any] = {}
     enabled: bool = True
     tags: list[str] = []
     owner_id: str = "local-owner"
@@ -1243,6 +1244,7 @@ async def create_workflow(request: WorkflowRequest):
         trigger=request.trigger,
         actions=request.actions,
         assertions=request.assertions,
+        budget=request.budget,
         enabled=request.enabled,
         tags=request.tags,
         owner_id=request.owner_id,
@@ -1496,6 +1498,7 @@ async def update_workflow(workflow_id: str, request: WorkflowRequest):
         "trigger": request.trigger,
         "actions": request.actions,
         "assertions": request.assertions,
+        "budget": request.budget,
         "enabled": request.enabled,
         "tags": request.tags,
         "visibility": request.visibility,

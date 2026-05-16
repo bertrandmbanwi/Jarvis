@@ -363,6 +363,51 @@ async def test_workflow_run_analytics_reports_health_and_action_failures(product
 
 
 @pytest.mark.asyncio
+async def test_workflow_run_records_cost_attribution(product_bet_files, monkeypatch):
+    zero = {
+        "total_cost_usd": 0.0,
+        "total_requests": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_cache_read_tokens": 0,
+        "total_cache_creation_tokens": 0,
+    }
+    after = {
+        "total_cost_usd": 0.0042,
+        "total_requests": 1,
+        "total_input_tokens": 1200,
+        "total_output_tokens": 300,
+        "total_cache_read_tokens": 400,
+        "total_cache_creation_tokens": 50,
+    }
+    snapshots = [zero, zero, after, after]
+
+    def fake_cost_summary():
+        return snapshots.pop(0) if snapshots else after
+
+    monkeypatch.setattr(workflows.cost_tracker, "get_today_summary", fake_cost_summary)
+    workflow = workflows.create_workflow(
+        name="Costed workflow",
+        actions=[{"type": "prompt", "title": "Costed", "prompt": "measure cost"}],
+    )
+
+    async def runner(prompt: str) -> str:
+        return f"ok:{prompt}"
+
+    run = await workflows.run_workflow(workflow["id"], runner=runner)
+    analytics = workflows.get_run_analytics(workflow_id=workflow["id"])
+
+    assert run is not None
+    assert run["cost"]["cost_usd"] == 0.0042
+    assert run["cost"]["request_count"] == 1
+    assert run["timeline"][0]["output"]["cost"]["input_tokens"] == 1200
+    assert run["action_results"][0]["cost"]["cache_read_tokens"] == 400
+    assert workflows.get_run(run["id"])["cost"]["output_tokens"] == 300
+    assert analytics["total_cost_usd"] == 0.0042
+    assert analytics["action_stats"][0]["avg_cost_usd"] == 0.0042
+
+
+@pytest.mark.asyncio
 async def test_workflow_run_replay_uses_original_version_snapshot(product_bet_files):
     workflow = workflows.create_workflow(
         name="Replay workflow",
@@ -604,6 +649,44 @@ async def test_workflow_release_requires_passing_assertions(product_bet_files):
     assert readiness["ready"] is False
     assert readiness["status"] == "failed_assertions"
     assert "Workflow assertions must pass" in readiness["blockers"][0]
+    assert request is None
+
+
+@pytest.mark.asyncio
+async def test_workflow_release_blocks_over_budget_dry_run(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Budget gated release",
+        actions=[{"type": "prompt", "title": "Dry", "prompt": "dry-run prompt"}],
+        budget={"max_cost_per_run_usd": 0.001},
+    )
+    version = workflows.list_workflow_versions(workflow["id"])[0]
+    dry_run = await workflows.run_workflow_version(workflow["id"], version["id"], dry_run=True)
+
+    assert dry_run is not None
+
+    dry_run["cost"] = {
+        "cost_usd": 0.01,
+        "request_count": 1,
+        "input_tokens": 1000,
+        "output_tokens": 100,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    workflows._record_run(dry_run)
+
+    readiness = workflows.get_release_readiness(workflow["id"], version["id"], channel="stable")
+    request = workflows.request_workflow_release_approval(
+        workflow["id"],
+        version["id"],
+        channel="stable",
+        actor_id="operator",
+        note="Ready for stable.",
+    )
+
+    assert readiness["ready"] is False
+    assert readiness["status"] == "over_budget"
+    assert "Workflow cost budget must pass" in readiness["blockers"][0]
+    assert "exceeds per-run budget" in readiness["evidence"]["cost_budget"]["blockers"][0]
     assert request is None
 
 

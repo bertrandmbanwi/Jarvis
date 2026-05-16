@@ -47,6 +47,13 @@ interface WorkflowAssertion {
   system?: boolean;
 }
 
+interface WorkflowBudget {
+  max_cost_per_run_usd?: number;
+  max_cost_per_day_usd?: number;
+  max_cost_per_month_usd?: number;
+  enforce_on_release?: boolean;
+}
+
 interface WorkflowTemplate {
   id: string;
   name: string;
@@ -62,6 +69,7 @@ interface Workflow {
   trigger: { type: string; rrule?: string; minutes_before?: number };
   actions: WorkflowAction[];
   assertions?: WorkflowAssertion[];
+  budget?: WorkflowBudget;
   enabled: boolean;
   tags?: string[];
   visibility?: string;
@@ -96,8 +104,19 @@ interface ReleaseReadiness {
       started_at?: number;
       completed_at?: number;
       duration_ms?: number;
+      cost?: WorkflowCost;
     } | null;
     assertion_result?: WorkflowAssertionResult | null;
+    cost_budget?: {
+      status: string;
+      ready: boolean;
+      budget?: WorkflowBudget;
+      actual?: WorkflowCost & {
+        daily_cost_usd?: number;
+        monthly_cost_usd?: number;
+      };
+      blockers?: string[];
+    };
   };
 }
 
@@ -139,6 +158,7 @@ interface WorkflowRun {
   started_at: number;
   completed_at?: number;
   duration_ms?: number;
+  cost?: WorkflowCost;
   error?: string;
   replayed_from_run_id?: string;
   replay?: {
@@ -148,8 +168,17 @@ interface WorkflowRun {
     strategy?: string;
     dry_run?: boolean;
   };
-  action_results?: Array<{ title?: string; status?: string; response?: string; message?: string; error?: string; approval_id?: string }>;
+  action_results?: Array<{ title?: string; status?: string; response?: string; message?: string; error?: string; approval_id?: string; cost?: WorkflowCost }>;
   timeline?: WorkflowTimelineEntry[];
+}
+
+interface WorkflowCost {
+  cost_usd?: number;
+  request_count?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
 }
 
 interface WorkflowTimelineAttempt {
@@ -171,7 +200,8 @@ interface WorkflowTimelineEntry {
   completed_at: number;
   duration_ms: number;
   input?: Record<string, unknown>;
-  output?: Record<string, unknown>;
+  output?: Record<string, unknown> & { cost?: WorkflowCost };
+  cost?: WorkflowCost;
   attempts?: WorkflowTimelineAttempt[];
 }
 
@@ -184,6 +214,9 @@ interface WorkflowAnalytics {
   failure_rate: number;
   avg_duration_ms: number;
   p95_duration_ms: number;
+  total_cost_usd: number;
+  avg_cost_usd: number;
+  p95_cost_usd: number;
   recent_errors?: Array<{
     run_id: string;
     workflow_id: string;
@@ -198,6 +231,8 @@ interface WorkflowAnalytics {
     total_runs: number;
     failed_runs: number;
     completed_runs: number;
+    total_cost_usd?: number;
+    avg_cost_usd?: number;
     last_run_at: number;
   }>;
   action_stats?: Array<{
@@ -208,6 +243,8 @@ interface WorkflowAnalytics {
     skipped: number;
     approval_required: number;
     avg_duration_ms: number;
+    total_cost_usd?: number;
+    avg_cost_usd?: number;
   }>;
 }
 
@@ -376,6 +413,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [dailyTime, setDailyTime] = useState("08:30");
   const [builderActions, setBuilderActions] = useState<WorkflowAction[]>([defaultBuilderAction("prompt", "prompt-initial")]);
   const [builderAssertions, setBuilderAssertions] = useState<WorkflowAssertion[]>([defaultBuilderAssertion("run_status_equals", "assert-initial")]);
+  const [budgetPerRun, setBudgetPerRun] = useState("");
+  const [budgetPerDay, setBudgetPerDay] = useState("");
+  const [budgetPerMonth, setBudgetPerMonth] = useState("");
   const [approvals, setApprovals] = useState<WorkflowApproval[]>([]);
   const [runStatusFilter, setRunStatusFilter] = useState("");
   const [runModeFilter, setRunModeFilter] = useState("all");
@@ -456,6 +496,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
     setDailyTime("08:30");
     setBuilderActions([defaultBuilderAction("prompt")]);
     setBuilderAssertions([defaultBuilderAssertion("run_status_equals")]);
+    setBudgetPerRun("");
+    setBudgetPerDay("");
+    setBudgetPerMonth("");
   }
 
   function loadWorkflowIntoBuilder(workflow: Workflow) {
@@ -480,6 +523,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
       id: assertion.id || `assert-edit-${index}-${Date.now()}`,
       enabled: assertion.enabled !== false,
     })));
+    setBudgetPerRun(workflow.budget?.max_cost_per_run_usd ? String(workflow.budget.max_cost_per_run_usd) : "");
+    setBudgetPerDay(workflow.budget?.max_cost_per_day_usd ? String(workflow.budget.max_cost_per_day_usd) : "");
+    setBudgetPerMonth(workflow.budget?.max_cost_per_month_usd ? String(workflow.budget.max_cost_per_month_usd) : "");
     setMessage(`Editing ${workflow.name}.`);
   }
 
@@ -533,6 +579,14 @@ export default function ProductView({ authToken }: ProductViewProps) {
       expected_status: assertion.expected_status || undefined,
       max_duration_ms: assertion.type === "max_duration_ms" ? Math.max(1, Number(assertion.max_duration_ms || 30000)) : undefined,
     }));
+    const budget: WorkflowBudget = {};
+    const perRun = Number.parseFloat(budgetPerRun);
+    const perDay = Number.parseFloat(budgetPerDay);
+    const perMonth = Number.parseFloat(budgetPerMonth);
+    if (Number.isFinite(perRun) && perRun > 0) budget.max_cost_per_run_usd = perRun;
+    if (Number.isFinite(perDay) && perDay > 0) budget.max_cost_per_day_usd = perDay;
+    if (Number.isFinite(perMonth) && perMonth > 0) budget.max_cost_per_month_usd = perMonth;
+    if (Object.keys(budget).length > 0) budget.enforce_on_release = true;
     const endpoint = editingWorkflowId ? `/workflows/${editingWorkflowId}` : "/workflows";
     const saved = await api(endpoint, {
       method: editingWorkflowId ? "PUT" : "POST",
@@ -542,6 +596,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         trigger,
         actions,
         assertions,
+        budget,
         tags: triggerMode === "schedule" ? ["scheduled"] : ["manual"],
         permissions,
         actor_id: "local-owner",
@@ -881,6 +936,41 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       />
                     </label>
                   </div>
+                  <div className="grid grid-cols-3 gap-2 rounded-md border border-white/[0.04] bg-white/[0.015] p-3">
+                    <label className="block">
+                      <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Run $</span>
+                      <input
+                        className="jarvis-input mt-1"
+                        type="number"
+                        min={0}
+                        step="0.0001"
+                        value={budgetPerRun}
+                        onChange={(event) => setBudgetPerRun(event.target.value)}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Day $</span>
+                      <input
+                        className="jarvis-input mt-1"
+                        type="number"
+                        min={0}
+                        step="0.001"
+                        value={budgetPerDay}
+                        onChange={(event) => setBudgetPerDay(event.target.value)}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Month $</span>
+                      <input
+                        className="jarvis-input mt-1"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={budgetPerMonth}
+                        onChange={(event) => setBudgetPerMonth(event.target.value)}
+                      />
+                    </label>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     {["prompt", "calendar_brief", "email_digest", "create_calendar_event", "notification", "wait_for_approval"].map((type) => (
                       <button
@@ -984,6 +1074,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                           <span className="jarvis-badge">v{workflow.version || 1}</span>
                           <span className="jarvis-badge">{workflow.trigger?.type || "manual"}</span>
                           {workflow.active_release_channel && <span className="jarvis-badge">{workflow.active_release_channel} pinned</span>}
+                          {workflow.budget?.max_cost_per_run_usd && <span className="jarvis-badge">run {formatCost(workflow.budget.max_cost_per_run_usd)}</span>}
                           {!workflow.enabled && <span className="jarvis-badge">disabled</span>}
                         </div>
                         <p className="text-xs text-jarvis-text-dim/55 mt-1 max-w-2xl">{workflow.description || workflow.actions?.[0]?.prompt}</p>
@@ -1025,11 +1116,15 @@ export default function ProductView({ authToken }: ProductViewProps) {
                   ) : workflowVersions.map((version) => {
                     const readiness = version.release_readiness;
                     const assertionResult = readiness?.evidence?.assertion_result;
+                    const costBudget = readiness?.evidence?.cost_budget;
+                    const dryRunCost = costBudget?.actual?.cost_usd ?? readiness?.evidence?.dry_run?.cost?.cost_usd;
                     const readinessLabel = readiness?.ready
                       ? "ready"
                       : readiness?.status === "missing_dry_run"
                         ? "needs dry run"
-                        : "blocked";
+                        : readiness?.status === "over_budget"
+                          ? "over budget"
+                          : "blocked";
                     return (
                       <div key={version.id} className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
                         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1042,6 +1137,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
                                 <span className="jarvis-badge">
                                   tests {assertionResult.passed_count}/{assertionResult.total}
                                 </span>
+                              )}
+                              {typeof dryRunCost === "number" && (
+                                <span className="jarvis-badge">cost {formatCost(dryRunCost)}</span>
                               )}
                               <span className="text-2xs text-jarvis-text-dim/45 font-mono">
                                 {new Date(version.created_at * 1000).toLocaleString()}
@@ -1065,6 +1163,11 @@ export default function ProductView({ authToken }: ProductViewProps) {
                             {!readiness?.ready && readiness?.blockers?.[0] && (
                               <div className="text-2xs text-jarvis-text-dim/45 mt-1">
                                 {readiness.blockers[0]}
+                              </div>
+                            )}
+                            {costBudget?.blockers?.[0] && readiness?.ready && (
+                              <div className="text-2xs text-jarvis-text-dim/45 mt-1">
+                                {costBudget.blockers[0]}
                               </div>
                             )}
                           </div>
@@ -1115,11 +1218,13 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 <div className="jarvis-card-header mb-0">Run Analytics</div>
                 <span className="jarvis-badge">{runAnalytics?.total_runs || 0} indexed</span>
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
                 <MetricTile label="Success" value={formatPercent(runAnalytics?.success_rate)} />
                 <MetricTile label="Failure" value={formatPercent(runAnalytics?.failure_rate)} />
                 <MetricTile label="Avg Run" value={formatDuration(runAnalytics?.avg_duration_ms)} />
                 <MetricTile label="P95 Run" value={formatDuration(runAnalytics?.p95_duration_ms)} />
+                <MetricTile label="Spend" value={formatCost(runAnalytics?.total_cost_usd)} />
+                <MetricTile label="Avg Cost" value={formatCost(runAnalytics?.avg_cost_usd)} />
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
                 <div className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
@@ -1160,7 +1265,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       <div key={`${action.type}-${action.title}`} className="flex items-center justify-between gap-3 text-2xs">
                         <span className="text-jarvis-text/60 truncate">{action.title || action.type}</span>
                         <span className="text-jarvis-text-dim/45 shrink-0">
-                          {action.failed} failed · {action.skipped} skipped · {formatDuration(action.avg_duration_ms)}
+                          {action.failed} failed · {action.skipped} skipped · {formatDuration(action.avg_duration_ms)} · {formatCost(action.avg_cost_usd)}
                         </span>
                       </div>
                     ))}
@@ -1202,7 +1307,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                     <div>
                       <div className="text-xs text-jarvis-text/70">{run.workflow_name}</div>
                       <div className="text-2xs text-jarvis-text-dim/45 font-mono">
-                        {run.triggered_by} · {run.dry_run ? "dry" : "live"} · v{run.workflow_version || 1}{run.release_channel ? ` · ${run.release_channel}` : ""} · {new Date(run.started_at * 1000).toLocaleString()}
+                        {run.triggered_by} · {run.dry_run ? "dry" : "live"} · v{run.workflow_version || 1}{run.release_channel ? ` · ${run.release_channel}` : ""} · {formatCost(run.cost?.cost_usd)} · {new Date(run.started_at * 1000).toLocaleString()}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1227,7 +1332,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                     <div>
                       <div className="text-sm text-jarvis-text/75">{selectedRun.workflow_name}</div>
                       <div className="text-2xs text-jarvis-text-dim/45 font-mono">
-                        {selectedRun.triggered_by} · {selectedRun.dry_run ? "dry" : "live"} · v{selectedRun.workflow_version || 1}{selectedRun.release_channel ? ` · ${selectedRun.release_channel}` : ""} · {formatDuration(selectedRun.duration_ms)}
+                        {selectedRun.triggered_by} · {selectedRun.dry_run ? "dry" : "live"} · v{selectedRun.workflow_version || 1}{selectedRun.release_channel ? ` · ${selectedRun.release_channel}` : ""} · {formatDuration(selectedRun.duration_ms)} · {formatCost(selectedRun.cost?.cost_usd)}
                       </div>
                       {selectedRun.replay?.source_run_id && (
                         <div className="text-2xs text-jarvis-text-dim/45 font-mono mt-1">
@@ -1439,6 +1544,11 @@ function formatPercent(value?: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatCost(value?: number) {
+  if (typeof value !== "number" || Number.isNaN(value) || value <= 0) return "$0";
+  return value < 0.01 ? `$${value.toFixed(6)}` : `$${value.toFixed(4)}`;
+}
+
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
@@ -1463,6 +1573,7 @@ function TimelineEntryView({ entry, index }: { entry: WorkflowTimelineEntry; ind
   const output = entry.output || {};
   const input = entry.input || {};
   const outputText = output.response || output.message || output.error || "none";
+  const stepCost = entry.cost?.cost_usd ?? output.cost?.cost_usd;
   return (
     <div className="rounded-md border border-white/[0.05] bg-white/[0.02] px-3 py-3 space-y-3">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -1472,6 +1583,7 @@ function TimelineEntryView({ entry, index }: { entry: WorkflowTimelineEntry; ind
           <span className="text-2xs text-jarvis-text-dim/45">{entry.type.replaceAll("_", " ")}</span>
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-2xs font-mono text-jarvis-text-dim/45">{formatCost(stepCost)}</span>
           <span className="text-2xs font-mono text-jarvis-text-dim/45">{formatDuration(entry.duration_ms)}</span>
           <span className="jarvis-badge">{entry.status}</span>
         </div>
