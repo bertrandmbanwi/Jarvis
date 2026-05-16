@@ -14,6 +14,7 @@ def product_bet_files(tmp_path, monkeypatch):
     monkeypatch.setattr(workflows, "WORKFLOWS_FILE", tmp_path / "workflows.json")
     monkeypatch.setattr(workflows, "WORKFLOW_RUNS_FILE", tmp_path / "workflow_runs.json")
     monkeypatch.setattr(workflows, "WORKFLOW_APPROVALS_FILE", tmp_path / "workflow_approvals.json")
+    monkeypatch.setattr(workflows, "WORKFLOW_VERSIONS_FILE", tmp_path / "workflow_versions.json")
     monkeypatch.setattr(team, "TEAM_FILE", tmp_path / "team.json")
     monkeypatch.setattr(calendar_accounts, "CALENDAR_STATE_FILE", tmp_path / "calendar_state.json")
 
@@ -269,6 +270,60 @@ def test_product_state_imports_legacy_json_to_sqlite(product_bet_files):
     assert status["workflows"]["migrated_from"] == str(workflows.WORKFLOWS_FILE)
     assert status["team"]["migrated_from"] == str(team.TEAM_FILE)
     assert status["calendar_state"]["migrated_from"] == str(calendar_accounts.CALENDAR_STATE_FILE)
+
+
+def test_workflow_version_history_can_restore_snapshots(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Versioned workflow",
+        actions=[{"type": "prompt", "title": "First", "prompt": "original"}],
+        actor_id="owner",
+    )
+
+    created_versions = workflows.list_workflow_versions(workflow["id"])
+
+    assert len(created_versions) == 1
+    assert created_versions[0]["event"] == "created"
+    assert created_versions[0]["actor_id"] == "owner"
+
+    updated = workflows.update_workflow(
+        workflow["id"],
+        {
+            "name": "Renamed workflow",
+            "actions": [{"type": "prompt", "title": "Second", "prompt": "changed"}],
+        },
+        actor_id="member-1",
+        note="Renamed and changed prompt",
+    )
+
+    assert updated is not None
+    assert updated["version"] == 2
+
+    versions = workflows.list_workflow_versions(workflow["id"])
+
+    assert [item["event"] for item in versions[:2]] == ["updated", "created"]
+    assert versions[0]["previous_version"] == 1
+    assert versions[0]["actor_id"] == "member-1"
+    assert versions[0]["changed_fields"] == ["actions", "name"]
+
+    restored = workflows.restore_workflow_version(
+        workflow["id"],
+        created_versions[0]["id"],
+        actor_id="owner",
+        note="Back to original",
+    )
+
+    assert restored is not None
+    assert restored["name"] == "Versioned workflow"
+    assert restored["actions"][0]["prompt"] == "original"
+    assert restored["version"] == 3
+    assert workflows.list_workflow_versions(workflow["id"])[0]["event"] == "restored"
+
+    assert workflows.delete_workflow(workflow["id"], actor_id="owner", note="Cleanup") is True
+    deleted_versions = workflows.list_workflow_versions(workflow["id"])
+
+    assert deleted_versions[0]["event"] == "deleted"
+    assert deleted_versions[0]["note"] == "Cleanup"
+    assert workflows.get_workflow(workflow["id"]) is None
 
 
 def test_calendar_policy_blocks_auto_schedule_until_connected(product_bet_files):

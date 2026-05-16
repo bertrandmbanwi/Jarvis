@@ -844,11 +844,14 @@ class WorkflowRequest(BaseModel):
     owner_id: str = "local-owner"
     visibility: str = "private"
     permissions: list[str] = []
+    actor_id: str = "local-owner"
+    version_note: str = ""
 
 
 class WorkflowTemplateRequest(BaseModel):
     template_id: str
     owner_id: str = "local-owner"
+    actor_id: str = "local-owner"
 
 
 class WorkflowRunRequest(BaseModel):
@@ -858,6 +861,11 @@ class WorkflowRunRequest(BaseModel):
 
 class WorkflowApprovalRequest(BaseModel):
     actor: str = "local-owner"
+    note: str = ""
+
+
+class WorkflowVersionRestoreRequest(BaseModel):
+    actor_id: str = "local-owner"
     note: str = ""
 
 
@@ -1214,6 +1222,8 @@ async def create_workflow(request: WorkflowRequest):
         owner_id=request.owner_id,
         visibility=request.visibility,
         permissions=request.permissions,
+        actor_id=request.actor_id,
+        note=request.version_note,
     )
     return workflow
 
@@ -1221,7 +1231,11 @@ async def create_workflow(request: WorkflowRequest):
 @app.post("/workflows/from-template", dependencies=[Depends(require_auth)])
 async def create_workflow_from_template(request: WorkflowTemplateRequest):
     """Create a workflow from a starter template."""
-    workflow = workflows.create_workflow_from_template(request.template_id, owner_id=request.owner_id)
+    workflow = workflows.create_workflow_from_template(
+        request.template_id,
+        owner_id=request.owner_id,
+        actor_id=request.actor_id,
+    )
     if workflow is None:
         return JSONResponse(status_code=404, content={"error": "Workflow template not found."})
     return workflow
@@ -1268,6 +1282,39 @@ async def reject_workflow_approval(approval_id: str, request: WorkflowApprovalRe
     return approval
 
 
+@app.get("/workflows/{workflow_id}/versions", dependencies=[Depends(require_auth)])
+async def list_workflow_versions(workflow_id: str, limit: int = 50):
+    """List version history for one workflow."""
+    workflow = workflows.get_workflow(workflow_id)
+    versions = workflows.list_workflow_versions(workflow_id, limit=limit)
+    if workflow is None and not versions:
+        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    return {"versions": versions, "count": len(versions)}
+
+
+@app.get("/workflows/{workflow_id}/versions/{version_id}", dependencies=[Depends(require_auth)])
+async def get_workflow_version(workflow_id: str, version_id: str):
+    """Get one workflow version snapshot."""
+    version = workflows.get_workflow_version(workflow_id, version_id)
+    if version is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
+    return version
+
+
+@app.post("/workflows/{workflow_id}/versions/{version_id}/restore", dependencies=[Depends(require_auth)])
+async def restore_workflow_version(workflow_id: str, version_id: str, request: WorkflowVersionRestoreRequest):
+    """Restore a workflow from a version snapshot."""
+    workflow = workflows.restore_workflow_version(
+        workflow_id,
+        version_id,
+        actor_id=request.actor_id,
+        note=request.note,
+    )
+    if workflow is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
+    return workflow
+
+
 @app.get("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
 async def get_workflow(workflow_id: str):
     """Get one workflow definition."""
@@ -1292,6 +1339,8 @@ async def update_workflow(workflow_id: str, request: WorkflowRequest):
             "visibility": request.visibility,
             "permissions": request.permissions,
         },
+        actor_id=request.actor_id,
+        note=request.version_note,
     )
     if workflow is None:
         return JSONResponse(status_code=404, content={"error": "Workflow not found."})
@@ -1299,9 +1348,9 @@ async def update_workflow(workflow_id: str, request: WorkflowRequest):
 
 
 @app.delete("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
-async def delete_workflow(workflow_id: str):
+async def delete_workflow(workflow_id: str, actor_id: str = "local-owner", note: str = ""):
     """Delete a workflow definition."""
-    if not workflows.delete_workflow(workflow_id):
+    if not workflows.delete_workflow(workflow_id, actor_id=actor_id, note=note):
         return JSONResponse(status_code=404, content={"error": "Workflow not found."})
     return {"status": "deleted"}
 
