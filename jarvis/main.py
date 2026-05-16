@@ -243,6 +243,12 @@ async def run_full():
             logger.info("* Wake word detected *")
             asyncio.ensure_future(broadcast_overlay_state("listening"))
 
+        async def on_capture_complete(source: str, dispatched: bool):
+            if dispatched:
+                return
+            logger.info("Voice capture ended without dispatch (%s); returning overlay to idle.", source)
+            await broadcast_overlay_state("idle")
+
         async def _speak_response(response: str):
             """Speak a response and broadcast to all UI clients."""
             await broadcast_overlay_state("speaking", text=response)
@@ -351,6 +357,7 @@ async def run_full():
 
         listener.on_wake(on_wake)
         listener.on_speech(on_speech)
+        listener.on_capture_complete(on_capture_complete)
 
         try:
             if listener_ok:
