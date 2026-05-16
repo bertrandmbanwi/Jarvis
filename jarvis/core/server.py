@@ -839,6 +839,7 @@ class WorkflowRequest(BaseModel):
     description: str = ""
     trigger: dict[str, Any] = {}
     actions: list[dict[str, Any]] = []
+    assertions: list[dict[str, Any]] = []
     enabled: bool = True
     tags: list[str] = []
     owner_id: str = "local-owner"
@@ -863,6 +864,10 @@ class WorkflowRunRequest(BaseModel):
 
 class WorkflowReplayRequest(BaseModel):
     dry_run: bool = True
+
+
+class WorkflowAssertionRunRequest(BaseModel):
+    run_id: str = ""
 
 
 class WorkflowApprovalRequest(BaseModel):
@@ -1237,6 +1242,7 @@ async def create_workflow(request: WorkflowRequest):
         description=request.description,
         trigger=request.trigger,
         actions=request.actions,
+        assertions=request.assertions,
         enabled=request.enabled,
         tags=request.tags,
         owner_id=request.owner_id,
@@ -1415,6 +1421,21 @@ async def dry_run_workflow_version(workflow_id: str, version_id: str):
     return {"run": run}
 
 
+@app.post("/workflows/{workflow_id}/versions/{version_id}/assertions/run", dependencies=[Depends(require_auth)])
+async def run_workflow_version_assertions(
+    workflow_id: str,
+    version_id: str,
+    request: WorkflowAssertionRunRequest,
+):
+    """Run release assertions against a workflow version's latest dry run."""
+    result = workflows.run_workflow_assertion_suite(workflow_id, version_id, run_id=request.run_id)
+    if result is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
+    if not result.get("passed") and result.get("status") in {"missing_run", "wrong_workflow"}:
+        return JSONResponse(status_code=400, content={"error": result.get("message", "Assertions could not run."), "result": result})
+    return {"result": result}
+
+
 @app.post("/workflows/{workflow_id}/versions/{version_id}/restore", dependencies=[Depends(require_auth)])
 async def restore_workflow_version(workflow_id: str, version_id: str, request: WorkflowVersionRestoreRequest):
     """Restore a workflow from a version snapshot."""
@@ -1474,6 +1495,7 @@ async def update_workflow(workflow_id: str, request: WorkflowRequest):
         "description": request.description,
         "trigger": request.trigger,
         "actions": request.actions,
+        "assertions": request.assertions,
         "enabled": request.enabled,
         "tags": request.tags,
         "visibility": request.visibility,

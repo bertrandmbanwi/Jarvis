@@ -575,6 +575,59 @@ async def test_workflow_release_promotion_requires_approval(product_bet_files):
     assert workflows.list_workflow_releases(workflow_id=workflow["id"])[0]["actor_id"] == "owner"
 
 
+@pytest.mark.asyncio
+async def test_workflow_release_requires_passing_assertions(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Assertion gated release",
+        actions=[{"type": "prompt", "title": "Dry", "prompt": "dry-run prompt"}],
+        assertions=[{"type": "output_contains", "title": "Need expected output", "value": "needle"}],
+    )
+    version = workflows.list_workflow_versions(workflow["id"])[0]
+    dry_run = await workflows.run_workflow_version(workflow["id"], version["id"], dry_run=True)
+
+    assert dry_run is not None
+
+    result = workflows.run_workflow_assertion_suite(workflow["id"], version["id"])
+    readiness = workflows.get_release_readiness(workflow["id"], version["id"], channel="stable")
+    request = workflows.request_workflow_release_approval(
+        workflow["id"],
+        version["id"],
+        channel="stable",
+        actor_id="operator",
+        note="Ready for stable.",
+    )
+
+    assert result is not None
+    assert result["status"] == "failed"
+    assert result["failed_count"] == 1
+    assert workflows.get_run(dry_run["id"])["assertion_result"]["status"] == "failed"
+    assert readiness["ready"] is False
+    assert readiness["status"] == "failed_assertions"
+    assert "Workflow assertions must pass" in readiness["blockers"][0]
+    assert request is None
+
+
+@pytest.mark.asyncio
+async def test_workflow_assertion_suite_can_pass_for_version_dry_run(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Passing assertion release",
+        actions=[{"type": "prompt", "title": "Dry", "prompt": "dry-run prompt"}],
+        assertions=[{"type": "output_contains", "title": "Prepared output", "value": "prepared"}],
+    )
+    version = workflows.list_workflow_versions(workflow["id"])[0]
+
+    await workflows.run_workflow_version(workflow["id"], version["id"], dry_run=True)
+
+    result = workflows.run_workflow_assertion_suite(workflow["id"], version["id"])
+    readiness = workflows.get_release_readiness(workflow["id"], version["id"], channel="stable")
+
+    assert result is not None
+    assert result["status"] == "passed"
+    assert result["failed_count"] == 0
+    assert readiness["ready"] is True
+    assert readiness["evidence"]["assertion_result"]["status"] == "passed"
+
+
 def test_production_release_request_requires_note(product_bet_files):
     workflow = workflows.create_workflow(
         name="Production candidate",

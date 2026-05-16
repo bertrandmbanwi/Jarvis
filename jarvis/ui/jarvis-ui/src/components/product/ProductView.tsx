@@ -35,6 +35,18 @@ interface WorkflowAction {
   on_error?: string;
 }
 
+interface WorkflowAssertion {
+  id?: string;
+  type: string;
+  title: string;
+  enabled?: boolean;
+  action_id?: string;
+  value?: string;
+  expected_status?: string;
+  max_duration_ms?: number;
+  system?: boolean;
+}
+
 interface WorkflowTemplate {
   id: string;
   name: string;
@@ -49,6 +61,7 @@ interface Workflow {
   description: string;
   trigger: { type: string; rrule?: string; minutes_before?: number };
   actions: WorkflowAction[];
+  assertions?: WorkflowAssertion[];
   enabled: boolean;
   tags?: string[];
   visibility?: string;
@@ -84,7 +97,33 @@ interface ReleaseReadiness {
       completed_at?: number;
       duration_ms?: number;
     } | null;
+    assertion_result?: WorkflowAssertionResult | null;
   };
+}
+
+interface WorkflowAssertionResult {
+  id?: string;
+  workflow_id?: string;
+  workflow_version_id?: string;
+  run_id?: string;
+  status: string;
+  passed: boolean;
+  total: number;
+  passed_count: number;
+  failed_count: number;
+  assertions: Array<{
+    id: string;
+    type: string;
+    title: string;
+    action_id?: string;
+    passed: boolean;
+    status: string;
+    expected?: unknown;
+    actual?: unknown;
+    message?: string;
+    system?: boolean;
+  }>;
+  created_at?: number;
 }
 
 interface WorkflowRun {
@@ -297,6 +336,28 @@ const defaultBuilderAction = (type: string, id = `${type}-${Date.now()}-${Math.r
   };
 };
 
+const defaultBuilderAssertion = (
+  type: string,
+  id = `assert-${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+): WorkflowAssertion => {
+  if (type === "output_contains") {
+    return { id, type, title: "Output contains", value: "prepared", enabled: true };
+  }
+  if (type === "output_not_contains") {
+    return { id, type, title: "Output omits error", value: "error", enabled: true };
+  }
+  if (type === "action_status_equals") {
+    return { id, type, title: "Action status", action_id: "", expected_status: "prepared", enabled: true };
+  }
+  if (type === "max_duration_ms") {
+    return { id, type, title: "Max duration", max_duration_ms: 30000, enabled: true };
+  }
+  if (type === "no_approval_required") {
+    return { id, type, title: "No approval gates", enabled: true };
+  }
+  return { id, type: "run_status_equals", title: "Run completed", expected_status: "completed", enabled: true };
+};
+
 export default function ProductView({ authToken }: ProductViewProps) {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -314,6 +375,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [triggerMode, setTriggerMode] = useState("manual");
   const [dailyTime, setDailyTime] = useState("08:30");
   const [builderActions, setBuilderActions] = useState<WorkflowAction[]>([defaultBuilderAction("prompt", "prompt-initial")]);
+  const [builderAssertions, setBuilderAssertions] = useState<WorkflowAssertion[]>([defaultBuilderAssertion("run_status_equals", "assert-initial")]);
   const [approvals, setApprovals] = useState<WorkflowApproval[]>([]);
   const [runStatusFilter, setRunStatusFilter] = useState("");
   const [runModeFilter, setRunModeFilter] = useState("all");
@@ -393,6 +455,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
     setTriggerMode("manual");
     setDailyTime("08:30");
     setBuilderActions([defaultBuilderAction("prompt")]);
+    setBuilderAssertions([defaultBuilderAssertion("run_status_equals")]);
   }
 
   function loadWorkflowIntoBuilder(workflow: Workflow) {
@@ -411,6 +474,11 @@ export default function ProductView({ authToken }: ProductViewProps) {
       retry_count: action.retry_count || 0,
       retry_delay_ms: action.retry_delay_ms || 0,
       on_error: action.on_error || "stop",
+    })));
+    setBuilderAssertions((workflow.assertions?.length ? workflow.assertions : [defaultBuilderAssertion("run_status_equals")]).map((assertion, index) => ({
+      ...assertion,
+      id: assertion.id || `assert-edit-${index}-${Date.now()}`,
+      enabled: assertion.enabled !== false,
     })));
     setMessage(`Editing ${workflow.name}.`);
   }
@@ -456,6 +524,15 @@ export default function ProductView({ authToken }: ProductViewProps) {
       if (action.type === "notification") return ["system:notify"];
       return ["llm:chat"];
     })));
+    const assertions = builderAssertions.map((assertion) => ({
+      ...assertion,
+      title: assertion.title || assertion.type.replaceAll("_", " "),
+      enabled: assertion.enabled !== false,
+      action_id: assertion.action_id || undefined,
+      value: assertion.value || undefined,
+      expected_status: assertion.expected_status || undefined,
+      max_duration_ms: assertion.type === "max_duration_ms" ? Math.max(1, Number(assertion.max_duration_ms || 30000)) : undefined,
+    }));
     const endpoint = editingWorkflowId ? `/workflows/${editingWorkflowId}` : "/workflows";
     const saved = await api(endpoint, {
       method: editingWorkflowId ? "PUT" : "POST",
@@ -464,6 +541,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         description: actions.map((action) => action.title).join(" -> ").slice(0, 180),
         trigger,
         actions,
+        assertions,
         tags: triggerMode === "schedule" ? ["scheduled"] : ["manual"],
         permissions,
         actor_id: "local-owner",
@@ -500,6 +578,21 @@ export default function ProductView({ authToken }: ProductViewProps) {
     if (data.run?.id) {
       setSelectedRun(data.run);
     }
+    await loadData();
+    if (selectedWorkflowForHistory?.id === workflowId) {
+      await loadWorkflowVersions(selectedWorkflowForHistory);
+    }
+  }
+
+  async function runAssertionSuite(workflowId: string, versionId: string) {
+    const data = await api(`/workflows/${workflowId}/versions/${versionId}/assertions/run`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const result: WorkflowAssertionResult | undefined = data.result;
+    setMessage(result?.passed
+      ? `Assertions passed (${result.passed_count}/${result.total}).`
+      : `Assertions failed (${result?.failed_count || 0}/${result?.total || 0}).`);
     await loadData();
     if (selectedWorkflowForHistory?.id === workflowId) {
       await loadWorkflowVersions(selectedWorkflowForHistory);
@@ -588,6 +681,26 @@ export default function ProductView({ authToken }: ProductViewProps) {
       next.splice(nextIndex, 0, item);
       return next;
     });
+  }
+
+  function updateBuilderAssertion(index: number, updates: Partial<WorkflowAssertion>) {
+    setBuilderAssertions((current) => current.map((assertion, assertionIndex) => (
+      assertionIndex === index ? { ...assertion, ...updates } : assertion
+    )));
+  }
+
+  function changeBuilderAssertionType(index: number, type: string) {
+    setBuilderAssertions((current) => current.map((assertion, assertionIndex) => (
+      assertionIndex === index ? { ...defaultBuilderAssertion(type), id: assertion.id } : assertion
+    )));
+  }
+
+  function addBuilderAssertion(type: string) {
+    setBuilderAssertions((current) => [...current, defaultBuilderAssertion(type)]);
+  }
+
+  function removeBuilderAssertion(index: number) {
+    setBuilderAssertions((current) => current.length === 1 ? current : current.filter((_, assertionIndex) => assertionIndex !== index));
   }
 
   async function approveWorkflowApproval(id: string) {
@@ -822,6 +935,37 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       />
                     </div>
                   ))}
+                  <div className="rounded-md border border-jarvis-cyan/10 bg-jarvis-cyan/[0.025] p-3 space-y-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="text-xs text-jarvis-text/70 uppercase tracking-wider">Release Assertions</div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {["output_contains", "output_not_contains", "action_status_equals", "max_duration_ms", "no_approval_required"].map((type) => (
+                          <button
+                            key={type}
+                            className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-2 py-2 rounded-md"
+                            onClick={() => addBuilderAssertion(type)}
+                          >
+                            + {type.replaceAll("_", " ")}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      {builderAssertions.map((assertion, index) => (
+                        <AssertionFields
+                          key={assertion.id || index}
+                          assertion={assertion}
+                          index={index}
+                          actions={builderActions}
+                          updateAssertion={updateBuilderAssertion}
+                          changeAssertionType={changeBuilderAssertionType}
+                          removeAssertion={removeBuilderAssertion}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -880,6 +1024,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                     <p className="text-sm text-jarvis-text-dim/45">No versions recorded.</p>
                   ) : workflowVersions.map((version) => {
                     const readiness = version.release_readiness;
+                    const assertionResult = readiness?.evidence?.assertion_result;
                     const readinessLabel = readiness?.ready
                       ? "ready"
                       : readiness?.status === "missing_dry_run"
@@ -893,6 +1038,11 @@ export default function ProductView({ authToken }: ProductViewProps) {
                               <span className="text-xs text-jarvis-text/70">Version {version.version}</span>
                               <span className="jarvis-badge">{version.event}</span>
                               <span className="jarvis-badge">{readinessLabel}</span>
+                              {assertionResult && (
+                                <span className="jarvis-badge">
+                                  tests {assertionResult.passed_count}/{assertionResult.total}
+                                </span>
+                              )}
                               <span className="text-2xs text-jarvis-text-dim/45 font-mono">
                                 {new Date(version.created_at * 1000).toLocaleString()}
                               </span>
@@ -907,6 +1057,11 @@ export default function ProductView({ authToken }: ProductViewProps) {
                                 dry run {readiness.evidence.dry_run_id.slice(0, 8)}
                               </div>
                             )}
+                            {assertionResult && !assertionResult.passed && assertionResult.assertions?.find((item) => !item.passed)?.message && (
+                              <div className="text-2xs text-jarvis-text-dim/45 mt-1">
+                                {assertionResult.assertions.find((item) => !item.passed)?.message}
+                              </div>
+                            )}
                             {!readiness?.ready && readiness?.blockers?.[0] && (
                               <div className="text-2xs text-jarvis-text-dim/45 mt-1">
                                 {readiness.blockers[0]}
@@ -919,6 +1074,13 @@ export default function ProductView({ authToken }: ProductViewProps) {
                               onClick={() => dryRunWorkflowVersion(version.workflow_id, version.id)}
                             >
                               Test
+                            </button>
+                            <button
+                              className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md disabled:opacity-40"
+                              disabled={!readiness?.evidence?.dry_run_id}
+                              onClick={() => runAssertionSuite(version.workflow_id, version.id)}
+                            >
+                              Assert
                             </button>
                             <button
                               className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
@@ -1337,6 +1499,108 @@ function TraceRow({ label, value }: { label: string; value: unknown }) {
     <div className="rounded-md border border-white/[0.04] bg-black/20 px-2 py-2">
       <div className="text-2xs text-jarvis-text-dim/45 uppercase tracking-wider">{label}</div>
       <div className="text-xs text-jarvis-text/60 mt-1 break-words">{formatTraceValue(value)}</div>
+    </div>
+  );
+}
+
+function AssertionFields({
+  assertion,
+  index,
+  actions,
+  updateAssertion,
+  changeAssertionType,
+  removeAssertion,
+}: {
+  assertion: WorkflowAssertion;
+  index: number;
+  actions: WorkflowAction[];
+  updateAssertion: (index: number, updates: Partial<WorkflowAssertion>) => void;
+  changeAssertionType: (index: number, type: string) => void;
+  removeAssertion: (index: number) => void;
+}) {
+  const needsValue = assertion.type === "output_contains" || assertion.type === "output_not_contains";
+  const needsStatus = assertion.type === "run_status_equals" || assertion.type === "action_status_equals";
+  const needsAction = assertion.type === "action_status_equals" || needsValue;
+  const needsDuration = assertion.type === "max_duration_ms";
+
+  return (
+    <div className="rounded-md border border-white/[0.05] bg-black/20 p-3 space-y-3">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="jarvis-badge">Assert {index + 1}</span>
+          <select className="jarvis-input max-w-64" value={assertion.type} onChange={(event) => changeAssertionType(index, event.target.value)}>
+            <option value="run_status_equals">Run status</option>
+            <option value="no_failed_steps">No failed steps</option>
+            <option value="output_contains">Output contains</option>
+            <option value="output_not_contains">Output omits</option>
+            <option value="action_status_equals">Action status</option>
+            <option value="max_duration_ms">Max duration</option>
+            <option value="no_approval_required">No approvals</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-2xs text-jarvis-text-dim/55">
+            <input
+              type="checkbox"
+              checked={assertion.enabled !== false}
+              onChange={(event) => updateAssertion(index, { enabled: event.target.checked })}
+            />
+            Enabled
+          </label>
+          <button className="jarvis-btn-ghost text-2xs px-2 py-1 rounded-md" onClick={() => removeAssertion(index)}>
+            Remove
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Title</span>
+          <input className="jarvis-input mt-1" value={assertion.title} onChange={(event) => updateAssertion(index, { title: event.target.value })} />
+        </label>
+        {needsAction && (
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Action</span>
+            <select className="jarvis-input mt-1" value={assertion.action_id || ""} onChange={(event) => updateAssertion(index, { action_id: event.target.value })}>
+              <option value="">Any action</option>
+              {actions.map((action, actionIndex) => (
+                <option key={action.id || actionIndex} value={action.id || ""}>
+                  {action.title || `Step ${actionIndex + 1}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {needsStatus && (
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Expected Status</span>
+            <select className="jarvis-input mt-1" value={assertion.expected_status || "completed"} onChange={(event) => updateAssertion(index, { expected_status: event.target.value })}>
+              <option value="completed">Completed</option>
+              <option value="prepared">Prepared</option>
+              <option value="skipped">Skipped</option>
+              <option value="approval_required">Approval required</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+        )}
+        {needsValue && (
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Text</span>
+            <input className="jarvis-input mt-1" value={assertion.value || ""} onChange={(event) => updateAssertion(index, { value: event.target.value })} />
+          </label>
+        )}
+        {needsDuration && (
+          <label className="block">
+            <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Max Duration</span>
+            <input
+              className="jarvis-input mt-1"
+              type="number"
+              min={1}
+              value={assertion.max_duration_ms || 30000}
+              onChange={(event) => updateAssertion(index, { max_duration_ms: Number.parseInt(event.target.value, 10) || 30000 })}
+            />
+          </label>
+        )}
+      </div>
     </div>
   );
 }
