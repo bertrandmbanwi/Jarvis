@@ -44,44 +44,62 @@ export interface AuthState {
 }
 
 export function useAuth(): AuthState {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isLocal, setIsLocal] = useState(false);
-  const [authRequired, setAuthRequired] = useState(true);
+  const [authRequired, setAuthRequired] = useState(false);
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [loginError, setLoginError] = useState<string | null>(null);
   const checkedRef = useRef(false);
+
+  const checkAuth = useCallback(async () => {
+    try {
+      const storedToken = getStoredToken();
+      const headers = jarvisHeaders(storedToken);
+
+      const resp = await fetch(`${API_BASE}/auth/status`, { headers });
+      if (resp.ok) {
+        const data = await resp.json();
+        const required = data.auth_required === true;
+        setAuthRequired(required);
+        setIsAuthenticated(!required || data.authenticated);
+        setIsLocal(data.local || false);
+        if (data.authenticated && storedToken) {
+          setToken(storedToken);
+        }
+      } else {
+        setAuthRequired(false);
+        setIsAuthenticated(true);
+      }
+    } catch {
+      // No-PIN is the default. If the API is still booting or temporarily
+      // unreachable, keep the dashboard visible instead of showing a stale
+      // credential prompt.
+      setAuthRequired(false);
+      setIsAuthenticated(true);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (checkedRef.current) return;
     checkedRef.current = true;
 
-    const checkAuth = async () => {
-      try {
-        const storedToken = getStoredToken();
-        const headers = jarvisHeaders(storedToken);
-
-        const resp = await fetch(`${API_BASE}/auth/status`, { headers });
-        if (resp.ok) {
-          const data = await resp.json();
-          const required = data.auth_required !== false;
-          setAuthRequired(required);
-          setIsAuthenticated(!required || data.authenticated);
-          setIsLocal(data.local || false);
-          if (data.authenticated && storedToken) {
-            setToken(storedToken);
-          }
-        }
-      } catch {
-        // Server not reachable; assume not authenticated
-        setIsAuthenticated(false);
-      } finally {
-        setIsLoading(false);
+    checkAuth();
+    const intervalId = window.setInterval(checkAuth, 5000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkAuth();
       }
     };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
-    checkAuth();
-  }, []);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [checkAuth]);
 
   const login = useCallback(async (pin: string): Promise<boolean> => {
     setLoginError(null);
