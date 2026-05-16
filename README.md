@@ -173,6 +173,20 @@ bash scripts/validate.sh
 
 CI runs backend lint/type/test/security checks, tool contract checks, offline evals, frontend lint/build/audit, and Playwright UI smoke tests. See **[docs/OPERATIONS.md](docs/OPERATIONS.md)** for traces, audits, jobs, install, and update operations.
 
+## macOS App Packaging
+
+Build a Finder-launchable app bundle and DMG:
+
+```bash
+bash scripts/package_macos_app.sh
+```
+
+Install it into `~/Applications`:
+
+```bash
+bash scripts/package_macos_app.sh --install-user
+```
+
 ## Tech Stack
 
 | Layer | Technology |

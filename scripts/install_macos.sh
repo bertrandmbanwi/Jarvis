@@ -12,6 +12,8 @@ python3 -m venv .venv
 npm --prefix jarvis/ui/jarvis-ui ci
 npm --prefix jarvis/ui/jarvis-ui run build
 
+bash scripts/package_macos_app.sh --install-user
+
 mkdir -p "$HOME/Library/LaunchAgents"
 PLIST_TARGET="$HOME/Library/LaunchAgents/com.jarvis.assistant.plist"
 sed \
