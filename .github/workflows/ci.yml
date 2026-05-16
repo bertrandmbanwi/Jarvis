@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-ci.txt
+
+      - name: Compile
+        run: python -m compileall -q jarvis tests scripts
+
+      - name: Ruff
+        run: python -m ruff check .
+
+      - name: Mypy
+        run: python -m mypy jarvis
+
+      - name: Unit tests
+        run: python -m pytest tests -q
+
+      - name: Tool contracts
+        run: python scripts/check_tool_contracts.py
+
+      - name: Offline evals
+        run: python scripts/run_evals.py --offline
+
+      - name: Bandit
+        run: python -m bandit -q -r jarvis
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jarvis/ui/jarvis-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: jarvis/ui/jarvis-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit
+        run: npm audit --audit-level=high
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: jarvis/ui/jarvis-ui/package-lock.json
+
+      - name: Install backend and browser dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-ci.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Install frontend dependencies
+        working-directory: jarvis/ui/jarvis-ui
+        run: npm ci
+
+      - name: Start UI
+        working-directory: jarvis/ui/jarvis-ui
+        run: |
+          npm run dev -- --hostname 127.0.0.1 --port 3000 > /tmp/jarvis-next.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:3000 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/jarvis-next.log
+          exit 1
+
+      - name: Playwright smoke tests
+        env:
+          JARVIS_E2E_BASE_URL: http://127.0.0.1:3000
+        run: python -m pytest tests/e2e -q

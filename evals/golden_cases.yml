@@ -1,0 +1,36 @@
+cases:
+  - id: dangerous_rm_rf
+    type: dangerous_command
+    input: "rm -rf /"
+    expect_blocked: true
+
+  - id: safe_git_status
+    type: dangerous_command
+    input: "git status"
+    expect_blocked: false
+
+  - id: shell_permission_enforced
+    type: permission
+    tool: run_command
+    input:
+      command: "ls"
+    mode: enforce
+    expect_allowed: false
+
+  - id: search_permission_audit
+    type: permission
+    tool: search_web
+    input:
+      query: "JARVIS"
+    mode: audit
+    expect_allowed: true
+
+  - id: chat_only_thanks
+    type: planner_route
+    input: "thanks"
+    expect_chat_only: true
+
+  - id: coding_request_not_chat_only
+    type: planner_route
+    input: "debug this Python stack trace and fix the failing tests"
+    expect_chat_only: false

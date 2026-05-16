@@ -42,6 +42,8 @@ from jarvis.core.hardening import (
 )
 from jarvis.core.llm import JarvisLLM
 from jarvis.core.perf import perf_tracker
+from jarvis.core.permissions import assess_tool_call, record_tool_audit
+from jarvis.core.tracing import record_event, trace_span
 
 logger = logging.getLogger("jarvis.agent")
 
@@ -199,11 +201,31 @@ class AgentExecutor:
             )
 
         tool_input = validate_tool_args(tool_name, tool_input)
+        decision = assess_tool_call(tool_name, tool_input)
+        if not decision.allowed:
+            record_tool_audit(
+                tool_name,
+                tool_input,
+                allowed=False,
+                success=False,
+                error=decision.reason,
+            )
+            logger.warning("Tool %s blocked by permission policy: %s", tool_name, decision.reason)
+            return f"Tool '{tool_name}' is blocked by policy: {decision.reason}"
 
         cached_result = await tool_cache.get(tool_name, tool_input)
         if cached_result is not None:
             logger.info("Tool %s served from cache.", tool_name)
             perf_tracker.record(f"tool.{tool_name}.cache_hit", 0.0)
+            record_event("tool.cache_hit", tool_name=tool_name)
+            record_tool_audit(
+                tool_name,
+                tool_input,
+                allowed=True,
+                success=True,
+                duration_s=0.0,
+                result_preview="cache_hit",
+            )
             return cached_result
 
         if tool_name in ("run_command", "run_terminal_command_smart"):
@@ -211,6 +233,13 @@ class AgentExecutor:
             warning = check_dangerous_command(cmd)
             if warning:
                 logger.warning("Dangerous command detected for %s: %s", tool_name, warning)
+                record_tool_audit(
+                    tool_name,
+                    tool_input,
+                    allowed=False,
+                    success=False,
+                    error=warning,
+                )
                 return f"Command blocked for safety: {warning}"
 
         tool_fn = cast(Callable[..., Any], TOOL_REGISTRY[tool_name])
@@ -218,14 +247,15 @@ class AgentExecutor:
         start_time = time.time()
 
         try:
-            if asyncio.iscoroutinefunction(tool_fn):
-                result = await execute_with_timeout(
-                    tool_fn(**tool_input),
-                    timeout_s=timeout_s,
-                    tool_name=tool_name,
-                )
-            else:
-                result = tool_fn(**tool_input)
+            with trace_span("tool.execute", tool_name=tool_name, timeout_s=timeout_s):
+                if asyncio.iscoroutinefunction(tool_fn):
+                    result = await execute_with_timeout(
+                        tool_fn(**tool_input),
+                        timeout_s=timeout_s,
+                        tool_name=tool_name,
+                    )
+                else:
+                    result = tool_fn(**tool_input)
 
             duration = time.time() - start_time
             self._notify_tool_executed(tool_name, True, duration)
@@ -233,12 +263,28 @@ class AgentExecutor:
             circuit.record_success()
 
             if isinstance(result, list):
+                record_tool_audit(
+                    tool_name,
+                    tool_input,
+                    allowed=True,
+                    success=True,
+                    duration_s=duration,
+                    result_preview=f"list[{len(result)}]",
+                )
                 return result
             result_str = str(result)
             await tool_cache.put(tool_name, tool_input, result_str)
 
             await invalidate_on_mutation(tool_name)
 
+            record_tool_audit(
+                tool_name,
+                tool_input,
+                allowed=True,
+                success=True,
+                duration_s=duration,
+                result_preview=result_str,
+            )
             return result_str
         except TypeError as e:
             logger.warning(
@@ -247,14 +293,15 @@ class AgentExecutor:
             )
             try:
                 args = list(tool_input.values())
-                if asyncio.iscoroutinefunction(tool_fn):
-                    result = await execute_with_timeout(
-                        tool_fn(*args),
-                        timeout_s=timeout_s,
-                        tool_name=tool_name,
-                    )
-                else:
-                    result = tool_fn(*args)
+                with trace_span("tool.execute_positional_fallback", tool_name=tool_name, timeout_s=timeout_s):
+                    if asyncio.iscoroutinefunction(tool_fn):
+                        result = await execute_with_timeout(
+                            tool_fn(*args),
+                            timeout_s=timeout_s,
+                            tool_name=tool_name,
+                        )
+                    else:
+                        result = tool_fn(*args)
 
                 duration = time.time() - start_time
                 self._notify_tool_executed(tool_name, True, duration)
@@ -262,10 +309,26 @@ class AgentExecutor:
                 circuit.record_success()
 
                 if isinstance(result, list):
+                    record_tool_audit(
+                        tool_name,
+                        tool_input,
+                        allowed=True,
+                        success=True,
+                        duration_s=duration,
+                        result_preview=f"list[{len(result)}]",
+                    )
                     return result
                 result_str = str(result)
                 await tool_cache.put(tool_name, tool_input, result_str)
                 await invalidate_on_mutation(tool_name)
+                record_tool_audit(
+                    tool_name,
+                    tool_input,
+                    allowed=True,
+                    success=True,
+                    duration_s=duration,
+                    result_preview=result_str,
+                )
                 return result_str
             except Exception as e2:
                 logger.error("Tool %s positional fallback also failed: %s", tool_name, e2)
@@ -273,6 +336,14 @@ class AgentExecutor:
                 self._notify_tool_executed(tool_name, False, duration, str(e2))
                 perf_tracker.record(f"tool.{tool_name}.error", duration)
                 circuit.record_failure()
+                record_tool_audit(
+                    tool_name,
+                    tool_input,
+                    allowed=True,
+                    success=False,
+                    duration_s=duration,
+                    error=str(e2),
+                )
                 category = classify_error(e2)
                 return user_friendly_error(category, context=f"running {tool_name}")
         except TimeoutError:
@@ -281,6 +352,14 @@ class AgentExecutor:
             self._notify_tool_executed(tool_name, False, duration, error_msg)
             perf_tracker.record(f"tool.{tool_name}.timeout", duration)
             circuit.record_failure()
+            record_tool_audit(
+                tool_name,
+                tool_input,
+                allowed=True,
+                success=False,
+                duration_s=duration,
+                error=error_msg,
+            )
             return (
                 f"Tool '{tool_name}' timed out after {timeout_s:.0f} seconds. "
                 f"The operation may still be running in the background. "
@@ -292,6 +371,14 @@ class AgentExecutor:
             self._notify_tool_executed(tool_name, False, duration, str(e))
             perf_tracker.record(f"tool.{tool_name}.error", duration)
             circuit.record_failure()
+            record_tool_audit(
+                tool_name,
+                tool_input,
+                allowed=True,
+                success=False,
+                duration_s=duration,
+                error=str(e),
+            )
             category = classify_error(e)
             return user_friendly_error(category, context=f"running {tool_name}")
 
