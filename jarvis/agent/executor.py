@@ -29,6 +29,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from jarvis.agent.qa_agent import QAAgent
+from jarvis.agent.tool_selector import select_tools_for_request
 from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS
 from jarvis.core.cache import invalidate_on_mutation, tool_cache
 from jarvis.core.hardening import (
@@ -67,7 +68,8 @@ class AgentExecutor:
     ) -> str:
         """Process a user request using Claude's agentic tool-use loop."""
         logger.info("Agent executing (tier=%s): '%s'", tier, user_input[:100])
-        active_tools = tools or TOOL_SCHEMAS
+        active_tools = tools or select_tools_for_request(user_input, TOOL_SCHEMAS)
+        logger.info("Tool schema selection: %d/%d tools", len(active_tools), len(TOOL_SCHEMAS))
 
         response_text, tool_calls = await self.llm.chat_with_tools(
             user_message=user_input,
@@ -133,10 +135,11 @@ class AgentExecutor:
     ):
         """Stream the final response token by token after tool iterations."""
         logger.info("Agent executing (streaming, tier=%s): '%s'", tier, user_input[:100])
+        active_tools = tools or select_tools_for_request(user_input, TOOL_SCHEMAS)
 
         async for token in self.llm.chat_with_tools_stream(
             user_message=user_input,
-            tools=tools or TOOL_SCHEMAS,
+            tools=active_tools,
             tool_executor=self._execute_tool,
             conversation_history=conversation_history,
             tier=tier,
@@ -168,10 +171,11 @@ class AgentExecutor:
             prompt = subtask_description
 
         logger.info("Subtask executing (tier=%s): '%s'", tier, subtask_description[:100])
+        active_tools = tools or select_tools_for_request(subtask_description, TOOL_SCHEMAS)
 
         response_text, tool_calls = await self.llm.chat_with_tools(
             user_message=prompt,
-            tools=tools or TOOL_SCHEMAS,
+            tools=active_tools,
             tool_executor=self._execute_tool,
             conversation_history=conversation_history,
             tier=tier,

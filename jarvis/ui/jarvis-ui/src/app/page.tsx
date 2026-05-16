@@ -166,6 +166,7 @@ export default function Page() {
           serverStatus={serverStatus}
           isProcessing={isActive}
           onClearConversation={clearMessages}
+          authToken={authState.token}
         />
       )}
 

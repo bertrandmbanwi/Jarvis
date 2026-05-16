@@ -39,8 +39,8 @@ CLAUDE_DEEP_MODEL = os.getenv("CLAUDE_DEEP_MODEL", "claude-opus-4-6")
 CLAUDE_DEFAULT_TIER = os.getenv("CLAUDE_DEFAULT_TIER", "brain")
 
 CLAUDE_FAST_MAX_TOKENS = int(os.getenv("CLAUDE_FAST_MAX_TOKENS", "256"))
-CLAUDE_BRAIN_MAX_TOKENS = int(os.getenv("CLAUDE_BRAIN_MAX_TOKENS", "4096"))
-CLAUDE_DEEP_MAX_TOKENS = int(os.getenv("CLAUDE_DEEP_MAX_TOKENS", "4096"))
+CLAUDE_BRAIN_MAX_TOKENS = int(os.getenv("CLAUDE_BRAIN_MAX_TOKENS", "1536"))
+CLAUDE_DEEP_MAX_TOKENS = int(os.getenv("CLAUDE_DEEP_MAX_TOKENS", "3072"))
 
 CLAUDE_FAST_TEMPERATURE = float(os.getenv("CLAUDE_FAST_TEMPERATURE", "0.3"))
 CLAUDE_BRAIN_TEMPERATURE = float(os.getenv("CLAUDE_BRAIN_TEMPERATURE", "0.5"))
@@ -48,6 +48,18 @@ CLAUDE_DEEP_TEMPERATURE = float(os.getenv("CLAUDE_DEEP_TEMPERATURE", "0.5"))
 
 COST_DAILY_ALERT = float(os.getenv("COST_DAILY_ALERT", "2.00"))
 COST_MONTHLY_ALERT = float(os.getenv("COST_MONTHLY_ALERT", "60.00"))
+COST_DAILY_HARD_LIMIT = float(os.getenv("COST_DAILY_HARD_LIMIT", "0"))
+COST_MONTHLY_HARD_LIMIT = float(os.getenv("COST_MONTHLY_HARD_LIMIT", "0"))
+COST_MODE = os.getenv("COST_MODE", "balanced").strip().lower()
+LOCAL_FIRST_ENABLED = os.getenv("LOCAL_FIRST_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+MEMORY_ENABLED = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+PRIVACY_MODE_DEFAULT = os.getenv("PRIVACY_MODE_DEFAULT", "false").lower() in {"1", "true", "yes", "on"}
+ANTHROPIC_LAZY_HEALTHCHECK = os.getenv("ANTHROPIC_LAZY_HEALTHCHECK", "true").lower() in {"1", "true", "yes", "on"}
+ANTHROPIC_CACHE_TOOLS = os.getenv("ANTHROPIC_CACHE_TOOLS", "true").lower() in {"1", "true", "yes", "on"}
+ANTHROPIC_PROMPT_CACHE_TTL = os.getenv("ANTHROPIC_PROMPT_CACHE_TTL", "5m").strip().lower()
+ANTHROPIC_BATCH_FOR_BACKGROUND = os.getenv("ANTHROPIC_BATCH_FOR_BACKGROUND", "false").lower() in {"1", "true", "yes", "on"}
+CONTEXT_RECENT_MESSAGES = int(os.getenv("CONTEXT_RECENT_MESSAGES", "10"))
+CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("CONTEXT_SUMMARY_MAX_CHARS", "1800"))
 
 # Maximum per-request cost premium (above the brain tier estimate) before the
 # tier router downgrades a deep-tier request to brain. Set to 0 to disable
@@ -95,25 +107,19 @@ For local weather requests, use this saved location automatically unless Becs ex
 """
 
 
-def _build_system_prompt() -> str:
-    """Build the system prompt with current date/time injected.
+def _build_dynamic_context() -> str:
+    """Build the request-specific system context.
 
-    Architecture: The prompt is structured with a STATIC portion (cacheable,
-    does not change between requests) and a DYNAMIC portion (date/time and
-    any per-request context). The LLM layer can use Anthropic's prompt
-    caching by splitting at the ``<dynamic_context>`` boundary.
+    Keep this block out of Anthropic prompt caching. It contains date/time and
+    profile data that can change between requests.
     """
     from datetime import datetime
     now = datetime.now()
     date_str = now.strftime("%A, %B %d, %Y")
     time_str = now.strftime("%I:%M %p")
 
-    # ── STATIC PORTION (cacheable) ─────────────────────────────────────
-    static = _SYSTEM_PROMPT_STATIC
-
-    # ── DYNAMIC PORTION (per-request) ──────────────────────────────────
     location_context = _get_default_location_context()
-    dynamic = f"""
+    return f"""
 <dynamic_context>
 <current_datetime>
 Today is {date_str}. The current time is {time_str}.
@@ -122,6 +128,21 @@ Always use this date when searching for current events, scores, weather, or time
 {location_context}
 </dynamic_context>
 """
+
+
+def _build_system_prompt() -> str:
+    """Build the system prompt with current date/time injected.
+
+    Architecture: The prompt is structured with a STATIC portion (cacheable,
+    does not change between requests) and a DYNAMIC portion (date/time and
+    any per-request context). The LLM layer can use Anthropic's prompt
+    caching by splitting at the ``<dynamic_context>`` boundary.
+    """
+    # ── STATIC PORTION (cacheable) ─────────────────────────────────────
+    static = _SYSTEM_PROMPT_STATIC
+
+    # ── DYNAMIC PORTION (per-request) ──────────────────────────────────
+    dynamic = _build_dynamic_context()
     return static + dynamic
 
 
@@ -291,6 +312,27 @@ You have native tool-use capability. When you receive a request that requires ac
 def get_system_prompt() -> str:
     """Get the system prompt with current date/time injected."""
     return _build_system_prompt()
+
+
+def get_system_prompt_blocks(cache_static: bool = True) -> list[dict]:
+    """Return Anthropic system blocks with stable content cached separately."""
+    static_block: dict = {
+        "type": "text",
+        "text": _SYSTEM_PROMPT_STATIC,
+    }
+    if cache_static:
+        cache_control: dict[str, str] = {"type": "ephemeral"}
+        if ANTHROPIC_PROMPT_CACHE_TTL == "1h":
+            cache_control["ttl"] = "1h"
+        static_block["cache_control"] = cache_control
+
+    return [
+        static_block,
+        {
+            "type": "text",
+            "text": _build_dynamic_context(),
+        },
+    ]
 
 
 JARVIS_SYSTEM_PROMPT = _build_system_prompt()

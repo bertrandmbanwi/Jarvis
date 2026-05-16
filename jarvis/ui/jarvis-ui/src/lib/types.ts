@@ -31,13 +31,47 @@ export interface CostSummary {
   activeBackend: string;
 }
 
+export interface CostInsights {
+  cacheHitRatio: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  byTierCostUsd: Record<string, number>;
+  recommendations: string[];
+  budget: {
+    dailyAlertUsd: number;
+    dailyHardLimitUsd: number;
+    monthlyAlertUsd: number;
+    monthlyHardLimitUsd: number;
+    costMode: string;
+  };
+  hardLimits?: {
+    blocked: boolean;
+    dailyBlocked: boolean;
+    monthlyBlocked: boolean;
+  };
+  today?: {
+    totalCostUsd: number;
+    totalRequests: number;
+  };
+  month?: {
+    totalCostUsd: number;
+    projectedMonthlyUsd: number;
+  };
+}
+
 export interface ServerStatus {
   status: string;
   version: string;
   uptimeSeconds: number;
   activeBackend: string;
   activeModel: string;
-  memoryStats: { backend: string; count: number };
+  memoryStats: {
+    backend?: string;
+    count?: number;
+    vector_store?: { backend: string; count: number | string };
+    facts?: Record<string, unknown>;
+    preferences?: Record<string, unknown>;
+  };
   conversationTurns: number;
   sessionCost: CostSummary;
 }

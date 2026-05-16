@@ -103,7 +103,10 @@ def get_today_summary() -> dict:
         "total_requests": data["total_requests"],
         "total_input_tokens": data["total_input_tokens"],
         "total_output_tokens": data["total_output_tokens"],
+        "total_cache_read_tokens": data.get("total_cache_read_tokens", 0),
+        "total_cache_creation_tokens": data.get("total_cache_creation_tokens", 0),
         "by_tier": data["by_tier"],
+        "by_model": data.get("by_model", {}),
     }
 
 
@@ -131,4 +134,69 @@ def get_month_summary() -> dict:
         "days_active": days_active,
         "avg_daily_cost_usd": round(avg_daily, 4),
         "projected_monthly_usd": round(avg_daily * 30, 2) if days_active > 0 else 0.0,
+    }
+
+
+def get_cost_insights(limit: int = 12) -> dict[str, Any]:
+    """Return richer cost analytics for dashboard and routing decisions."""
+    data = _load_day(_today_file())
+    requests = data.get("requests", [])[-max(1, min(limit, 100)):]
+    total_cache_read = int(data.get("total_cache_read_tokens", 0) or 0)
+    total_cache_write = int(data.get("total_cache_creation_tokens", 0) or 0)
+    total_input = int(data.get("total_input_tokens", 0) or 0)
+    cache_total = total_cache_read + total_cache_write
+    cache_hit_ratio = total_cache_read / cache_total if cache_total else 0.0
+
+    by_tier_cost: dict[str, float] = {}
+    for req in data.get("requests", []):
+        tier = str(req.get("tier", "unknown"))
+        by_tier_cost[tier] = by_tier_cost.get(tier, 0.0) + float(req.get("cost_usd", 0.0) or 0.0)
+
+    recommendations: list[str] = []
+    if total_cache_write > total_cache_read:
+        recommendations.append("Prompt cache writes exceed reads today; keep the static prompt and tool schemas stable between turns.")
+    if by_tier_cost.get("brain", 0.0) > by_tier_cost.get("fast", 0.0) * 2:
+        recommendations.append("Brain-tier spend is dominant; route routine lookups through local tools or Haiku.")
+    if total_input > 20000:
+        recommendations.append("Input tokens are high; compact older turns and trim stale tool results.")
+    if not recommendations:
+        recommendations.append("Cost profile looks healthy; prompt caching and tier routing are helping.")
+
+    return {
+        "today": get_today_summary(),
+        "month": get_month_summary(),
+        "cache_hit_ratio": round(cache_hit_ratio, 3),
+        "cache_read_tokens": total_cache_read,
+        "cache_write_tokens": total_cache_write,
+        "by_tier_cost_usd": {k: round(v, 6) for k, v in by_tier_cost.items()},
+        "recent_requests": requests,
+        "recommendations": recommendations,
+        "budget": {
+            "daily_alert_usd": settings.COST_DAILY_ALERT,
+            "daily_hard_limit_usd": settings.COST_DAILY_HARD_LIMIT,
+            "monthly_alert_usd": settings.COST_MONTHLY_ALERT,
+            "monthly_hard_limit_usd": settings.COST_MONTHLY_HARD_LIMIT,
+            "cost_mode": settings.COST_MODE,
+        },
+    }
+
+
+def hard_limit_status() -> dict[str, Any]:
+    """Return current hard-budget status for routing and UI."""
+    today = get_today_summary()
+    month = get_month_summary()
+    daily_limit = float(getattr(settings, "COST_DAILY_HARD_LIMIT", 0) or 0)
+    monthly_limit = float(getattr(settings, "COST_MONTHLY_HARD_LIMIT", 0) or 0)
+    daily_spend = float(today.get("total_cost_usd", 0.0) or 0.0)
+    monthly_spend = float(month.get("total_cost_usd", 0.0) or 0.0)
+    daily_blocked = daily_limit > 0 and daily_spend >= daily_limit
+    monthly_blocked = monthly_limit > 0 and monthly_spend >= monthly_limit
+    return {
+        "blocked": daily_blocked or monthly_blocked,
+        "daily_blocked": daily_blocked,
+        "monthly_blocked": monthly_blocked,
+        "daily_spend_usd": daily_spend,
+        "monthly_spend_usd": monthly_spend,
+        "daily_hard_limit_usd": daily_limit,
+        "monthly_hard_limit_usd": monthly_limit,
     }

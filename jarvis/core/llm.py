@@ -107,6 +107,67 @@ class JarvisLLM:
             return self._static_system_prompt
         return settings.get_system_prompt()
 
+    def _prompt_cache_control(self) -> dict[str, str]:
+        cache_control: dict[str, str] = {"type": "ephemeral"}
+        if settings.ANTHROPIC_PROMPT_CACHE_TTL == "1h":
+            cache_control["ttl"] = "1h"
+        return cache_control
+
+    def _system_blocks(self, system_prompt_override: str | None = None) -> list[dict]:
+        """Build Anthropic system blocks with cache-stable content separated."""
+        if system_prompt_override:
+            block: dict = {"type": "text", "text": system_prompt_override}
+            if len(system_prompt_override) >= 1024:
+                block["cache_control"] = self._prompt_cache_control()
+            return [block]
+        if self._static_system_prompt:
+            block = {
+                "type": "text",
+                "text": self._static_system_prompt,
+            }
+            if len(self._static_system_prompt) >= 1024:
+                block["cache_control"] = self._prompt_cache_control()
+            return [block]
+        return settings.get_system_prompt_blocks(cache_static=True)
+
+    def _tools_with_cache_breakpoint(self, tools: list[dict] | None) -> list[dict] | None:
+        """Return tool schemas with a cache breakpoint on the final definition."""
+        if not tools or not settings.ANTHROPIC_CACHE_TOOLS:
+            return tools
+        prepared = [dict(tool) for tool in tools]
+        prepared[-1] = {**prepared[-1], "cache_control": self._prompt_cache_control()}
+        return prepared
+
+    def _apply_cost_mode(self, tier: str) -> str:
+        """Downgrade expensive tiers when the user chooses economy mode."""
+        mode = settings.COST_MODE
+        if mode in {"economy", "eco", "low"}:
+            if tier == "deep":
+                return "brain"
+            if tier == "brain":
+                return "fast"
+        if mode in {"balanced", "standard"} and tier == "deep":
+            return "brain"
+        return tier
+
+    def _paid_usage_blocked(self) -> tuple[bool, str]:
+        """Return whether Anthropic calls should be blocked by hard budget limits."""
+        try:
+            from jarvis.core.cost_tracker import get_month_summary, get_today_summary
+            today = get_today_summary()
+            month = get_month_summary()
+        except Exception as exc:
+            logger.debug("Cost budget check skipped: %s", exc)
+            return False, ""
+
+        daily_limit = float(getattr(settings, "COST_DAILY_HARD_LIMIT", 0) or 0)
+        monthly_limit = float(getattr(settings, "COST_MONTHLY_HARD_LIMIT", 0) or 0)
+        if daily_limit > 0 and float(today.get("total_cost_usd", 0.0)) >= daily_limit:
+            return True, f"daily hard limit of ${daily_limit:.2f}"
+        if monthly_limit > 0 and float(month.get("total_cost_usd", 0.0)) >= monthly_limit:
+            return True, f"monthly hard limit of ${monthly_limit:.2f}"
+        return False, ""
+
     async def check_health(self) -> bool:
         """Check available backends and set active_backend. Returns True if any available."""
         claude_ok = await self._check_claude_health()
@@ -129,10 +190,14 @@ class JarvisLLM:
         return True
 
     async def _check_claude_health(self) -> bool:
-        """Verify the Anthropic API key works by making a minimal request."""
+        """Verify Claude availability without spending tokens unless requested."""
         client = _get_anthropic_client()
         if client is None:
             return False
+
+        if settings.ANTHROPIC_LAZY_HEALTHCHECK:
+            logger.info("Claude API configured; skipping paid startup health request.")
+            return True
 
         try:
             await client.messages.create(
@@ -176,6 +241,15 @@ class JarvisLLM:
         temperature_override: float | None = None,
     ) -> str:
         """Send message and get complete response. Routes to Claude or Ollama with fallback."""
+        tier = self._apply_cost_mode(tier)
+        paid_blocked, block_reason = self._paid_usage_blocked()
+        if paid_blocked:
+            logger.warning("Claude request blocked by %s.", block_reason)
+            if await self._check_ollama_health():
+                self.active_backend = "ollama"
+                return await self._chat_ollama(user_message, conversation_history)
+            return f"I am in cost guard mode because the {block_reason} has been reached. Local tools still work."
+
         if self.active_backend == "claude":
             try:
                 return await self._chat_claude(
@@ -202,6 +276,15 @@ class JarvisLLM:
         tier: str = "brain",
     ) -> AsyncGenerator[str, None]:
         """Stream response tokens one at a time."""
+        tier = self._apply_cost_mode(tier)
+        paid_blocked, block_reason = self._paid_usage_blocked()
+        if paid_blocked:
+            if await self._check_ollama_health():
+                self.active_backend = "ollama"
+            else:
+                yield f"I am in cost guard mode because the {block_reason} has been reached. Local tools still work."
+                return
+
         if self.active_backend == "claude":
             try:
                 async for token in self._stream_claude(user_message, conversation_history, tier):
@@ -229,13 +312,20 @@ class JarvisLLM:
         system_prompt_override: str | None = None,
     ) -> tuple[str, list[dict]]:
         """Run agentic tool-use loop and return (final_response, tool_calls_log)."""
+        tier = self._apply_cost_mode(tier)
+        paid_blocked, block_reason = self._paid_usage_blocked()
+        if paid_blocked:
+            logger.warning("Claude tool-use request blocked by %s.", block_reason)
+            return f"I am in cost guard mode because the {block_reason} has been reached. Try a local command or switch cost mode.", []
+
         client = _get_anthropic_client()
         if client is None:
             response = await self._chat_ollama(user_message, conversation_history)
             return response, []
 
         config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-        system_prompt = system_prompt_override or self.system_prompt
+        system_blocks = self._system_blocks(system_prompt_override)
+        prepared_tools = self._tools_with_cache_breakpoint(tools)
 
         messages = self._build_claude_messages(user_message, conversation_history)
 
@@ -251,13 +341,9 @@ class JarvisLLM:
                     model=config["model"],
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
-                    system=[{
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }],
+                    system=system_blocks,
                     messages=messages,
-                    tools=tools,
+                    tools=prepared_tools,
                 )
 
             try:
@@ -362,6 +448,13 @@ class JarvisLLM:
         system_prompt_override: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Run tool-use loop non-streaming, then stream final response."""
+        tier = self._apply_cost_mode(tier)
+        paid_blocked, block_reason = self._paid_usage_blocked()
+        if paid_blocked:
+            logger.warning("Claude tool-use stream blocked by %s.", block_reason)
+            yield f"I am in cost guard mode because the {block_reason} has been reached. Try a local command or switch cost mode."
+            return
+
         client = _get_anthropic_client()
         if client is None:
             response = await self._chat_ollama(user_message, conversation_history)
@@ -369,7 +462,8 @@ class JarvisLLM:
             return
 
         config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-        system_prompt = system_prompt_override or self.system_prompt
+        system_blocks = self._system_blocks(system_prompt_override)
+        prepared_tools = self._tools_with_cache_breakpoint(tools)
         messages = self._build_claude_messages(user_message, conversation_history)
 
         iteration = 0
@@ -383,13 +477,9 @@ class JarvisLLM:
                     model=config["model"],
                     max_tokens=config["max_tokens"],
                     temperature=config["temperature"],
-                    system=[{
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }],
+                    system=system_blocks,
                     messages=messages,
-                    tools=tools,
+                    tools=prepared_tools,
                 )
             except Exception as e:
                 logger.error("Claude tool-use stream call failed (iteration %d): %s", iteration, e)
@@ -431,11 +521,7 @@ class JarvisLLM:
                         model=config["model"],
                         max_tokens=config["max_tokens"],
                         temperature=config["temperature"],
-                        system=[{
-                            "type": "text",
-                            "text": system_prompt,
-                            "cache_control": {"type": "ephemeral"},
-                        }],
+                        system=system_blocks,
                         messages=messages + [{"role": "user", "content": "Continue with your final response."}]
                         if not any(hasattr(b, "text") and b.text for b in resp.content)
                         else messages,
@@ -491,7 +577,7 @@ class JarvisLLM:
             raise ConnectionError("Anthropic client not available.")
 
         config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-        system_prompt = system_prompt_override or self.system_prompt
+        system_blocks = self._system_blocks(system_prompt_override)
         max_tokens = max_tokens_override or config["max_tokens"]
         temperature = temperature_override or config["temperature"]
 
@@ -505,11 +591,7 @@ class JarvisLLM:
                 model=config["model"],
                 max_tokens=max_tokens,
                 temperature=temperature,
-                system=[{
-                    "type": "text",
-                    "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }],
+                system=system_blocks,
                 messages=messages,
             )
 
@@ -558,11 +640,7 @@ class JarvisLLM:
             model=config["model"],
             max_tokens=config["max_tokens"],
             temperature=config["temperature"],
-            system=[{
-                "type": "text",
-                "text": self.system_prompt,
-                "cache_control": {"type": "ephemeral"},
-            }],
+            system=self._system_blocks(),
             messages=messages,
         ) as stream:
             async for text in stream.text_stream:
@@ -581,7 +659,18 @@ class JarvisLLM:
         """Build message list for Claude API."""
         messages: list[dict[str, str]] = []
         if conversation_history:
-            recent = conversation_history[-settings.MAX_CONTEXT_MESSAGES:]
+            recent_count = max(2, min(settings.CONTEXT_RECENT_MESSAGES, settings.MAX_CONTEXT_MESSAGES))
+            older = conversation_history[:-recent_count]
+            recent = conversation_history[-recent_count:]
+
+            if older:
+                summary = self._summarize_history_for_context(older)
+                if summary:
+                    messages.append({
+                        "role": "user",
+                        "content": f"Earlier conversation summary for context:\n{summary}",
+                    })
+
             for msg in recent:
                 if messages and messages[-1]["role"] == msg["role"]:
                     messages[-1]["content"] += "\n" + msg["content"]
@@ -593,6 +682,28 @@ class JarvisLLM:
 
         messages.append({"role": "user", "content": user_message})
         return messages
+
+    def _summarize_history_for_context(self, history: list[dict]) -> str:
+        """Build a deterministic, bounded summary of older turns."""
+        if not history:
+            return ""
+
+        snippets: list[str] = []
+        budget = max(400, settings.CONTEXT_SUMMARY_MAX_CHARS)
+        for msg in history[-20:]:
+            role = str(msg.get("role", "user"))
+            content = str(msg.get("content", "")).strip().replace("\n", " ")
+            if not content:
+                continue
+            content = content[:180]
+            snippets.append(f"- {role}: {content}")
+            if sum(len(s) for s in snippets) >= budget:
+                break
+
+        summary = "\n".join(snippets)
+        if len(summary) > budget:
+            summary = summary[:budget].rsplit("\n", 1)[0]
+        return summary
 
     async def _chat_ollama(
         self,
@@ -672,10 +783,57 @@ class JarvisLLM:
         """Build message list for Ollama API."""
         messages: list[dict[str, str]] = [{"role": "system", "content": self.system_prompt}]
         if conversation_history:
-            recent = conversation_history[-settings.MAX_CONTEXT_MESSAGES:]
+            recent = conversation_history[-max(2, min(settings.CONTEXT_RECENT_MESSAGES, settings.MAX_CONTEXT_MESSAGES)):]
             messages.extend(recent)
         messages.append({"role": "user", "content": user_message})
         return messages
+
+    async def count_input_tokens(
+        self,
+        user_message: str,
+        conversation_history: list[dict] | None = None,
+        tier: str = "brain",
+        tools: list[dict] | None = None,
+        system_prompt_override: str | None = None,
+    ) -> dict[str, Any]:
+        """Estimate input tokens with Anthropic's free token-counting endpoint."""
+        client = _get_anthropic_client()
+        if client is None:
+            from jarvis.core.perf import estimate_tokens
+            return {
+                "input_tokens": estimate_tokens(user_message),
+                "source": "local_estimate",
+            }
+
+        config = TIER_CONFIG.get(self._apply_cost_mode(tier), TIER_CONFIG["brain"])
+        messages = self._build_claude_messages(user_message, conversation_history)
+        kwargs: dict[str, Any] = {
+            "model": config["model"],
+            "system": self._system_blocks(system_prompt_override),
+            "messages": messages,
+        }
+        prepared_tools = self._tools_with_cache_breakpoint(tools)
+        if prepared_tools:
+            kwargs["tools"] = prepared_tools
+
+        try:
+            response = await client.messages.count_tokens(**kwargs)
+            return {
+                "input_tokens": int(getattr(response, "input_tokens", 0) or 0),
+                "model": config["model"],
+                "tier": tier,
+                "source": "anthropic_count_tokens",
+            }
+        except Exception as exc:
+            logger.debug("Anthropic token counting failed: %s", exc)
+            from jarvis.core.perf import estimate_tokens
+            return {
+                "input_tokens": estimate_tokens(user_message),
+                "model": config["model"],
+                "tier": tier,
+                "source": "local_estimate",
+                "error": str(exc)[:200],
+            }
 
     def _track_usage(self, usage: Any, model: str, tier: str, elapsed: float, user_preview: str = ""):
         """Record token usage and cost."""
