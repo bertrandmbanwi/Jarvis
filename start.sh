@@ -29,6 +29,8 @@ API_PORT="${API_PORT:-8741}"
 UI_PORT="${UI_PORT:-$(read_env_value UI_PORT)}"
 UI_PORT="${UI_PORT:-3000}"
 NEXT_FALLBACK_PORT=$((UI_PORT + 1))
+JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-$(read_env_value JARVIS_OPEN_DASHBOARD)}"
+JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-true}"
 
 # Track child PIDs for cleanup
 UI_PID=""
@@ -219,6 +221,10 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
         UI_PID=$!
         # Give the dev server a moment to start
         sleep 3
+        if [[ "${JARVIS_OPEN_DASHBOARD}" != "false" && "${JARVIS_OPEN_DASHBOARD}" != "0" ]] && command -v open &>/dev/null; then
+            echo "Opening JARVIS Dashboard at http://localhost:${UI_PORT} ..."
+            open "http://localhost:${UI_PORT}" >/dev/null 2>&1 || true
+        fi
     else
         echo "Warning: UI directory not found at ${UI_DIR}. Skipping UI."
     fi

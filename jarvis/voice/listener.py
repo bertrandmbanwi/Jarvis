@@ -77,6 +77,7 @@ class VoiceListener:
         self.FOLLOWUP_WINDOW_SECONDS = 8.0
         self._followup_sustained_frames = 0
         self._followup_max_amplitude = 0.0
+        self._activation_requested = False
 
     def initialize(self) -> bool:
         """Set up audio, wake word model, and whisper."""
@@ -176,6 +177,58 @@ class VoiceListener:
                 self._in_followup_window = False
                 logger.info("Resuming wake-word mode (no follow-up window for browser-originated response).")
 
+    def request_activation(self) -> bool:
+        """Request one immediate microphone capture from an external trigger."""
+        if not self._is_listening:
+            logger.warning("Voice activation requested before listener was ready.")
+            return False
+
+        self._activation_requested = True
+        self._in_followup_window = False
+        self._followup_sustained_frames = 0
+        self._followup_max_amplitude = 0.0
+        logger.info("Voice activation requested from desktop hotkey.")
+        return True
+
+    def _consume_activation_request(self) -> bool:
+        """Return and clear a pending external activation request."""
+        if not self._activation_requested:
+            return False
+        self._activation_requested = False
+        return True
+
+    async def _capture_and_dispatch_speech(self, source: str, wake_delay: float = 0.0) -> bool:
+        """Record, transcribe, filter, and dispatch one utterance."""
+        if self._is_speaking:
+            logger.info("Ignoring %s activation while JARVIS is speaking.", source)
+            return False
+
+        if self._on_wake_callback:
+            self._on_wake_callback()
+
+        if wake_delay > 0:
+            await asyncio.sleep(wake_delay)
+
+        speech_audio = await self._record_speech()
+
+        if speech_audio is None:
+            logger.info("Recording too short or empty (%s).", source)
+            return False
+
+        text = self._transcribe(speech_audio)
+        if not text or not text.strip():
+            logger.info("No speech detected after %s activation.", source)
+            return False
+
+        if not self._is_meaningful_speech(text):
+            logger.info("Filtered non-meaningful speech after %s activation.", source)
+            return False
+
+        logger.info("Transcribed (%s): '%s'", source, text)
+        if self._on_speech_callback:
+            await self._on_speech_callback(text)
+        return True
+
     async def listen_loop(self):
         """Main listening loop: wait for wake word, record until silence, transcribe, callback."""
         if not HAS_PYAUDIO or self._audio is None:
@@ -183,7 +236,10 @@ class VoiceListener:
             return
 
         self._is_listening = True
-        logger.info("JARVIS is listening... Say 'Hey JARVIS' to activate.")
+        if self._wake_model is None:
+            logger.info("JARVIS is listening for desktop hotkey activation.")
+        else:
+            logger.info("JARVIS is listening... Say 'Hey JARVIS' or use the desktop hotkey.")
 
         try:
             self._stream = self._audio.open(
@@ -201,6 +257,11 @@ class VoiceListener:
 
         try:
             while self._is_listening:
+                if self._consume_activation_request():
+                    await self._capture_and_dispatch_speech("hotkey")
+                    await asyncio.sleep(0.01)
+                    continue
+
                 try:
                     audio_data = self._stream.read(
                         settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False
@@ -237,20 +298,13 @@ class VoiceListener:
                         self._followup_sustained_frames = 0
                         self._followup_max_amplitude = 0.0
 
-                        speech_audio = await self._record_speech()
-                        if speech_audio is not None:
-                            text = self._transcribe(speech_audio)
-                            if text and text.strip():
-                                if self._is_meaningful_speech(text):
-                                    logger.info("Transcribed (follow-up): '%s'", text)
-                                    if self._on_speech_callback:
-                                        await self._on_speech_callback(text)
-                                else:
-                                    self._in_followup_window = True
-                                    self._followup_start = time.time()
-                                    self._followup_sustained_frames = 0
-                                    self._followup_max_amplitude = 0.0
-                                    logger.info("Follow-up window re-opened after filtered speech.")
+                        dispatched = await self._capture_and_dispatch_speech("follow-up")
+                        if not dispatched:
+                            self._in_followup_window = True
+                            self._followup_start = time.time()
+                            self._followup_sustained_frames = 0
+                            self._followup_max_amplitude = 0.0
+                            logger.info("Follow-up window re-opened after filtered speech.")
 
                     await asyncio.sleep(0.01)
                     continue
@@ -265,32 +319,14 @@ class VoiceListener:
                     self._last_wake_time = now
 
                     logger.info("Wake word detected!")
-                    if self._on_wake_callback:
-                        self._on_wake_callback()
-
-                    await asyncio.sleep(0.3)
-
-                    speech_audio = await self._record_speech()
-
-                    if speech_audio is not None:
-                        text = self._transcribe(speech_audio)
-                        if text and text.strip():
-                            if self._is_meaningful_speech(text):
-                                logger.info("Transcribed: '%s'", text)
-                                if self._on_speech_callback:
-                                    await self._on_speech_callback(text)
-                            else:
-                                logger.info("Filtered non-meaningful speech after wake word.")
-                        else:
-                            logger.info("No speech detected after wake word.")
-                    else:
-                        logger.info("Recording too short or empty.")
+                    await self._capture_and_dispatch_speech("wake word", wake_delay=0.3)
 
                 await asyncio.sleep(0.01)
 
         except Exception as e:
             logger.error("Listen loop error: %s", e)
         finally:
+            self._activation_requested = False
             self._cleanup_stream()
 
     def _get_transcription_hints(self) -> tuple[str | None, list[str] | None]:
@@ -633,6 +669,7 @@ class VoiceListener:
     def stop(self):
         """Stop the listening loop."""
         self._is_listening = False
+        self._activation_requested = False
         self._cleanup_stream()
 
     def cleanup(self):

@@ -1,10 +1,13 @@
 import Cocoa
 import WebKit
 import CoreGraphics
+import Carbon
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
     var webView: WKWebView?
+    var hotKeyRef: EventHotKeyRef?
+    var hotKeyHandler: EventHandlerRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let screen = NSScreen.main ?? NSScreen.screens[0]
@@ -431,6 +434,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         ws.onmessage = (event) => {
                             try {
                                 const data = JSON.parse(event.data);
+                                if (data.activationAccepted === false) setState('idle');
                                 if (data.state) setState(data.state);
                                 if (data.text !== undefined) setResponseText(data.text);
                                 if (data.userText !== undefined) setUserText(data.userText);
@@ -464,6 +468,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 connectWebSocket();
+
+                function sendOverlayCommand(command) {
+                    if (!ws || ws.readyState !== WebSocket.OPEN) {
+                        return false;
+                    }
+                    ws.send(JSON.stringify({ command }));
+                    return true;
+                }
+
+                window.jarvisActivateVoice = function() {
+                    setState('listening');
+                    setUserText('');
+                    setResponseText('');
+                    sendOverlayCommand('activate_voice');
+                };
 
                 function setState(newState) {
                     if (state === newState) return;
@@ -740,11 +759,86 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         webView.loadHTMLString(htmlContent, baseURL: nil)
         window.makeKeyAndOrderFront(nil)
+        registerGlobalHotKey()
+    }
+
+    func registerGlobalHotKey() {
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+
+        let callback: EventHandlerUPP = { _, _, userData in
+            guard let userData = userData else { return noErr }
+            let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+            DispatchQueue.main.async {
+                delegate.handleHotKey()
+            }
+            return noErr
+        }
+
+        let handlerStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            callback,
+            1,
+            &eventType,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &hotKeyHandler
+        )
+
+        guard handlerStatus == noErr else {
+            NSLog("JARVIS overlay hotkey handler registration failed: \(handlerStatus)")
+            return
+        }
+
+        let hotKeyID = EventHotKeyID(signature: fourCharCode("JRVS"), id: 1)
+        let hotKeyStatus = RegisterEventHotKey(
+            UInt32(kVK_ANSI_J),
+            UInt32(controlKey | optionKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        if hotKeyStatus != noErr {
+            NSLog("JARVIS overlay hotkey registration failed: \(hotKeyStatus)")
+        }
+    }
+
+    func unregisterGlobalHotKey() {
+        if let hotKeyRef = hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+        if let hotKeyHandler = hotKeyHandler {
+            RemoveEventHandler(hotKeyHandler)
+            self.hotKeyHandler = nil
+        }
+    }
+
+    func handleHotKey() {
+        webView?.evaluateJavaScript(
+            "window.jarvisActivateVoice && window.jarvisActivateVoice();",
+            completionHandler: nil
+        )
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        unregisterGlobalHotKey()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
         return true
     }
+}
+
+func fourCharCode(_ string: String) -> OSType {
+    var result: UInt32 = 0
+    for scalar in string.unicodeScalars.prefix(4) {
+        result = (result << 8) + UInt32(scalar.value)
+    }
+    return OSType(result)
 }
 
 let app = NSApplication.shared
