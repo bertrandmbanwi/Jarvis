@@ -36,24 +36,36 @@ CONDITION_TYPES = {"always", "previous_status", "previous_response_contains", "p
 ON_ERROR_POLICIES = {"stop", "continue"}
 VISIBILITY = {"private", "team"}
 RELEASE_CHANNELS = {"stable", "production"}
+ASSERTION_TYPES = {
+    "run_status_equals",
+    "no_failed_steps",
+    "output_contains",
+    "output_not_contains",
+    "action_status_equals",
+    "max_duration_ms",
+    "no_approval_required",
+    "no_live_tools_during_dry_run",
+}
 RELEASE_POLICIES: dict[str, dict[str, Any]] = {
     "stable": {
         "channel": "stable",
         "approval_required": True,
         "required_approvals": 1,
         "requires_successful_dry_run": True,
+        "requires_passing_assertions": True,
         "dry_run_max_age_seconds": 7 * 24 * 60 * 60,
         "requires_note": False,
-        "description": "Stable promotions require one recent successful dry run and one explicit approval.",
+        "description": "Stable promotions require one recent successful dry run, passing assertions, and one explicit approval.",
     },
     "production": {
         "channel": "production",
         "approval_required": True,
         "required_approvals": 1,
         "requires_successful_dry_run": True,
+        "requires_passing_assertions": True,
         "dry_run_max_age_seconds": 7 * 24 * 60 * 60,
         "requires_note": True,
-        "description": "Production promotions require a recent successful dry run, approval, and a release note.",
+        "description": "Production promotions require a recent successful dry run, passing assertions, approval, and a release note.",
     },
 }
 
@@ -221,6 +233,70 @@ def _normalize_actions(actions: list[dict[str, Any]] | None) -> list[dict[str, A
     if not normalized:
         normalized.append(_normalize_action({"type": "prompt", "prompt": "Run this workflow."}, 0))
     return normalized[:20]
+
+
+def _normalize_assertion(assertion: dict[str, Any], index: int) -> dict[str, Any]:
+    raw = dict(assertion or {})
+    assertion_type = str(raw.get("type") or "run_status_equals").strip().lower()
+    if assertion_type not in ASSERTION_TYPES:
+        assertion_type = "run_status_equals"
+    title = _clean_text(raw.get("title") or assertion_type.replace("_", " ").title(), 140)
+    normalized: dict[str, Any] = {
+        "id": str(raw.get("id") or uuid.uuid4().hex),
+        "type": assertion_type,
+        "title": title or f"Assertion {index + 1}",
+        "enabled": bool(raw.get("enabled", True)),
+    }
+    if "action_id" in raw:
+        normalized["action_id"] = _clean_text(raw.get("action_id"), 120)
+    if "value" in raw:
+        normalized["value"] = _clean_text(raw.get("value"), 1000)
+    if "expected_status" in raw:
+        normalized["expected_status"] = _clean_text(raw.get("expected_status"), 80)
+    if "max_duration_ms" in raw:
+        try:
+            normalized["max_duration_ms"] = max(0, min(int(raw["max_duration_ms"]), 24 * 60 * 60 * 1000))
+        except (TypeError, ValueError):
+            normalized["max_duration_ms"] = 0
+    return normalized
+
+
+def _normalize_assertions(assertions: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    return [_normalize_assertion(assertion, index) for index, assertion in enumerate(assertions or [])][:20]
+
+
+def _system_assertions() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "system-run-completed",
+            "type": "run_status_equals",
+            "title": "Run completes successfully",
+            "expected_status": "completed",
+            "enabled": True,
+            "system": True,
+        },
+        {
+            "id": "system-no-failed-steps",
+            "type": "no_failed_steps",
+            "title": "No failed steps",
+            "enabled": True,
+            "system": True,
+        },
+        {
+            "id": "system-dry-run-stays-dry",
+            "type": "no_live_tools_during_dry_run",
+            "title": "Dry run stays dry",
+            "enabled": True,
+            "system": True,
+        },
+    ]
+
+
+def _assertions_for_workflow(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    assertions_raw = workflow.get("assertions")
+    assertions = assertions_raw if isinstance(assertions_raw, list) else []
+    normalized = [_normalize_assertion(item, index) for index, item in enumerate(assertions) if isinstance(item, dict)]
+    return [*copy.deepcopy(_system_assertions()), *normalized]
 
 
 def _state_db_path():
@@ -401,6 +477,245 @@ def get_release_policies() -> dict[str, dict[str, Any]]:
     return copy.deepcopy(RELEASE_POLICIES)
 
 
+def _latest_version_dry_run(workflow_id: str, version_id: str) -> dict[str, Any] | None:
+    version = get_workflow_version(workflow_id, version_id)
+    if version is None:
+        return None
+    dry_runs = list_runs(
+        workflow_id=workflow_id,
+        workflow_version_id=version_id,
+        dry_run=True,
+        limit=10,
+    )
+    if dry_runs:
+        return dry_runs[0]
+    version_number = int(version.get("version", 0) or 0)
+    legacy_runs = list_runs(
+        workflow_id=workflow_id,
+        workflow_version=version_number,
+        dry_run=True,
+        limit=10,
+    )
+    legacy_runs = [run for run in legacy_runs if not run.get("workflow_version_id")]
+    return legacy_runs[0] if legacy_runs else None
+
+
+def _timeline_entries(run: dict[str, Any]) -> list[dict[str, Any]]:
+    timeline_raw = run.get("timeline")
+    timeline = timeline_raw if isinstance(timeline_raw, list) else []
+    return [entry for entry in timeline if isinstance(entry, dict)]
+
+
+def _entry_output_text(entry: dict[str, Any]) -> str:
+    output_raw = entry.get("output")
+    output = output_raw if isinstance(output_raw, dict) else {}
+    parts = [
+        str(output.get("response") or ""),
+        str(output.get("message") or ""),
+        str(output.get("error") or ""),
+        str(entry.get("status") or ""),
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def _run_output_text(run: dict[str, Any], action_id: str = "") -> str:
+    entries = _timeline_entries(run)
+    if action_id:
+        entries = [entry for entry in entries if str(entry.get("action_id") or "") == action_id]
+    timeline_text = " ".join(_entry_output_text(entry) for entry in entries)
+    action_results_raw = run.get("action_results")
+    action_results = action_results_raw if isinstance(action_results_raw, list) else []
+    result_parts: list[str] = []
+    for result in action_results:
+        if not isinstance(result, dict):
+            continue
+        if action_id and str(result.get("action_id") or "") != action_id:
+            continue
+        result_parts.extend([
+            str(result.get("response") or ""),
+            str(result.get("message") or ""),
+            str(result.get("error") or ""),
+        ])
+    return " ".join(part for part in [timeline_text, *result_parts] if part)
+
+
+def _assertion_result(
+    assertion: dict[str, Any],
+    run: dict[str, Any],
+) -> dict[str, Any]:
+    assertion_type = str(assertion.get("type") or "run_status_equals")
+    action_id = str(assertion.get("action_id") or "")
+    title = str(assertion.get("title") or assertion_type.replace("_", " ").title())
+    entries = _timeline_entries(run)
+    target_entries = [entry for entry in entries if str(entry.get("action_id") or "") == action_id] if action_id else entries
+    passed = False
+    expected: Any = ""
+    actual: Any = ""
+    message = ""
+
+    if assertion_type == "run_status_equals":
+        expected = str(assertion.get("expected_status") or "completed")
+        actual = str(run.get("status") or "")
+        passed = actual == expected
+        message = f"Expected run status {expected}; got {actual or 'unknown'}."
+    elif assertion_type == "no_failed_steps":
+        failed = [entry for entry in entries if str(entry.get("status") or "") == "failed"]
+        actual = len(failed)
+        expected = 0
+        passed = not failed
+        message = "No failed steps." if passed else f"{len(failed)} step(s) failed."
+    elif assertion_type == "output_contains":
+        expected = str(assertion.get("value") or "")
+        actual_text = _run_output_text(run, action_id).lower()
+        actual = _run_output_text(run, action_id)[:500]
+        passed = bool(expected) and expected.lower() in actual_text
+        message = f"Expected output to contain {expected!r}."
+    elif assertion_type == "output_not_contains":
+        expected = str(assertion.get("value") or "")
+        actual_text = _run_output_text(run, action_id).lower()
+        actual = _run_output_text(run, action_id)[:500]
+        passed = bool(expected) and expected.lower() not in actual_text
+        message = f"Expected output to omit {expected!r}."
+    elif assertion_type == "action_status_equals":
+        expected = str(assertion.get("expected_status") or "completed")
+        actual_statuses = [str(entry.get("status") or "") for entry in target_entries]
+        actual = ", ".join(actual_statuses) or "missing action"
+        passed = bool(action_id) and bool(actual_statuses) and all(status == expected for status in actual_statuses)
+        message = f"Expected action status {expected}; got {actual}."
+    elif assertion_type == "max_duration_ms":
+        expected = int(assertion.get("max_duration_ms") or 0)
+        actual = _run_float(run.get("duration_ms"))
+        passed = expected > 0 and actual <= expected
+        message = f"Expected duration <= {expected} ms; got {round(actual, 1)} ms."
+    elif assertion_type == "no_approval_required":
+        approval_entries = [entry for entry in entries if str(entry.get("status") or "") == "approval_required"]
+        actual = len(approval_entries)
+        expected = 0
+        passed = not approval_entries
+        message = "No approval gates reached." if passed else f"{len(approval_entries)} approval gate(s) reached."
+    elif assertion_type == "no_live_tools_during_dry_run":
+        response_entries = []
+        for entry in entries:
+            output_raw = entry.get("output")
+            output = output_raw if isinstance(output_raw, dict) else {}
+            if output.get("response") or output.get("approval_id"):
+                response_entries.append(entry)
+        expected = "dry run without live responses"
+        actual = "dry" if run.get("dry_run") is True else "live"
+        passed = run.get("dry_run") is True and not response_entries
+        message = (
+            "Dry run stayed in preview mode."
+            if passed
+            else "Dry-run assertion failed because the run was live or produced live responses."
+        )
+    else:
+        message = f"Unsupported assertion type: {assertion_type}."
+
+    return {
+        "id": str(assertion.get("id") or ""),
+        "type": assertion_type,
+        "title": title,
+        "action_id": action_id,
+        "passed": passed,
+        "status": "passed" if passed else "failed",
+        "expected": _audit_value(expected, 500),
+        "actual": _audit_value(actual, 500),
+        "message": message,
+        "system": bool(assertion.get("system", False)),
+    }
+
+
+def evaluate_workflow_assertions(
+    workflow: dict[str, Any],
+    run: dict[str, Any],
+    *,
+    version_id: str = "",
+) -> dict[str, Any]:
+    assertions = [assertion for assertion in _assertions_for_workflow(workflow) if assertion.get("enabled", True)]
+    results = [_assertion_result(assertion, run) for assertion in assertions]
+    passed_count = sum(1 for result in results if result.get("passed"))
+    failed_count = len(results) - passed_count
+    return {
+        "id": uuid.uuid4().hex,
+        "workflow_id": str(run.get("workflow_id") or workflow.get("id") or ""),
+        "workflow_version_id": version_id or str(run.get("workflow_version_id") or ""),
+        "run_id": str(run.get("id") or ""),
+        "status": "passed" if failed_count == 0 else "failed",
+        "passed": failed_count == 0,
+        "total": len(results),
+        "passed_count": passed_count,
+        "failed_count": failed_count,
+        "assertions": results,
+        "created_at": _now(),
+    }
+
+
+def get_assertion_evidence(
+    workflow_id: str,
+    version_id: str,
+    *,
+    dry_run: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    version = get_workflow_version(workflow_id, version_id)
+    snapshot = copy.deepcopy(version.get("snapshot")) if version else None
+    if not isinstance(snapshot, dict):
+        return {
+            "status": "missing_version",
+            "ready": False,
+            "result": None,
+        }
+    candidate_run = dry_run or _latest_version_dry_run(workflow_id, version_id)
+    if candidate_run is None:
+        return {
+            "status": "missing_run",
+            "ready": False,
+            "result": None,
+        }
+    result = evaluate_workflow_assertions(snapshot, candidate_run, version_id=version_id)
+    return {
+        "status": result["status"],
+        "ready": bool(result.get("passed")),
+        "result": result,
+    }
+
+
+def run_workflow_assertion_suite(
+    workflow_id: str,
+    version_id: str,
+    *,
+    run_id: str = "",
+) -> dict[str, Any] | None:
+    version = get_workflow_version(workflow_id, version_id)
+    snapshot = copy.deepcopy(version.get("snapshot")) if version else None
+    if not isinstance(snapshot, dict):
+        return None
+    run = get_run(run_id) if run_id else _latest_version_dry_run(workflow_id, version_id)
+    if run is None:
+        return {
+            "status": "missing_run",
+            "passed": False,
+            "workflow_id": workflow_id,
+            "workflow_version_id": version_id,
+            "run_id": "",
+            "assertions": [],
+            "message": "Run a dry-run for this workflow version before running assertions.",
+        }
+    if str(run.get("workflow_id") or "") != workflow_id:
+        return {
+            "status": "wrong_workflow",
+            "passed": False,
+            "workflow_id": workflow_id,
+            "workflow_version_id": version_id,
+            "run_id": str(run.get("id") or ""),
+            "assertions": [],
+            "message": "The selected run belongs to another workflow.",
+        }
+    result = evaluate_workflow_assertions(snapshot, run, version_id=version_id)
+    run["assertion_result"] = result
+    _record_run(run)
+    return result
+
+
 def get_release_gate_evidence(
     workflow_id: str,
     version_id: str,
@@ -419,22 +734,7 @@ def get_release_gate_evidence(
             "max_age_seconds": int(policy.get("dry_run_max_age_seconds", 0) or 0),
         }
 
-    version_number = int(version.get("version", 0) or 0)
-    dry_runs = list_runs(
-        workflow_id=workflow_id,
-        workflow_version_id=version_id,
-        dry_run=True,
-        limit=10,
-    )
-    if not dry_runs:
-        dry_runs = list_runs(
-            workflow_id=workflow_id,
-            workflow_version=version_number,
-            dry_run=True,
-            limit=10,
-        )
-        dry_runs = [run for run in dry_runs if not run.get("workflow_version_id")]
-    latest = dry_runs[0] if dry_runs else None
+    latest = _latest_version_dry_run(workflow_id, version_id)
     max_age_seconds = int(policy.get("dry_run_max_age_seconds", 0) or 0)
     if latest is None:
         return {
@@ -442,8 +742,11 @@ def get_release_gate_evidence(
             "ready": False,
             "dry_run": None,
             "dry_run_id": "",
+            "assertion_result": None,
             "max_age_seconds": max_age_seconds,
         }
+    assertion_evidence = get_assertion_evidence(workflow_id, version_id, dry_run=latest)
+    assertion_result = assertion_evidence.get("result")
     age_seconds = max(0, _now() - float(latest.get("completed_at") or latest.get("started_at") or 0))
     if str(latest.get("status") or "") != "completed":
         return {
@@ -451,6 +754,7 @@ def get_release_gate_evidence(
             "ready": False,
             "dry_run": latest,
             "dry_run_id": str(latest.get("id") or ""),
+            "assertion_result": assertion_result,
             "age_seconds": age_seconds,
             "max_age_seconds": max_age_seconds,
         }
@@ -460,6 +764,17 @@ def get_release_gate_evidence(
             "ready": False,
             "dry_run": latest,
             "dry_run_id": str(latest.get("id") or ""),
+            "assertion_result": assertion_result,
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+        }
+    if policy.get("requires_passing_assertions") and not assertion_evidence.get("ready"):
+        return {
+            "status": "failed_assertions",
+            "ready": False,
+            "dry_run": latest,
+            "dry_run_id": str(latest.get("id") or ""),
+            "assertion_result": assertion_result,
             "age_seconds": age_seconds,
             "max_age_seconds": max_age_seconds,
         }
@@ -468,6 +783,7 @@ def get_release_gate_evidence(
         "ready": True,
         "dry_run": latest,
         "dry_run_id": str(latest.get("id") or ""),
+        "assertion_result": assertion_result,
         "age_seconds": age_seconds,
         "max_age_seconds": max_age_seconds,
     }
@@ -527,6 +843,17 @@ def assess_release_request(
             blockers.append("The latest dry run for this workflow version did not complete successfully.")
         elif status == "stale_dry_run":
             blockers.append("The successful dry run for this workflow version is stale.")
+        elif status == "failed_assertions":
+            assertion_result = evidence.get("assertion_result") if isinstance(evidence, dict) else None
+            failed_assertions = assertion_result.get("assertions", []) if isinstance(assertion_result, dict) else []
+            first_failure = next(
+                (item for item in failed_assertions if isinstance(item, dict) and not item.get("passed")),
+                None,
+            )
+            detail = str(first_failure.get("message") or first_failure.get("title") or "") if first_failure else ""
+            blockers.append(
+                f"Workflow assertions must pass before promotion{f': {detail}' if detail else '.'}"
+            )
     return {
         "can_request": not blockers,
         "blockers": blockers,
@@ -544,6 +871,7 @@ def create_workflow(
     description: str = "",
     trigger: dict[str, Any] | None = None,
     actions: list[dict[str, Any]] | None = None,
+    assertions: list[dict[str, Any]] | None = None,
     enabled: bool = True,
     tags: list[str] | None = None,
     owner_id: str = "local-owner",
@@ -560,6 +888,7 @@ def create_workflow(
         "description": _clean_text(description, 500),
         "trigger": _normalize_trigger(trigger),
         "actions": _normalize_actions(actions),
+        "assertions": _normalize_assertions(assertions),
         "enabled": bool(enabled),
         "tags": [_clean_text(tag, 40) for tag in (tags or [])][:12],
         "owner_id": _clean_text(owner_id or "local-owner", 80),
@@ -618,6 +947,7 @@ def update_workflow(
             "description",
             "trigger",
             "actions",
+            "assertions",
             "enabled",
             "tags",
             "visibility",
@@ -632,6 +962,8 @@ def update_workflow(
             item["trigger"] = _normalize_trigger(updates["trigger"])
         if "actions" in updates:
             item["actions"] = _normalize_actions(updates["actions"])
+        if "assertions" in updates:
+            item["assertions"] = _normalize_assertions(updates["assertions"])
         if "enabled" in updates:
             item["enabled"] = bool(updates["enabled"])
         if "tags" in updates:
