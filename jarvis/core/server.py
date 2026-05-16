@@ -486,9 +486,7 @@ async def _deliver_proactive_suggestion(suggestion):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown events with signal handling for graceful termination."""
-    import signal
-
+    """Startup and shutdown events."""
     logger.info("Starting JARVIS server...")
     jobs.init_jobs_db()
     success = await brain.initialize()
@@ -500,25 +498,13 @@ async def lifespan(app: FastAPI):
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
 
-    # Register signal handlers for graceful shutdown. When uvicorn receives
-    # SIGTERM (e.g., from Docker, systemd, or launchd) or SIGINT (Ctrl+C),
-    # we want to persist state before the process exits.
-    loop = asyncio.get_running_loop()
-    shutdown_event = asyncio.Event()
-
-    def _signal_handler(sig: signal.Signals):
-        sig_name = sig.name if hasattr(sig, "name") else str(sig)
-        logger.info("Received %s, initiating graceful shutdown...", sig_name)
-        shutdown_event.set()
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        with suppress(NotImplementedError):
-            loop.add_signal_handler(sig, _signal_handler, sig)
-
     yield
 
     cleanup_task.cancel()
-    await brain.shutdown()
+    with suppress(asyncio.CancelledError):
+        await cleanup_task
+    with suppress(Exception):
+        await asyncio.wait_for(brain.shutdown(), timeout=5)
     logger.info("JARVIS server shut down.")
 
 
