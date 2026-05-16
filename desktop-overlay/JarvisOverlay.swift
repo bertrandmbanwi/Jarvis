@@ -13,8 +13,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let screenFrame = screen.frame
 
-        // Larger window to accommodate status text and response display
-        let windowSize = CGSize(width: 380, height: 440)
+        // Transparent floating surface for the orb, status, and response text.
+        let windowSize = CGSize(width: 360, height: 400)
         let padding: CGFloat = 50
         let windowFrame = CGRect(
             x: screenFrame.width - windowSize.width - padding,
@@ -79,22 +79,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     flex-direction: column;
                     align-items: center;
                     justify-content: flex-start;
-                    padding: 16px;
+                    padding: 18px 10px 8px;
                     position: relative;
                 }
 
-                /* Dark panel behind everything; no backdrop-filter (WKWebView cannot blur the macOS desktop) */
                 #panel {
-                    position: absolute;
-                    inset: 8px;
-                    background: rgba(2, 8, 18, 0.86);
-                    border: 1px solid rgba(0, 212, 255, 0.18);
-                    border-radius: 20px;
-                    box-shadow:
-                        0 0 42px rgba(0, 0, 0, 0.45),
-                        0 0 46px rgba(0, 212, 255, 0.09),
-                        inset 0 0 70px rgba(0, 56, 88, 0.22);
-                    pointer-events: none;
+                    display: none;
                 }
 
                 /* Status indicator row */
@@ -104,8 +94,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     display: flex;
                     align-items: center;
                     gap: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 4px;
+                    margin-top: 2px;
+                    margin-bottom: 0;
+                    text-shadow: 0 0 10px rgba(0, 0, 0, 0.78);
                 }
 
                 #status-dot {
@@ -142,6 +133,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     text-transform: uppercase;
                     color: rgba(0, 212, 255, 0.35);
                     transition: color 0.5s ease;
+                    text-shadow: 0 0 12px rgba(0, 0, 0, 0.85);
                 }
                 #status-label.listening { color: rgba(0, 212, 255, 0.65); }
                 #status-label.thinking  { color: rgba(255, 225, 140, 0.55); }
@@ -154,28 +146,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     width: 260px;
                     height: 260px;
                     flex-shrink: 0;
-                    filter: brightness(1.2) saturate(1.12) drop-shadow(0 0 22px rgba(0, 212, 255, 0.24));
+                    border-radius: 50%;
+                    overflow: hidden;
+                    -webkit-mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
+                    mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
+                    filter: brightness(1.1) saturate(1.08) drop-shadow(0 0 18px rgba(0, 212, 255, 0.22));
+                }
+                #orb-container::before {
+                    content: '';
+                    position: absolute;
+                    inset: 6%;
+                    border-radius: 50%;
+                    background:
+                        radial-gradient(circle,
+                            rgba(1, 7, 15, 0.56) 0%,
+                            rgba(1, 10, 20, 0.36) 42%,
+                            rgba(1, 10, 20, 0.14) 64%,
+                            transparent 82%);
+                    filter: blur(8px);
+                    pointer-events: none;
                 }
                 #orb-container canvas {
                     display: block;
                     width: 100%;
                     height: 100%;
+                    position: relative;
+                    z-index: 1;
                 }
 
                 /* Text display area below orb */
                 #text-area {
                     position: relative;
                     z-index: 10;
-                    width: 100%;
-                    padding: 0 20px;
+                    width: 320px;
+                    padding: 0 18px;
                     text-align: center;
-                    max-height: 110px;
+                    max-height: 100px;
                     overflow: hidden;
+                    text-shadow:
+                        0 0 12px rgba(0, 0, 0, 0.95),
+                        0 1px 2px rgba(0, 0, 0, 0.95);
                 }
 
                 #user-text {
                     font-size: 10px;
-                    color: rgba(0, 212, 255, 0.35);
+                    color: rgba(0, 212, 255, 0.58);
                     font-style: italic;
                     margin-bottom: 6px;
                     line-height: 1.4;
@@ -194,7 +209,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 #response-text {
                     font-size: 11px;
-                    color: rgba(255, 255, 255, 0.50);
+                    color: rgba(255, 255, 255, 0.68);
                     line-height: 1.5;
                     opacity: 0;
                     transform: translateY(6px);
@@ -251,17 +266,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 camera.position.z = 30;
 
                 // --- Particle system ---
-                const particleCount = 2400;
+                const particleCount = 2200;
                 const particles = [];
-                const sphereRadius = 12;
+                const sphereRadius = 10.9;
                 const geometry = new THREE.BufferGeometry();
                 const positions = new Float32Array(particleCount * 3);
                 const colors = new Float32Array(particleCount * 3);
                 const sizes = new Float32Array(particleCount);
 
                 // Distribute particles in 3 overlapping shells for a cohesive orb
-                const shellRadii = [sphereRadius * 0.55, sphereRadius * 0.78, sphereRadius * 0.95];
-                const shellCounts = [600, 1200, 600];
+                const shellRadii = [sphereRadius * 0.52, sphereRadius * 0.74, sphereRadius * 0.90];
+                const shellCounts = [550, 1100, 550];
                 let idx = 0;
 
                 for (let shell = 0; shell < 3; shell++) {
@@ -269,13 +284,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     const count = shellCounts[shell];
                     for (let i = 0; i < count; i++) {
                         const theta = Math.random() * Math.PI * 2;
-                        const phi = Math.acos(Math.random() * 2 - 1);
-                        const jitter = (Math.random() - 0.5) * 3.0;
+                        const jitter = (Math.random() - 0.5) * 2.0;
                         const pr = r + jitter;
+                        const screenR = Math.sqrt(Math.random()) * pr;
 
-                        const x = pr * Math.sin(phi) * Math.cos(theta);
-                        const y = pr * Math.sin(phi) * Math.sin(theta);
-                        const z = pr * Math.cos(phi);
+                        const x = screenR * Math.cos(theta);
+                        const y = screenR * Math.sin(theta);
+                        const zLimit = Math.sqrt(Math.max(0, pr * pr - screenR * screenR));
+                        const z = (Math.random() * 2 - 1) * zLimit;
 
                         positions[idx * 3] = x;
                         positions[idx * 3 + 1] = y;
@@ -286,7 +302,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         colors[idx * 3 + 1] = 0.832;
                         colors[idx * 3 + 2] = 1.0;
 
-                        sizes[idx] = shell === 0 ? 0.5 : shell === 1 ? 0.35 : 0.25;
+                        sizes[idx] = shell === 0 ? 0.44 : shell === 1 ? 0.31 : 0.22;
 
                         particles.push({
                             x, y, z,
@@ -313,11 +329,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 const dotTexture = createDotTexture();
 
                 const material = new THREE.PointsMaterial({
-                    size: 0.8,
+                    size: 0.74,
                     map: dotTexture,
                     vertexColors: true,
                     transparent: true,
-                    opacity: 0.9,
+                    opacity: 0.86,
                     sizeAttenuation: true,
                     blending: THREE.AdditiveBlending,
                     depthWrite: false
@@ -350,12 +366,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     map: glowTexture,
                     color: 0x00d4ff,
                     transparent: true,
-                    opacity: 0.45,
+                    opacity: 0.38,
                     blending: THREE.AdditiveBlending,
                     depthWrite: false
                 });
                 const glowSprite = new THREE.Sprite(glowMaterial);
-                glowSprite.scale.set(24, 24, 1);
+                glowSprite.scale.set(20, 20, 1);
                 scene.add(glowSprite);
 
                 function createGlowTexture() {
@@ -364,10 +380,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     canvas.height = 128;
                     const ctx = canvas.getContext('2d');
                     const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-                    gradient.addColorStop(0, 'rgba(255,255,255,0.9)');
-                    gradient.addColorStop(0.15, 'rgba(0,212,255,0.5)');
-                    gradient.addColorStop(0.4, 'rgba(0,140,200,0.15)');
-                    gradient.addColorStop(0.7, 'rgba(0,80,120,0.05)');
+                    gradient.addColorStop(0, 'rgba(255,255,255,0.72)');
+                    gradient.addColorStop(0.15, 'rgba(0,212,255,0.42)');
+                    gradient.addColorStop(0.4, 'rgba(0,140,200,0.12)');
+                    gradient.addColorStop(0.7, 'rgba(0,80,120,0.04)');
                     gradient.addColorStop(1, 'rgba(0,0,0,0)');
                     ctx.fillStyle = gradient;
                     ctx.fillRect(0, 0, 128, 128);
@@ -499,34 +515,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         case 'idle':
                             targetCompactness = 0.85;
                             targetSpeed = 0.005;
-                            targetBrightness = 0.88;
+                            targetBrightness = 0.76;
                             showConnections = false;
                             targetColor = cyanColor;
-                            targetGlowIntensity = 0.58;
+                            targetGlowIntensity = 0.42;
                             break;
                         case 'listening':
                             targetCompactness = 0.92;
                             targetSpeed = 0.015;
-                            targetBrightness = 1.05;
+                            targetBrightness = 0.92;
                             showConnections = false;
                             targetColor = cyanColor;
-                            targetGlowIntensity = 0.70;
+                            targetGlowIntensity = 0.54;
                             break;
                         case 'thinking':
                             targetCompactness = 1.0;
                             targetSpeed = 0.035;
-                            targetBrightness = 1.12;
+                            targetBrightness = 1.0;
                             showConnections = true;
                             targetColor = whiteColor;
-                            targetGlowIntensity = 0.86;
+                            targetGlowIntensity = 0.68;
                             break;
                         case 'speaking':
-                            targetCompactness = 0.88;
+                            targetCompactness = 0.84;
                             targetSpeed = 0.028;
-                            targetBrightness = 1.12;
+                            targetBrightness = 0.98;
                             showConnections = false;
                             targetColor = goldColor;
-                            targetGlowIntensity = 0.82;
+                            targetGlowIntensity = 0.62;
                             break;
                     }
                 }
@@ -624,7 +640,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                     const audioAmp = nextAudioAmplitude();
                     const reactiveSpeed = currentSpeed * (1 + audioAmp * 3.4);
-                    const reactiveBrightness = Math.min(1.45, currentBrightness + audioAmp * 0.42);
+                    const reactiveBrightness = Math.min(1.18, currentBrightness + audioAmp * 0.28);
 
                     // Breathing effect
                     const breathe = Math.sin(breathePhase) * (0.035 + audioAmp * 0.12);
@@ -654,7 +670,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         p.z += p.vz;
 
                         // Centripetal pull: scale current position toward target shell radius
-                        const shellReaction = p.shell === 0 ? 0.10 : p.shell === 1 ? 0.18 : 0.24;
+                        const shellReaction = p.shell === 0 ? 0.07 : p.shell === 1 ? 0.12 : 0.16;
                         const audioExpansion = 1 + audioAmp * shellReaction;
                         const targetR = shellRadii[p.shell] * currentCompactness * (1 + breathe) * audioExpansion;
                         const dist = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
@@ -666,24 +682,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             p.z *= scaleFactor;
                         }
 
+                        const screenR = Math.sqrt(p.x * p.x + p.y * p.y);
+                        const silhouetteLimit = shellRadii[2] * currentCompactness * (1.04 + audioAmp * 0.08);
+                        if (screenR > silhouetteLimit) {
+                            const screenScale = silhouetteLimit / screenR;
+                            p.x *= screenScale;
+                            p.y *= screenScale;
+                        }
+                        const radialNorm = Math.min(screenR / silhouetteLimit, 1);
+                        const edgeFalloff = 1 - Math.pow(radialNorm, 2.8) * 0.52;
+                        const shellFalloff = p.shell === 2 ? 0.78 : p.shell === 1 ? 0.92 : 1.0;
+                        const particleBrightness = reactiveBrightness * edgeFalloff * shellFalloff;
+
                         pos[i * 3] = p.x;
                         pos[i * 3 + 1] = p.y;
                         pos[i * 3 + 2] = p.z;
 
                         // Color with brightness
-                        col[i * 3]     = currentColor[0] * reactiveBrightness;
-                        col[i * 3 + 1] = currentColor[1] * reactiveBrightness;
-                        col[i * 3 + 2] = currentColor[2] * reactiveBrightness;
+                        col[i * 3]     = currentColor[0] * particleBrightness;
+                        col[i * 3 + 1] = currentColor[1] * particleBrightness;
+                        col[i * 3 + 2] = currentColor[2] * particleBrightness;
                     }
 
                     posAttr.needsUpdate = true;
                     colAttr.needsUpdate = true;
 
                     // Update glow
-                    glowMaterial.opacity = Math.min(1.0, currentGlowIntensity + audioAmp * 0.42);
+                    glowMaterial.opacity = Math.min(0.78, currentGlowIntensity + audioAmp * 0.24);
                     const glowHue = new THREE.Color(currentColor[0], currentColor[1], currentColor[2]);
                     glowMaterial.color = glowHue;
-                    const glowScale = 22 + Math.sin(breathePhase) * 2 + audioAmp * 8;
+                    const glowScale = 19 + Math.sin(breathePhase) * 1.4 + audioAmp * 4.8;
                     glowSprite.scale.set(glowScale, glowScale, 1);
                 }
 
