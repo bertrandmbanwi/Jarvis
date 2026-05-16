@@ -212,22 +212,32 @@ async def run_full():
 
     config = uvicorn.Config(**uvicorn_kwargs)
     server = uvicorn.Server(config)
+    listener_ref = None
+    speaker_ref = None
 
     async def run_voice_with_shared_brain():
         """Voice mode sharing server brain."""
+        nonlocal listener_ref, speaker_ref
         listener = VoiceListener()
         speaker = VoiceSpeaker()
+        listener_ref = listener
+        speaker_ref = speaker
 
-        await asyncio.sleep(2)
+        try:
+            await asyncio.sleep(2)
 
-        listener_ok = listener.initialize()
-        speaker.initialize()
+            listener_ok = listener.initialize()
+            speaker.initialize()
 
-        set_voice_components(speaker, listener)
+            set_voice_components(speaker, listener)
 
-        listener.set_speaking(True)
-        await speaker.speak("JARVIS online. All systems operational. How can I help you?")
-        listener.set_speaking(False)
+            listener.set_speaking(True)
+            await speaker.speak("JARVIS online. All systems operational. How can I help you?")
+            listener.set_speaking(False)
+        except asyncio.CancelledError:
+            listener.cleanup()
+            speaker.stop_speaking()
+            raise
 
         def on_wake():
             logger.info("* Wake word detected *")
@@ -342,20 +352,54 @@ async def run_full():
         listener.on_wake(on_wake)
         listener.on_speech(on_speech)
 
-        if listener_ok and listener._wake_model is not None:
-            logger.info("Starting voice mode with wake word detection...")
-            await listener.listen_loop()
-        else:
-            logger.info("Starting keyboard-activated voice mode...")
-            logger.info("(Wake word not available; press Enter to speak)")
-            await listener.listen_keyboard()
+        try:
+            if listener_ok and listener._wake_model is not None:
+                logger.info("Starting voice mode with wake word detection...")
+                await listener.listen_loop()
+            else:
+                logger.info("Starting keyboard-activated voice mode...")
+                logger.info("(Wake word not available; press Enter to speak)")
+                await listener.listen_keyboard()
+        except asyncio.CancelledError:
+            listener.stop()
+            raise
+        finally:
+            listener.cleanup()
+            speaker.stop_speaking()
 
-        listener.cleanup()
+    server_task = asyncio.create_task(server.serve(), name="jarvis-api-server")
+    voice_task = asyncio.create_task(run_voice_with_shared_brain(), name="jarvis-voice-listener")
+    tasks = {server_task, voice_task}
 
-    await asyncio.gather(
-        server.serve(),
-        run_voice_with_shared_brain(),
-    )
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+        for task in done:
+            if task.cancelled():
+                continue
+            exc = task.exception()
+            if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                raise exc
+
+        server.should_exit = True
+        if listener_ref:
+            listener_ref.stop()
+        if speaker_ref:
+            speaker_ref.stop_speaking()
+
+        for task in pending:
+            task.cancel()
+
+        await asyncio.gather(*pending, return_exceptions=True)
+    except KeyboardInterrupt:
+        server.should_exit = True
+        if listener_ref:
+            listener_ref.stop()
+        if speaker_ref:
+            speaker_ref.stop_speaking()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _display_auth_info():
