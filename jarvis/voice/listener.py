@@ -1,6 +1,7 @@
 """JARVIS Voice Listener: microphone input, wake word detection, and speech-to-text."""
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -75,6 +76,7 @@ class VoiceListener:
         self._last_wake_time = 0.0
         self._on_wake_callback: Callable | None = None
         self._on_speech_callback: Callable | None = None
+        self._on_capture_complete_callback: Callable | None = None
         self.FOLLOWUP_WINDOW_SECONDS = 8.0
         self._followup_sustained_frames = 0
         self._followup_max_amplitude = 0.0
@@ -165,6 +167,10 @@ class VoiceListener:
         """Register callback for when speech is transcribed."""
         self._on_speech_callback = callback
 
+    def on_capture_complete(self, callback: Callable):
+        """Register callback for when a capture finishes or is discarded."""
+        self._on_capture_complete_callback = callback
+
     def set_speaking(self, speaking: bool, open_followup: bool = True):
         """Set whether JARVIS is speaking; open follow-up window to listen without wake word."""
         self._is_speaking = speaking
@@ -198,37 +204,53 @@ class VoiceListener:
         self._activation_requested = False
         return True
 
+    async def _notify_capture_complete(self, source: str, dispatched: bool):
+        callback = self._on_capture_complete_callback
+        if callback is None:
+            return
+        try:
+            result = callback(source, dispatched)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as e:
+            logger.debug("Capture completion callback failed: %s", e)
+
     async def _capture_and_dispatch_speech(self, source: str, wake_delay: float = 0.0) -> bool:
         """Record, transcribe, filter, and dispatch one utterance."""
+        dispatched = False
         if self._is_speaking:
             logger.info("Ignoring %s activation while JARVIS is speaking.", source)
             return False
 
-        if self._on_wake_callback:
-            self._on_wake_callback()
+        try:
+            if self._on_wake_callback:
+                self._on_wake_callback()
 
-        if wake_delay > 0:
-            await asyncio.sleep(wake_delay)
+            if wake_delay > 0:
+                await asyncio.sleep(wake_delay)
 
-        speech_audio = await self._record_speech()
+            speech_audio = await self._record_speech()
 
-        if speech_audio is None:
-            logger.info("Recording too short or empty (%s).", source)
-            return False
+            if speech_audio is None:
+                logger.info("Recording too short or empty (%s).", source)
+                return False
 
-        text = self._transcribe(speech_audio)
-        if not text or not text.strip():
-            logger.info("No speech detected after %s activation.", source)
-            return False
+            text = self._transcribe(speech_audio)
+            if not text or not text.strip():
+                logger.info("No speech detected after %s activation.", source)
+                return False
 
-        if not self._is_meaningful_speech(text):
-            logger.info("Filtered non-meaningful speech after %s activation.", source)
-            return False
+            if not self._is_meaningful_speech(text):
+                logger.info("Filtered non-meaningful speech after %s activation.", source)
+                return False
 
-        logger.info("Transcribed (%s): '%s'", source, text)
-        if self._on_speech_callback:
-            await self._on_speech_callback(text)
-        return True
+            logger.info("Transcribed (%s): '%s'", source, text)
+            dispatched = True
+            if self._on_speech_callback:
+                await self._on_speech_callback(text)
+            return True
+        finally:
+            await self._notify_capture_complete(source, dispatched)
 
     async def listen_loop(self):
         """Main listening loop: wait for wake word, record until silence, transcribe, callback."""
@@ -301,11 +323,10 @@ class VoiceListener:
 
                         dispatched = await self._capture_and_dispatch_speech("follow-up")
                         if not dispatched:
-                            self._in_followup_window = True
-                            self._followup_start = time.time()
+                            self._in_followup_window = False
                             self._followup_sustained_frames = 0
                             self._followup_max_amplitude = 0.0
-                            logger.info("Follow-up window re-opened after filtered speech.")
+                            logger.info("Follow-up window closed after filtered or empty speech.")
 
                     await asyncio.sleep(0.01)
                     continue
