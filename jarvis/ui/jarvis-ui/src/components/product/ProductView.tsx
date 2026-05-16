@@ -181,6 +181,28 @@ interface WorkflowCost {
   cache_creation_tokens?: number;
 }
 
+interface WorkflowEditSession {
+  id: string;
+  workflow_id: string;
+  workflow_name?: string;
+  workflow_version?: number;
+  actor_id: string;
+  actor_name?: string;
+  status: string;
+  started_at: number;
+  updated_at: number;
+  expires_at: number;
+}
+
+interface WorkflowPresence {
+  workflow_id: string;
+  active_editors: WorkflowEditSession[];
+  other_editors: WorkflowEditSession[];
+  current_session?: WorkflowEditSession | null;
+  has_conflict: boolean;
+  updated_at: number;
+}
+
 interface WorkflowTimelineAttempt {
   attempt: number;
   status: string;
@@ -409,6 +431,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [message, setMessage] = useState("");
   const [customName, setCustomName] = useState("Quick Workflow");
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
+  const [editingBaseVersion, setEditingBaseVersion] = useState<number | null>(null);
+  const [editingSession, setEditingSession] = useState<WorkflowEditSession | null>(null);
+  const [workflowPresence, setWorkflowPresence] = useState<WorkflowPresence | null>(null);
   const [triggerMode, setTriggerMode] = useState("manual");
   const [dailyTime, setDailyTime] = useState("08:30");
   const [builderActions, setBuilderActions] = useState<WorkflowAction[]>([defaultBuilderAction("prompt", "prompt-initial")]);
@@ -489,7 +514,34 @@ export default function ProductView({ authToken }: ProductViewProps) {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  useEffect(() => {
+    if (!editingWorkflowId || !editingSession?.id) return;
+    const interval = setInterval(() => {
+      void api(`/workflows/${editingWorkflowId}/presence/${editingSession.id}/heartbeat`, {
+        method: "POST",
+        body: JSON.stringify({
+          actor_id: "local-owner",
+          ttl_seconds: 90,
+        }),
+      }).then((data) => {
+        setEditingSession(data.session || null);
+        setWorkflowPresence(data.presence || null);
+      }).catch(() => undefined);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [api, editingSession?.id, editingWorkflowId]);
+
+  function endEditingSession(workflowId: string | null = editingWorkflowId, sessionId: string | null = editingSession?.id || null) {
+    if (workflowId && sessionId) {
+      void api(`/workflows/${workflowId}/presence/${sessionId}?actor_id=local-owner`, { method: "DELETE" }).catch(() => undefined);
+    }
+    setEditingSession(null);
+    setWorkflowPresence(null);
+    setEditingBaseVersion(null);
+  }
+
   function resetBuilder() {
+    endEditingSession();
     setEditingWorkflowId(null);
     setCustomName("Quick Workflow");
     setTriggerMode("manual");
@@ -501,11 +553,13 @@ export default function ProductView({ authToken }: ProductViewProps) {
     setBudgetPerMonth("");
   }
 
-  function loadWorkflowIntoBuilder(workflow: Workflow) {
+  async function loadWorkflowIntoBuilder(workflow: Workflow) {
+    endEditingSession();
     const rrule = workflow.trigger?.rrule || "";
     const hour = rrule.match(/BYHOUR=(\d+)/)?.[1] || "08";
     const minute = rrule.match(/BYMINUTE=(\d+)/)?.[1] || "30";
     setEditingWorkflowId(workflow.id);
+    setEditingBaseVersion(workflow.version || 1);
     setCustomName(workflow.name);
     setTriggerMode(workflow.trigger?.type === "schedule" ? "schedule" : "manual");
     setDailyTime(`${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`);
@@ -526,7 +580,22 @@ export default function ProductView({ authToken }: ProductViewProps) {
     setBudgetPerRun(workflow.budget?.max_cost_per_run_usd ? String(workflow.budget.max_cost_per_run_usd) : "");
     setBudgetPerDay(workflow.budget?.max_cost_per_day_usd ? String(workflow.budget.max_cost_per_day_usd) : "");
     setBudgetPerMonth(workflow.budget?.max_cost_per_month_usd ? String(workflow.budget.max_cost_per_month_usd) : "");
-    setMessage(`Editing ${workflow.name}.`);
+    try {
+      const data = await api(`/workflows/${workflow.id}/presence`, {
+        method: "POST",
+        body: JSON.stringify({
+          actor_id: "local-owner",
+          actor_name: "Local Owner",
+          ttl_seconds: 90,
+        }),
+      });
+      setEditingSession(data.session || null);
+      setWorkflowPresence(data.presence || null);
+      const otherCount = data.presence?.other_editors?.length || 0;
+      setMessage(otherCount > 0 ? `Editing ${workflow.name}; ${otherCount} other editor${otherCount === 1 ? "" : "s"} active.` : `Editing ${workflow.name}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : `Editing ${workflow.name}.`);
+    }
   }
 
   async function loadWorkflowVersions(workflow: Workflow) {
@@ -588,23 +657,40 @@ export default function ProductView({ authToken }: ProductViewProps) {
     if (Number.isFinite(perMonth) && perMonth > 0) budget.max_cost_per_month_usd = perMonth;
     if (Object.keys(budget).length > 0) budget.enforce_on_release = true;
     const endpoint = editingWorkflowId ? `/workflows/${editingWorkflowId}` : "/workflows";
-    const saved = await api(endpoint, {
-      method: editingWorkflowId ? "PUT" : "POST",
-      body: JSON.stringify({
-        name: customName,
-        description: actions.map((action) => action.title).join(" -> ").slice(0, 180),
-        trigger,
-        actions,
-        assertions,
-        budget,
-        tags: triggerMode === "schedule" ? ["scheduled"] : ["manual"],
-        permissions,
-        actor_id: "local-owner",
-        version_note: editingWorkflowId ? "Updated from workflow builder." : "Created from workflow builder.",
-      }),
-    });
+    const editingWorkflowBeforeSave = editingWorkflowId;
+    const editingSessionBeforeSave = editingSession?.id || "";
+    let saved: Workflow | null = null;
+    try {
+      saved = await api(endpoint, {
+        method: editingWorkflowId ? "PUT" : "POST",
+        body: JSON.stringify({
+          name: customName,
+          description: actions.map((action) => action.title).join(" -> ").slice(0, 180),
+          trigger,
+          actions,
+          assertions,
+          budget,
+          tags: triggerMode === "schedule" ? ["scheduled"] : ["manual"],
+          permissions,
+          actor_id: "local-owner",
+          version_note: editingWorkflowId ? "Updated from workflow builder." : "Created from workflow builder.",
+          base_version: editingWorkflowId ? editingBaseVersion : undefined,
+          edit_session_id: editingSessionBeforeSave || undefined,
+          conflict_strategy: "reject",
+        }),
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Workflow could not be saved.");
+      return;
+    }
+    if (editingWorkflowBeforeSave && editingSessionBeforeSave) {
+      await api(`/workflows/${editingWorkflowBeforeSave}/presence/${editingSessionBeforeSave}?actor_id=local-owner`, { method: "DELETE" }).catch(() => undefined);
+    }
     setMessage(editingWorkflowId ? "Workflow updated and versioned." : "Workflow created.");
     setEditingWorkflowId(null);
+    setEditingBaseVersion(null);
+    setEditingSession(null);
+    setWorkflowPresence(null);
     await loadData();
     if (saved?.id) {
       await loadWorkflowVersions(saved);
@@ -911,6 +997,30 @@ export default function ProductView({ authToken }: ProductViewProps) {
                   </button>
                 )}
               </div>
+              {editingWorkflowId && (
+                <div className="mb-3 rounded-md border border-jarvis-cyan/10 bg-jarvis-cyan/[0.025] px-3 py-2">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div className="text-2xs text-jarvis-text-dim/55 font-mono">
+                      base v{editingBaseVersion || 1}
+                      {editingSession?.id ? ` · session ${editingSession.id.slice(0, 8)}` : ""}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(workflowPresence?.active_editors || []).length === 0 ? (
+                        <span className="jarvis-badge">solo edit</span>
+                      ) : workflowPresence?.active_editors?.map((editor) => (
+                        <span key={editor.id} className="jarvis-badge">
+                          {editor.actor_name || editor.actor_id}{editor.id === editingSession?.id ? " · you" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  {workflowPresence?.has_conflict && workflowPresence.other_editors?.[0] && (
+                    <div className="text-2xs text-yellow-200/70 mt-2">
+                      {workflowPresence.other_editors[0].actor_name || workflowPresence.other_editors[0].actor_id} is editing this workflow too.
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-1 lg:grid-cols-[0.7fr_1fr] gap-3">
                 <div className="space-y-3">
                   <label className="block">
@@ -1080,7 +1190,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                         <p className="text-xs text-jarvis-text-dim/55 mt-1 max-w-2xl">{workflow.description || workflow.actions?.[0]?.prompt}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => loadWorkflowIntoBuilder(workflow)}>
+                        <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => { void loadWorkflowIntoBuilder(workflow); }}>
                           Edit
                         </button>
                         <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => loadWorkflowVersions(workflow)}>
@@ -1187,7 +1297,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                             </button>
                             <button
                               className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
-                              onClick={() => version.snapshot && loadWorkflowIntoBuilder(version.snapshot as Workflow)}
+                              onClick={() => { if (version.snapshot) void loadWorkflowIntoBuilder(version.snapshot as Workflow); }}
                             >
                               Load
                             </button>

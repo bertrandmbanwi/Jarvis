@@ -13,13 +13,14 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from jarvis.config import settings
-from jarvis.core import cost_tracker, routines, sqlite_state, workflow_run_store
+from jarvis.core import cost_tracker, routines, sqlite_state, team, workflow_run_store
 
 WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
 WORKFLOW_APPROVALS_FILE = settings.DATA_DIR / "workflow_approvals.json"
 WORKFLOW_VERSIONS_FILE = settings.DATA_DIR / "workflow_versions.json"
 WORKFLOW_RELEASES_FILE = settings.DATA_DIR / "workflow_releases.json"
+WORKFLOW_EDIT_SESSIONS_FILE = settings.DATA_DIR / "workflow_edit_sessions.json"
 
 TRIGGER_TYPES = {"manual", "schedule", "calendar_event", "startup", "hotkey", "webhook"}
 ACTION_TYPES = {
@@ -36,6 +37,8 @@ CONDITION_TYPES = {"always", "previous_status", "previous_response_contains", "p
 ON_ERROR_POLICIES = {"stop", "continue"}
 VISIBILITY = {"private", "team"}
 RELEASE_CHANNELS = {"stable", "production"}
+EDIT_CONFLICT_STRATEGIES = {"reject", "force"}
+EDIT_SESSION_TTL_SECONDS = 90
 ASSERTION_TYPES = {
     "run_status_equals",
     "no_failed_steps",
@@ -392,6 +395,14 @@ def _save_releases(items: list[dict[str, Any]]) -> None:
     _save_list("workflow_releases", items[-1000:])
 
 
+def _load_edit_sessions() -> list[dict[str, Any]]:
+    return _load_list("workflow_edit_sessions", WORKFLOW_EDIT_SESSIONS_FILE, [])
+
+
+def _save_edit_sessions(items: list[dict[str, Any]]) -> None:
+    _save_list("workflow_edit_sessions", items[-500:])
+
+
 def _record_workflow_version(
     workflow: dict[str, Any],
     *,
@@ -445,6 +456,177 @@ def list_workflows(include_disabled: bool = True) -> list[dict[str, Any]]:
 
 def get_workflow(workflow_id: str) -> dict[str, Any] | None:
     return next((item for item in _load_workflows() if item.get("id") == workflow_id), None)
+
+
+def _actor_name(actor_id: str, actor_name: str = "") -> str:
+    cleaned = _clean_text(actor_name, 120)
+    if cleaned:
+        return cleaned
+    member = next((item for item in team.list_members() if item.get("id") == actor_id), None)
+    return _clean_text(member.get("name"), 120) if isinstance(member, dict) else actor_id
+
+
+def _session_is_active(session: dict[str, Any], now: float | None = None) -> bool:
+    timestamp = _now() if now is None else now
+    return str(session.get("status") or "active") == "active" and _run_float(session.get("expires_at")) > timestamp
+
+
+def _active_edit_sessions(workflow_id: str = "", *, prune: bool = True) -> list[dict[str, Any]]:
+    sessions = [dict(item) for item in _load_edit_sessions()]
+    now = _now()
+    active = [item for item in sessions if _session_is_active(item, now)]
+    if prune and len(active) != len(sessions):
+        _save_edit_sessions(active)
+    if workflow_id:
+        active = [item for item in active if str(item.get("workflow_id") or "") == workflow_id]
+    return sorted(active, key=lambda item: _run_float(item.get("updated_at")), reverse=True)
+
+
+def _workflow_edit_presence(
+    workflow_id: str,
+    *,
+    actor_id: str = "",
+    current_session_id: str = "",
+) -> dict[str, Any]:
+    sessions = _active_edit_sessions(workflow_id)
+    current_session = next(
+        (item for item in sessions if current_session_id and item.get("id") == current_session_id),
+        None,
+    )
+    other_editors = [
+        item
+        for item in sessions
+        if (not current_session_id or item.get("id") != current_session_id)
+        and (not actor_id or item.get("actor_id") != actor_id)
+    ]
+    return {
+        "workflow_id": workflow_id,
+        "active_editors": sessions,
+        "other_editors": other_editors,
+        "current_session": current_session,
+        "has_conflict": bool(other_editors),
+        "updated_at": _now(),
+    }
+
+
+def get_workflow_presence(
+    workflow_id: str,
+    *,
+    actor_id: str = "",
+    current_session_id: str = "",
+) -> dict[str, Any] | None:
+    if get_workflow(workflow_id) is None:
+        return None
+    return _workflow_edit_presence(
+        workflow_id,
+        actor_id=actor_id,
+        current_session_id=current_session_id,
+    )
+
+
+def start_workflow_edit(
+    workflow_id: str,
+    *,
+    actor_id: str = "local-owner",
+    actor_name: str = "",
+    session_id: str = "",
+    ttl_seconds: int = EDIT_SESSION_TTL_SECONDS,
+) -> dict[str, Any] | None:
+    workflow = get_workflow(workflow_id)
+    if workflow is None:
+        return None
+    now = _now()
+    ttl = max(30, min(int(ttl_seconds or EDIT_SESSION_TTL_SECONDS), 300))
+    normalized_actor_id = _clean_text(actor_id or "local-owner", 120)
+    target_id = session_id or uuid.uuid4().hex
+    sessions = _active_edit_sessions(prune=True)
+    existing = next((item for item in sessions if item.get("id") == target_id), None)
+    if existing is None:
+        session = {
+            "id": target_id,
+            "workflow_id": workflow_id,
+            "workflow_name": _clean_text(workflow.get("name"), 120),
+            "workflow_version": int(workflow.get("version", 1) or 1),
+            "actor_id": normalized_actor_id,
+            "actor_name": _actor_name(normalized_actor_id, actor_name),
+            "status": "active",
+            "started_at": now,
+            "updated_at": now,
+            "expires_at": now + ttl,
+        }
+        sessions.append(session)
+    else:
+        session = existing
+        session.update({
+            "workflow_name": _clean_text(workflow.get("name"), 120),
+            "workflow_version": int(workflow.get("version", 1) or 1),
+            "actor_id": normalized_actor_id,
+            "actor_name": _actor_name(normalized_actor_id, actor_name),
+            "status": "active",
+            "updated_at": now,
+            "expires_at": now + ttl,
+        })
+    _save_edit_sessions(sessions)
+    return {
+        "session": session,
+        "presence": _workflow_edit_presence(
+            workflow_id,
+            actor_id=normalized_actor_id,
+            current_session_id=target_id,
+        ),
+    }
+
+
+def heartbeat_workflow_edit(
+    workflow_id: str,
+    session_id: str,
+    *,
+    actor_id: str = "",
+    ttl_seconds: int = EDIT_SESSION_TTL_SECONDS,
+) -> dict[str, Any] | None:
+    now = _now()
+    ttl = max(30, min(int(ttl_seconds or EDIT_SESSION_TTL_SECONDS), 300))
+    sessions = _active_edit_sessions(prune=True)
+    session = next(
+        (
+            item
+            for item in sessions
+            if item.get("id") == session_id and item.get("workflow_id") == workflow_id
+        ),
+        None,
+    )
+    if session is None:
+        return None
+    if actor_id and session.get("actor_id") != actor_id:
+        return None
+    session["updated_at"] = now
+    session["expires_at"] = now + ttl
+    _save_edit_sessions(sessions)
+    return {
+        "session": session,
+        "presence": _workflow_edit_presence(
+            workflow_id,
+            actor_id=str(session.get("actor_id") or ""),
+            current_session_id=session_id,
+        ),
+    }
+
+
+def end_workflow_edit(workflow_id: str, session_id: str, *, actor_id: str = "") -> bool:
+    sessions = _load_edit_sessions()
+    kept: list[dict[str, Any]] = []
+    removed = False
+    for session in sessions:
+        if session.get("id") == session_id and session.get("workflow_id") == workflow_id:
+            if actor_id and session.get("actor_id") != actor_id:
+                kept.append(session)
+                continue
+            removed = True
+            continue
+        if _session_is_active(session):
+            kept.append(session)
+    _save_edit_sessions(kept)
+    return removed
 
 
 def list_workflow_versions(workflow_id: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -1068,6 +1250,128 @@ def create_workflow_from_template(
         actor_id=actor_id or owner_id,
         note=f"Created from template: {template_id}",
     )
+
+
+def _coerce_version(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def detect_workflow_edit_conflict(
+    workflow_id: str,
+    *,
+    actor_id: str = "local-owner",
+    base_version: int | None = None,
+    edit_session_id: str = "",
+    conflict_strategy: str = "reject",
+) -> dict[str, Any]:
+    workflow = get_workflow(workflow_id)
+    active_sessions = _active_edit_sessions(workflow_id)
+    normalized_strategy = conflict_strategy if conflict_strategy in EDIT_CONFLICT_STRATEGIES else "reject"
+    current_version = int(workflow.get("version", 0) or 0) if workflow else 0
+    expected_version = _coerce_version(base_version)
+    current_session = next(
+        (item for item in active_sessions if edit_session_id and item.get("id") == edit_session_id),
+        None,
+    )
+    other_editors = [
+        item
+        for item in active_sessions
+        if not edit_session_id or item.get("id") != edit_session_id
+    ]
+    reasons: list[dict[str, Any]] = []
+
+    if workflow is None:
+        reasons.append({"type": "not_found", "message": "Workflow not found."})
+    if workflow is not None and expected_version is not None and expected_version != current_version:
+        reasons.append({
+            "type": "version_conflict",
+            "message": f"Workflow changed from v{expected_version} to v{current_version} while you were editing.",
+            "expected_version": expected_version,
+            "current_version": current_version,
+        })
+    if workflow is not None and edit_session_id and current_session is None:
+        reasons.append({
+            "type": "edit_session_expired",
+            "message": "Your workflow edit session expired. Reload before saving.",
+            "session_id": edit_session_id,
+        })
+    if workflow is not None and other_editors:
+        editor_names = ", ".join(_clean_text(item.get("actor_name") or item.get("actor_id"), 120) for item in other_editors[:3])
+        reasons.append({
+            "type": "active_editor_conflict",
+            "message": f"{editor_names or 'Another editor'} is currently editing this workflow.",
+            "active_editors": other_editors,
+        })
+
+    hard_reasons = [reason for reason in reasons if reason.get("type") != "not_found"]
+    conflicted = bool(hard_reasons) and normalized_strategy != "force"
+    message = "; ".join(str(reason.get("message") or "") for reason in hard_reasons if reason.get("message"))
+    return {
+        "status": "conflict" if conflicted else "ok",
+        "conflicted": conflicted,
+        "strategy": normalized_strategy,
+        "workflow_id": workflow_id,
+        "actor_id": _clean_text(actor_id or "local-owner", 120),
+        "base_version": expected_version,
+        "current_version": current_version,
+        "edit_session_id": edit_session_id,
+        "current_session": current_session,
+        "active_editors": active_sessions,
+        "other_editors": other_editors,
+        "reasons": reasons,
+        "message": message or ("Workflow not found." if workflow is None else ""),
+    }
+
+
+def update_workflow_with_conflict_check(
+    workflow_id: str,
+    updates: dict[str, Any],
+    *,
+    actor_id: str = "local-owner",
+    note: str = "",
+    base_version: int | None = None,
+    edit_session_id: str = "",
+    conflict_strategy: str = "reject",
+) -> dict[str, Any]:
+    workflow = get_workflow(workflow_id)
+    if workflow is None:
+        return {
+            "status": "not_found",
+            "workflow": None,
+            "conflict": detect_workflow_edit_conflict(
+                workflow_id,
+                actor_id=actor_id,
+                base_version=base_version,
+                edit_session_id=edit_session_id,
+                conflict_strategy=conflict_strategy,
+            ),
+        }
+    conflict = detect_workflow_edit_conflict(
+        workflow_id,
+        actor_id=actor_id,
+        base_version=base_version,
+        edit_session_id=edit_session_id,
+        conflict_strategy=conflict_strategy,
+    )
+    if conflict.get("conflicted"):
+        return {
+            "status": "conflict",
+            "workflow": workflow,
+            "conflict": conflict,
+        }
+    updated = update_workflow(workflow_id, updates, actor_id=actor_id, note=note)
+    if updated is not None and edit_session_id:
+        heartbeat_workflow_edit(workflow_id, edit_session_id, actor_id=actor_id)
+    return {
+        "status": "updated" if updated is not None else "not_found",
+        "workflow": updated,
+        "conflict": conflict,
+    }
 
 
 def update_workflow(
@@ -2468,8 +2772,8 @@ def get_overview() -> dict[str, Any]:
         "pending_approval_count": len(list_approvals(status="pending", limit=200)),
         "recent_runs": runs,
         "next_foundation_steps": [
-            "Add team presence and conflict handling for simultaneous workflow edits.",
             "Add reusable workflow template marketplace packaging and import/export.",
             "Add macOS app lifecycle controls for launch agents, restart, and diagnostics.",
+            "Add workflow change review diffs before release promotion.",
         ],
     }
