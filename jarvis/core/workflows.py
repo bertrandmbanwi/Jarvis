@@ -36,6 +36,22 @@ CONDITION_TYPES = {"always", "previous_status", "previous_response_contains", "p
 ON_ERROR_POLICIES = {"stop", "continue"}
 VISIBILITY = {"private", "team"}
 RELEASE_CHANNELS = {"stable", "production"}
+RELEASE_POLICIES: dict[str, dict[str, Any]] = {
+    "stable": {
+        "channel": "stable",
+        "approval_required": True,
+        "required_approvals": 1,
+        "requires_note": False,
+        "description": "Stable promotions require one explicit approval before scheduled automations pin the snapshot.",
+    },
+    "production": {
+        "channel": "production",
+        "approval_required": True,
+        "required_approvals": 1,
+        "requires_note": True,
+        "description": "Production promotions require approval and a release note.",
+    },
+}
 
 WorkflowRunner = Callable[[str], Awaitable[str]]
 
@@ -98,6 +114,11 @@ def _now() -> float:
 
 def _clean_text(value: Any, limit: int = 500) -> str:
     return " ".join(str(value or "").strip().split())[:limit]
+
+
+def _release_channel(channel: str) -> str:
+    normalized = str(channel or "stable").strip().lower()
+    return normalized if normalized in RELEASE_CHANNELS else "stable"
 
 
 def _normalize_trigger(trigger: dict[str, Any] | None) -> dict[str, Any]:
@@ -350,6 +371,38 @@ def get_workflow_release(workflow_id: str, channel: str = "stable") -> dict[str,
     return next(iter(list_workflow_releases(workflow_id=workflow_id, channel=channel, limit=1)), None)
 
 
+def get_release_policies() -> dict[str, dict[str, Any]]:
+    return copy.deepcopy(RELEASE_POLICIES)
+
+
+def assess_release_request(
+    workflow_id: str,
+    version_id: str,
+    *,
+    channel: str = "stable",
+    note: str = "",
+) -> dict[str, Any]:
+    normalized_channel = _release_channel(channel)
+    policy = copy.deepcopy(RELEASE_POLICIES[normalized_channel])
+    workflow = get_workflow(workflow_id)
+    version = get_workflow_version(workflow_id, version_id)
+    blockers: list[str] = []
+    if workflow is None:
+        blockers.append("Workflow not found.")
+    if version is None:
+        blockers.append("Workflow version not found.")
+    if policy.get("requires_note") and not _clean_text(note, 500):
+        blockers.append(f"{normalized_channel.title()} promotion requires a release note.")
+    return {
+        "can_request": not blockers,
+        "blockers": blockers,
+        "channel": normalized_channel,
+        "policy": policy,
+        "workflow": workflow,
+        "version": version,
+    }
+
+
 def create_workflow(
     *,
     name: str,
@@ -521,9 +574,7 @@ def publish_workflow_version(
     note: str = "",
     activate: bool = True,
 ) -> dict[str, Any] | None:
-    channel = str(channel or "stable").strip().lower()
-    if channel not in RELEASE_CHANNELS:
-        channel = "stable"
+    channel = _release_channel(channel)
 
     current = get_workflow(workflow_id)
     version = get_workflow_version(workflow_id, version_id) if version_id else None
@@ -551,6 +602,99 @@ def publish_workflow_version(
     if activate and current is not None:
         _set_active_release_channel(workflow_id, channel)
     return release
+
+
+def _find_pending_release_approval(workflow_id: str, version_id: str, channel: str) -> dict[str, Any] | None:
+    for approval in _load_approvals():
+        action = dict(approval.get("action") or {})
+        if (
+            approval.get("status") == "pending"
+            and action.get("type") == "publish_workflow_version"
+            and action.get("workflow_id") == workflow_id
+            and action.get("version_id") == version_id
+            and action.get("channel") == channel
+        ):
+            return approval
+    return None
+
+
+def request_workflow_release_approval(
+    workflow_id: str,
+    version_id: str,
+    *,
+    channel: str = "stable",
+    actor_id: str = "local-owner",
+    note: str = "",
+    activate: bool = True,
+    require_approval: bool | None = None,
+) -> dict[str, Any] | None:
+    assessment = assess_release_request(workflow_id, version_id, channel=channel, note=note)
+    if not assessment["can_request"]:
+        return None
+
+    normalized_channel = str(assessment["channel"])
+    policy = dict(assessment["policy"])
+    workflow = dict(assessment["workflow"] or {})
+    version = dict(assessment["version"] or {})
+    needs_approval = bool(policy.get("approval_required", True)) if require_approval is None else bool(require_approval)
+    if not needs_approval:
+        release = publish_workflow_version(
+            workflow_id,
+            version_id,
+            channel=normalized_channel,
+            actor_id=actor_id,
+            note=note,
+            activate=activate,
+        )
+        if release is None:
+            return None
+        return {
+            "status": "published",
+            "requires_approval": False,
+            "release": release,
+            "policy": policy,
+        }
+
+    pending = _find_pending_release_approval(workflow_id, version_id, normalized_channel)
+    if pending is not None:
+        return {
+            "status": "pending_approval",
+            "requires_approval": True,
+            "approval": pending,
+            "policy": policy,
+        }
+
+    action = {
+        "id": uuid.uuid4().hex,
+        "type": "publish_workflow_version",
+        "title": f"Promote v{version.get('version', '?')} to {normalized_channel}",
+        "workflow_id": workflow_id,
+        "version_id": version_id,
+        "version": int(version.get("version", 1) or 1),
+        "channel": normalized_channel,
+        "activate": activate,
+        "requested_by": _clean_text(actor_id or "local-owner", 120),
+        "note": _clean_text(note, 500),
+        "policy": policy,
+        "requires_approval": True,
+    }
+    message = (
+        f"Release policy requires approval before {workflow.get('name', 'this workflow')} "
+        f"v{action['version']} can be promoted to {normalized_channel}."
+    )
+    approval = _record_approval(
+        workflow=workflow,
+        run_id="",
+        action=action,
+        message=message,
+        triggered_by="release_policy",
+    )
+    return {
+        "status": "pending_approval",
+        "requires_approval": True,
+        "approval": approval,
+        "policy": policy,
+    }
 
 
 def delete_workflow(workflow_id: str, *, actor_id: str = "local-owner", note: str = "") -> bool:
@@ -819,11 +963,31 @@ async def approve_approval(approval_id: str, *, actor: str = "local-owner", note
     action = dict(approval.get("action") or {})
     response = "Approval granted."
     execution_status = "approved"
+    release_id = ""
     try:
         if action.get("type") == "create_calendar_event":
             action["requires_approval"] = False
             response = await _execute_calendar_event(action, approved=True)
             execution_status = "completed"
+        elif action.get("type") == "publish_workflow_version":
+            release = publish_workflow_version(
+                str(action.get("workflow_id") or ""),
+                str(action.get("version_id") or ""),
+                channel=str(action.get("channel") or "stable"),
+                actor_id=actor,
+                note=note or str(action.get("note") or ""),
+                activate=bool(action.get("activate", True)),
+            )
+            if release is None:
+                response = "Release promotion failed: workflow version not found."
+                execution_status = "failed"
+            else:
+                release_id = str(release.get("id") or "")
+                response = (
+                    f"Published {release.get('workflow_name', 'workflow')} "
+                    f"v{release.get('version', '?')} to {release.get('channel', 'stable')}."
+                )
+                execution_status = "completed"
     except Exception as exc:
         response = str(exc)
         execution_status = "failed"
@@ -836,6 +1000,7 @@ async def approve_approval(approval_id: str, *, actor: str = "local-owner", note
             "note": _clean_text(note, 500),
             "response": response,
             "execution_status": execution_status,
+            "release_id": release_id,
             "completed_at": _now(),
         },
     )
@@ -1248,6 +1413,6 @@ def get_overview() -> dict[str, Any]:
         "next_foundation_steps": [
             "Move high-volume workflow runs from document snapshots into queryable relational tables.",
             "Add team presence and conflict handling for simultaneous workflow edits.",
-            "Add release approval policies before stable automation promotion.",
+            "Add release gates for successful dry runs and policy checks before production promotion.",
         ],
     }
