@@ -14,15 +14,10 @@ npm --prefix jarvis/ui/jarvis-ui run build
 
 bash scripts/package_macos_app.sh --install-user
 
-mkdir -p "$HOME/Library/LaunchAgents"
-PLIST_TARGET="$HOME/Library/LaunchAgents/com.jarvis.assistant.plist"
-sed \
-  -e "s#/Users/bertrandmbanwi/Documents/Jarvis#$ROOT#g" \
-  -e "s#/Users/bertrandmbanwi#$HOME#g" \
-  com.jarvis.assistant.plist > "$PLIST_TARGET"
+.venv/bin/python -m jarvis.core.app_lifecycle install-agent
 
 echo "JARVIS installed."
 echo "Launch with: ./start.sh full"
 echo "Optional launchd install:"
-echo "  launchctl unload $PLIST_TARGET 2>/dev/null || true"
-echo "  launchctl load $PLIST_TARGET"
+echo "  launchctl bootstrap gui/$(id -u) $HOME/Library/LaunchAgents/com.jarvis.assistant.plist"
+echo "  launchctl bootout gui/$(id -u) $HOME/Library/LaunchAgents/com.jarvis.assistant.plist"
