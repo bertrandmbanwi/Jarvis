@@ -61,6 +61,24 @@ Fresh macOS install:
 bash scripts/install_macos.sh
 ```
 
+Build a Finder-launchable app bundle and DMG:
+
+```bash
+bash scripts/package_macos_app.sh
+```
+
+Install the generated app into `~/Applications`:
+
+```bash
+bash scripts/package_macos_app.sh --install-user
+```
+
+The app bundle is a lightweight launcher over this checkout. It opens Terminal
+and runs `./start.sh full`, prompting to install dependencies if `.venv` or UI
+`node_modules` are missing. Keeping the runtime outside the app bundle avoids
+writing mutable data into `/Applications` and lets `scripts/update_jarvis.sh`
+continue to update the git checkout cleanly.
+
 Update an existing checkout:
 
 ```bash
