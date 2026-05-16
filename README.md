@@ -38,7 +38,7 @@ Speak naturally and JARVIS responds with a warm British accent. Powered by Moons
 A GLSL shader-driven Three.js particle orb with 2,400 particles across three shells, simplex noise displacement, electric arcs, dust motes, and holographic rings. The orb pulses and reacts to JARVIS' state: idle, listening, thinking, speaking, error. Three views: Voice (the orb), Chat (message interface), and System (dashboard with live cost tracking). PIN-protected for mobile access.
 
 **Desktop Overlay (macOS)**
-A native Swift overlay that floats above all windows in the bottom-right corner. Shows JARVIS' current state (Standing By, Listening, Processing, Speaking) with a miniature Three.js particle orb and live conversation text. Connects via WebSocket and launches automatically with `./start.sh full`. Built with WKWebView for transparent rendering over your desktop.
+A native Swift overlay that floats above all windows in the bottom-right corner. Shows JARVIS' current state (Standing By, Listening, Processing, Speaking) with a miniature Three.js particle orb and live conversation text. Connects via WebSocket, launches automatically with `./start.sh full`, and supports `Control+Option+J` global voice activation. Built with WKWebView for transparent rendering over your desktop.
 
 **Chrome Extension (Browser Bridge)**
 A Manifest V3 Chrome extension that gives JARVIS direct control over your browser. Manages tabs, navigates pages, fills forms, clicks elements, takes screenshots, reads page content, and executes scoped JavaScript. Auto-reconnects to JARVIS using a `chrome.alarms` keepalive that survives service worker termination, so the extension comes online automatically when JARVIS starts. No manual interaction needed.
@@ -97,7 +97,7 @@ echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' > .env
 ./start.sh full
 ```
 
-Open **http://localhost:3000** in your browser. Say "Hey JARVIS" or click the mic.
+The dashboard opens automatically at **http://localhost:3000**. Say "Hey JARVIS", press **Control+Option+J** from anywhere on macOS, or click the browser mic.
 
 For the full setup guide including environment variables, launch modes, mobile access, Chrome extension installation, desktop overlay, and auto-start on boot, see **[HOW-TO.md](HOW-TO.md)**.
 

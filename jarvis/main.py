@@ -353,8 +353,12 @@ async def run_full():
         listener.on_speech(on_speech)
 
         try:
-            if listener_ok and listener._wake_model is not None:
-                logger.info("Starting voice mode with wake word detection...")
+            if listener_ok:
+                if listener._wake_model is not None:
+                    logger.info("Starting voice mode with wake word and desktop hotkey activation...")
+                else:
+                    logger.info("Starting voice mode with desktop hotkey activation...")
+                    logger.info("(Wake word not available; press Control+Option+J to speak)")
                 await listener.listen_loop()
             else:
                 logger.info("Starting keyboard-activated voice mode...")
