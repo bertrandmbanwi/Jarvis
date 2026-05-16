@@ -39,6 +39,8 @@ VISIBILITY = {"private", "team"}
 RELEASE_CHANNELS = {"stable", "production"}
 EDIT_CONFLICT_STRATEGIES = {"reject", "force"}
 EDIT_SESSION_TTL_SECONDS = 90
+WORKFLOW_PACKAGE_SCHEMA = "jarvis.workflow.package"
+WORKFLOW_PACKAGE_SCHEMA_VERSION = 1
 ASSERTION_TYPES = {
     "run_status_equals",
     "no_failed_steps",
@@ -445,6 +447,182 @@ def _set_active_release_channel(workflow_id: str, channel: str) -> dict[str, Any
 
 def list_templates() -> list[dict[str, Any]]:
     return [dict(template) for template in TEMPLATES]
+
+
+def _package_workflow_definition(workflow: dict[str, Any]) -> dict[str, Any]:
+    tags_raw = workflow.get("tags")
+    tags = tags_raw if isinstance(tags_raw, list) else []
+    permissions_raw = workflow.get("permissions")
+    permissions = permissions_raw if isinstance(permissions_raw, list) else []
+    return {
+        "name": _clean_text(workflow.get("name"), 120) or "Imported Workflow",
+        "description": _clean_text(workflow.get("description"), 500),
+        "trigger": _normalize_trigger(workflow.get("trigger") if isinstance(workflow.get("trigger"), dict) else None),
+        "actions": _normalize_actions(workflow.get("actions") if isinstance(workflow.get("actions"), list) else None),
+        "assertions": _normalize_assertions(
+            workflow.get("assertions") if isinstance(workflow.get("assertions"), list) else None
+        ),
+        "budget": _normalize_budget(workflow.get("budget") if isinstance(workflow.get("budget"), dict) else None),
+        "tags": [_clean_text(tag, 40) for tag in tags if _clean_text(tag, 40)][:12],
+        "visibility": "private",
+        "permissions": sorted({_clean_text(permission, 80) for permission in permissions if permission}),
+    }
+
+
+def _workflow_package(
+    workflow: dict[str, Any],
+    *,
+    source: dict[str, Any],
+    package_id: str = "",
+) -> dict[str, Any]:
+    definition = _package_workflow_definition(workflow)
+    package_tags = list(dict.fromkeys([*definition.get("tags", []), "workflow-template"]))
+    return {
+        "schema": WORKFLOW_PACKAGE_SCHEMA,
+        "schema_version": WORKFLOW_PACKAGE_SCHEMA_VERSION,
+        "kind": "workflow_template",
+        "id": package_id or f"workflow-{source.get('workflow_id', uuid.uuid4().hex)}-v{source.get('workflow_version', 1)}",
+        "name": definition["name"],
+        "description": definition["description"],
+        "tags": package_tags[:12],
+        "exported_at": _now(),
+        "source": {
+            "product": "jarvis",
+            **source,
+        },
+        "requirements": {
+            "permissions": definition["permissions"],
+            "action_types": sorted({str(action.get("type") or "prompt") for action in definition["actions"]}),
+        },
+        "workflow": definition,
+    }
+
+
+def export_template_package(template_id: str) -> dict[str, Any] | None:
+    template = next((item for item in TEMPLATES if item["id"] == template_id), None)
+    if template is None:
+        return None
+    return _workflow_package(
+        {
+            **template,
+            "assertions": [],
+            "budget": {},
+            "visibility": "private",
+        },
+        source={
+            "type": "starter_template",
+            "template_id": template_id,
+            "workflow_id": "",
+            "workflow_version": 1,
+            "workflow_version_id": "",
+        },
+        package_id=f"starter-{template_id}",
+    )
+
+
+def export_workflow_package(workflow_id: str, *, version_id: str = "") -> dict[str, Any] | None:
+    workflow = get_workflow(workflow_id)
+    if workflow is None:
+        return None
+    source: dict[str, Any] = {
+        "type": "workflow",
+        "workflow_id": workflow_id,
+        "workflow_version": int(workflow.get("version", 1) or 1),
+        "workflow_version_id": "",
+    }
+    snapshot = copy.deepcopy(workflow)
+    if version_id:
+        version = get_workflow_version(workflow_id, version_id)
+        if version is None:
+            return None
+        version_snapshot = copy.deepcopy(version.get("snapshot"))
+        if not isinstance(version_snapshot, dict):
+            return None
+        snapshot = version_snapshot
+        source.update({
+            "type": "workflow_version",
+            "workflow_version": int(version.get("version", snapshot.get("version", 1)) or 1),
+            "workflow_version_id": version_id,
+        })
+    return _workflow_package(snapshot, source=source)
+
+
+def validate_workflow_package(package: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(package, dict):
+        return {
+            "valid": False,
+            "status": "invalid",
+            "errors": ["Package must be a JSON object."],
+            "workflow": None,
+        }
+    errors: list[str] = []
+    if package.get("schema") != WORKFLOW_PACKAGE_SCHEMA:
+        errors.append(f"Unsupported package schema: {package.get('schema') or 'missing'}.")
+    if int(package.get("schema_version", 0) or 0) != WORKFLOW_PACKAGE_SCHEMA_VERSION:
+        errors.append(f"Unsupported package version: {package.get('schema_version') or 'missing'}.")
+    if str(package.get("kind") or "") != "workflow_template":
+        errors.append("Package kind must be workflow_template.")
+    workflow_raw = package.get("workflow")
+    workflow = _package_workflow_definition(workflow_raw if isinstance(workflow_raw, dict) else {})
+    if not workflow["name"]:
+        errors.append("Workflow name is required.")
+    if not workflow["actions"]:
+        errors.append("At least one workflow action is required.")
+    invalid_actions = [action for action in workflow["actions"] if str(action.get("type") or "") not in ACTION_TYPES]
+    if invalid_actions:
+        errors.append("Package contains unsupported workflow actions.")
+    return {
+        "valid": not errors,
+        "status": "valid" if not errors else "invalid",
+        "errors": errors,
+        "workflow": workflow if not errors else None,
+        "metadata": {
+            "name": _clean_text(package.get("name"), 120),
+            "description": _clean_text(package.get("description"), 500),
+            "tags": [_clean_text(tag, 40) for tag in list(package.get("tags") or []) if _clean_text(tag, 40)][:12],
+            "source": package.get("source") if isinstance(package.get("source"), dict) else {},
+        },
+    }
+
+
+def import_workflow_package(
+    package: dict[str, Any],
+    *,
+    owner_id: str = "local-owner",
+    actor_id: str = "local-owner",
+    name: str = "",
+) -> dict[str, Any]:
+    validation = validate_workflow_package(package)
+    if not validation["valid"]:
+        return {
+            "status": "invalid",
+            "workflow": None,
+            "validation": validation,
+        }
+    workflow = dict(validation["workflow"] or {})
+    imported_name = _clean_text(name, 120) or str(workflow.get("name") or "Imported Workflow")
+    imported_tags = list(dict.fromkeys([*workflow.get("tags", []), "imported"]))
+    created = create_workflow(
+        name=imported_name,
+        description=str(workflow.get("description") or ""),
+        trigger=workflow.get("trigger") if isinstance(workflow.get("trigger"), dict) else None,
+        actions=workflow.get("actions") if isinstance(workflow.get("actions"), list) else None,
+        assertions=workflow.get("assertions") if isinstance(workflow.get("assertions"), list) else None,
+        budget=workflow.get("budget") if isinstance(workflow.get("budget"), dict) else None,
+        enabled=True,
+        tags=imported_tags[:12],
+        owner_id=owner_id,
+        visibility="private",
+        permissions=workflow.get("permissions") if isinstance(workflow.get("permissions"), list) else [],
+        actor_id=actor_id,
+        note=f"Imported workflow package: {_clean_text(package.get('id'), 120) or imported_name}",
+    )
+    return {
+        "status": "imported",
+        "workflow": created,
+        "validation": validation,
+        "source": validation.get("metadata", {}).get("source", {}),
+    }
 
 
 def list_workflows(include_disabled: bool = True) -> list[dict[str, Any]]:
@@ -2772,8 +2950,8 @@ def get_overview() -> dict[str, Any]:
         "pending_approval_count": len(list_approvals(status="pending", limit=200)),
         "recent_runs": runs,
         "next_foundation_steps": [
-            "Add reusable workflow template marketplace packaging and import/export.",
             "Add macOS app lifecycle controls for launch agents, restart, and diagnostics.",
             "Add workflow change review diffs before release promotion.",
+            "Add curated remote workflow package registry sync.",
         ],
     }
