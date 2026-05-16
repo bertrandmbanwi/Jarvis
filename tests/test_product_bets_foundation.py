@@ -16,6 +16,7 @@ def product_bet_files(tmp_path, monkeypatch):
     monkeypatch.setattr(workflows, "WORKFLOW_APPROVALS_FILE", tmp_path / "workflow_approvals.json")
     monkeypatch.setattr(workflows, "WORKFLOW_VERSIONS_FILE", tmp_path / "workflow_versions.json")
     monkeypatch.setattr(workflows, "WORKFLOW_RELEASES_FILE", tmp_path / "workflow_releases.json")
+    monkeypatch.setattr(workflows, "WORKFLOW_EDIT_SESSIONS_FILE", tmp_path / "workflow_edit_sessions.json")
     monkeypatch.setattr(team, "TEAM_FILE", tmp_path / "team.json")
     monkeypatch.setattr(calendar_accounts, "CALENDAR_STATE_FILE", tmp_path / "calendar_state.json")
 
@@ -188,6 +189,127 @@ def test_team_roles_and_capabilities(product_bet_files):
     assert team.member_has_capability(member["id"], "workflow:run") is True
     assert team.member_has_capability(member["id"], "team:write") is False
     assert team.get_team()["mode"] == "team"
+
+
+def test_workflow_edit_presence_tracks_active_editors(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Presence workflow",
+        actions=[{"type": "prompt", "title": "Ask", "prompt": "hello"}],
+    )
+    operator = team.upsert_member(name="Operator", email="operator@example.com", role="admin")
+
+    first = workflows.start_workflow_edit(
+        workflow["id"],
+        actor_id=operator["id"],
+        actor_name=operator["name"],
+        session_id="operator-session",
+    )
+    second = workflows.start_workflow_edit(
+        workflow["id"],
+        actor_id="local-owner",
+        actor_name="Owner",
+        session_id="owner-session",
+    )
+
+    assert first is not None
+    assert second is not None
+    presence = workflows.get_workflow_presence(
+        workflow["id"],
+        actor_id="local-owner",
+        current_session_id="owner-session",
+    )
+
+    assert presence is not None
+    assert presence["has_conflict"] is True
+    assert presence["other_editors"][0]["actor_name"] == "Operator"
+    assert workflows.heartbeat_workflow_edit(workflow["id"], "owner-session", actor_id="local-owner") is not None
+    assert workflows.end_workflow_edit(workflow["id"], "operator-session", actor_id=operator["id"]) is True
+
+    cleared = workflows.get_workflow_presence(
+        workflow["id"],
+        actor_id="local-owner",
+        current_session_id="owner-session",
+    )
+
+    assert cleared is not None
+    assert cleared["has_conflict"] is False
+    assert cleared["other_editors"] == []
+
+
+def test_workflow_update_conflicts_with_active_editor(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Conflict workflow",
+        actions=[{"type": "prompt", "title": "Ask", "prompt": "hello"}],
+    )
+    owner_session = workflows.start_workflow_edit(
+        workflow["id"],
+        actor_id="local-owner",
+        actor_name="Owner",
+        session_id="owner-session",
+    )
+    operator_session = workflows.start_workflow_edit(
+        workflow["id"],
+        actor_id="operator",
+        actor_name="Operator",
+        session_id="operator-session",
+    )
+
+    assert owner_session is not None
+    assert operator_session is not None
+
+    blocked = workflows.update_workflow_with_conflict_check(
+        workflow["id"],
+        {"name": "Blocked update"},
+        actor_id="local-owner",
+        base_version=workflow["version"],
+        edit_session_id="owner-session",
+    )
+    forced = workflows.update_workflow_with_conflict_check(
+        workflow["id"],
+        {"name": "Forced update"},
+        actor_id="local-owner",
+        base_version=workflow["version"],
+        edit_session_id="owner-session",
+        conflict_strategy="force",
+    )
+
+    assert blocked["status"] == "conflict"
+    assert blocked["conflict"]["reasons"][0]["type"] == "active_editor_conflict"
+    assert "Operator" in blocked["conflict"]["message"]
+    assert forced["status"] == "updated"
+    assert forced["workflow"]["name"] == "Forced update"
+
+
+def test_workflow_update_conflicts_with_stale_base_version(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Stale workflow",
+        actions=[{"type": "prompt", "title": "Ask", "prompt": "hello"}],
+    )
+    session = workflows.start_workflow_edit(
+        workflow["id"],
+        actor_id="local-owner",
+        session_id="owner-session",
+    )
+    updated = workflows.update_workflow(
+        workflow["id"],
+        {"name": "Updated elsewhere"},
+        actor_id="operator",
+    )
+
+    assert session is not None
+    assert updated is not None
+
+    blocked = workflows.update_workflow_with_conflict_check(
+        workflow["id"],
+        {"name": "Stale save"},
+        actor_id="local-owner",
+        base_version=workflow["version"],
+        edit_session_id="owner-session",
+    )
+
+    assert blocked["status"] == "conflict"
+    assert blocked["conflict"]["reasons"][0]["type"] == "version_conflict"
+    assert blocked["conflict"]["current_version"] == 2
 
 
 def test_product_state_imports_legacy_json_to_sqlite(product_bet_files):
