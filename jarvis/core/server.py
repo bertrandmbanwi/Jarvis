@@ -876,6 +876,7 @@ class WorkflowPublishRequest(BaseModel):
     actor_id: str = "local-owner"
     note: str = ""
     activate: bool = True
+    require_approval: bool | None = None
 
 
 class SchedulerRunRequest(BaseModel):
@@ -1304,6 +1305,12 @@ async def list_workflow_releases(workflow_id: str = "", channel: str = "", limit
     return {"releases": releases, "count": len(releases)}
 
 
+@app.get("/workflows/release-policies", dependencies=[Depends(require_auth)])
+async def workflow_release_policies():
+    """List workflow release promotion policies."""
+    return {"policies": workflows.get_release_policies()}
+
+
 @app.get("/workflows/{workflow_id}/versions", dependencies=[Depends(require_auth)])
 async def list_workflow_versions(workflow_id: str, limit: int = 50):
     """List version history for one workflow."""
@@ -1339,18 +1346,30 @@ async def restore_workflow_version(workflow_id: str, version_id: str, request: W
 
 @app.post("/workflows/{workflow_id}/versions/{version_id}/publish", dependencies=[Depends(require_auth)])
 async def publish_workflow_version(workflow_id: str, version_id: str, request: WorkflowPublishRequest):
-    """Publish a workflow version to a release channel."""
-    release = workflows.publish_workflow_version(
+    """Request or execute a workflow version release promotion."""
+    result = workflows.request_workflow_release_approval(
         workflow_id,
         version_id,
         channel=request.channel,
         actor_id=request.actor_id,
         note=request.note,
         activate=request.activate,
+        require_approval=request.require_approval,
     )
-    if release is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
-    return release
+    if result is None:
+        assessment = workflows.assess_release_request(
+            workflow_id,
+            version_id,
+            channel=request.channel,
+            note=request.note,
+        )
+        blockers = assessment.get("blockers", [])
+        status_code = 400 if blockers else 404
+        return JSONResponse(
+            status_code=status_code,
+            content={"error": "; ".join(blockers) or "Workflow version not found."},
+        )
+    return result
 
 
 @app.get("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])

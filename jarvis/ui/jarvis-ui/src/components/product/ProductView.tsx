@@ -116,6 +116,12 @@ interface WorkflowApproval {
   title: string;
   action_type: string;
   message: string;
+  action?: {
+    type?: string;
+    channel?: string;
+    version?: number;
+    requested_by?: string;
+  };
   status: string;
   response?: string;
   created_at: number;
@@ -410,7 +416,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
   }
 
   async function publishWorkflowVersion(workflowId: string, versionId: string) {
-    await api(`/workflows/${workflowId}/versions/${versionId}/publish`, {
+    const data = await api(`/workflows/${workflowId}/versions/${versionId}/publish`, {
       method: "POST",
       body: JSON.stringify({
         channel: "stable",
@@ -419,7 +425,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
         activate: true,
       }),
     });
-    setMessage("Stable release promoted and activated.");
+    setMessage(data.requires_approval ? "Promotion approval requested." : "Stable release promoted and activated.");
     await loadData();
     if (selectedWorkflowForHistory?.id === workflowId) {
       await loadWorkflowVersions(selectedWorkflowForHistory);
@@ -903,6 +909,11 @@ export default function ProductView({ authToken }: ProductViewProps) {
                         <div className="text-2xs text-jarvis-text-dim/45">
                           {approval.title || approval.action_type} · {new Date(approval.created_at * 1000).toLocaleString()}
                         </div>
+                        {approval.action?.type === "publish_workflow_version" && (
+                          <div className="text-2xs text-jarvis-text-dim/45 mt-1">
+                            v{approval.action.version || "?"} · {approval.action.channel || "stable"} · {approval.action.requested_by || "local-owner"}
+                          </div>
+                        )}
                       </div>
                       <span className="jarvis-badge">{approval.status}</span>
                     </div>

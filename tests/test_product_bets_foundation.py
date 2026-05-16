@@ -371,6 +371,72 @@ async def test_workflow_release_channel_runs_promoted_snapshot(product_bet_files
     assert draft_run["workflow_version"] == 2
 
 
+@pytest.mark.asyncio
+async def test_workflow_release_promotion_requires_approval(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Approval gated release",
+        actions=[{"type": "prompt", "title": "Safe", "prompt": "approved prompt"}],
+    )
+    version = workflows.list_workflow_versions(workflow["id"])[0]
+
+    request = workflows.request_workflow_release_approval(
+        workflow["id"],
+        version["id"],
+        channel="stable",
+        actor_id="operator",
+        note="Ready for stable.",
+    )
+
+    assert request is not None
+    assert request["status"] == "pending_approval"
+    assert request["requires_approval"] is True
+    assert workflows.list_workflow_releases(workflow_id=workflow["id"]) == []
+    assert workflows.get_workflow(workflow["id"])["active_release_channel"] == ""
+
+    pending = workflows.list_approvals(status="pending")
+
+    assert len(pending) == 1
+    assert pending[0]["action_type"] == "publish_workflow_version"
+    assert pending[0]["action"]["channel"] == "stable"
+    assert pending[0]["action"]["version"] == 1
+
+    duplicate = workflows.request_workflow_release_approval(
+        workflow["id"],
+        version["id"],
+        channel="stable",
+        actor_id="operator",
+        note="Ready for stable.",
+    )
+
+    assert duplicate is not None
+    assert duplicate["approval"]["id"] == pending[0]["id"]
+    assert len(workflows.list_approvals(status="pending")) == 1
+
+    approved = await workflows.approve_approval(pending[0]["id"], actor="owner", note="Approved.")
+
+    assert approved is not None
+    assert approved["status"] == "approved"
+    assert approved["execution_status"] == "completed"
+    assert approved["release_id"]
+    assert workflows.get_workflow(workflow["id"])["active_release_channel"] == "stable"
+    assert workflows.list_workflow_releases(workflow_id=workflow["id"])[0]["actor_id"] == "owner"
+
+
+def test_production_release_request_requires_note(product_bet_files):
+    workflow = workflows.create_workflow(
+        name="Production candidate",
+        actions=[{"type": "prompt", "title": "Deploy", "prompt": "ship it"}],
+    )
+    version = workflows.list_workflow_versions(workflow["id"])[0]
+
+    assessment = workflows.assess_release_request(workflow["id"], version["id"], channel="production")
+    request = workflows.request_workflow_release_approval(workflow["id"], version["id"], channel="production")
+
+    assert assessment["can_request"] is False
+    assert "Production promotion requires a release note." in assessment["blockers"]
+    assert request is None
+
+
 def test_calendar_policy_blocks_auto_schedule_until_connected(product_bet_files):
     assessment = calendar_accounts.assess_scheduling_request(
         title="Planning",
