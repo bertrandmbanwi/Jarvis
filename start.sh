@@ -99,6 +99,61 @@ path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 PY
 }
 
+stop_listeners_on_ports() {
+    local ports=("$@")
+    local pids=""
+    local pid=""
+    local port=""
+    for port in "${ports[@]}"; do
+        while IFS= read -r pid; do
+            if [[ -n "${pid}" ]]; then
+                pids="${pids} ${pid}"
+            fi
+        done < <(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)
+    done
+
+    if [[ -z "${pids// /}" ]]; then
+        return 0
+    fi
+
+    echo "Stopping stale listener(s) on port(s) ${ports[*]}:${pids}"
+    for pid in ${pids}; do
+        kill "${pid}" 2>/dev/null || true
+    done
+
+    for _ in {1..20}; do
+        local any_running=""
+        for pid in ${pids}; do
+            if kill -0 "${pid}" 2>/dev/null; then
+                any_running="true"
+            fi
+        done
+        if [[ -z "${any_running}" ]]; then
+            return 0
+        fi
+        sleep 0.25
+    done
+
+    for pid in ${pids}; do
+        if kill -0 "${pid}" 2>/dev/null; then
+            echo "Force stopping stale listener PID ${pid}..."
+            kill -9 "${pid}" 2>/dev/null || true
+        fi
+    done
+}
+
+wait_for_http() {
+    local url="$1"
+    local attempts="${2:-20}"
+    for _ in $(seq 1 "${attempts}"); do
+        if curl -fsS -m 1 -I "${url}" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
 cleanup() {
     echo ""
     echo "Shutting down JARVIS..."
@@ -119,9 +174,7 @@ cleanup() {
         kill "${TUNNEL_PID}" 2>/dev/null || true
     fi
     # Final sweep: kill anything still holding the UI ports
-    for pid in $(lsof -ti :"${UI_PORT}",:"${NEXT_FALLBACK_PORT}" 2>/dev/null || true); do
-        kill "${pid}" 2>/dev/null || true
-    done
+    stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
     if [[ -n "${OVERLAY_PID}" ]] && kill -0 "${OVERLAY_PID}" 2>/dev/null; then
         echo "Stopping Desktop Overlay..."
         kill "${OVERLAY_PID}" 2>/dev/null || true
@@ -267,22 +320,29 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
             (cd "${UI_DIR}" && npm install)
         fi
 
-        # Kill any orphaned processes on the configured UI ports from a previous run
-        # lsof can return multiple PIDs (one per line), so iterate over each
-        while IFS= read -r pid; do
-            if [[ -n "${pid}" ]]; then
-                echo "Port ${UI_PORT}/${NEXT_FALLBACK_PORT} in use (PID: ${pid}). Killing orphaned process..."
-                kill "${pid}" 2>/dev/null || true
-            fi
-        done < <(lsof -ti :"${UI_PORT}",:"${NEXT_FALLBACK_PORT}" 2>/dev/null || true)
+        # Kill stale listeners on the configured UI ports from a previous run.
+        stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
         # Give the OS a moment to release the port
         sleep 1
 
         echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} ..."
         (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
         UI_PID=$!
-        # Give the dev server a moment to start
-        sleep 3
+        if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
+            echo "Warning: UI did not become ready on port ${UI_PORT}. Retrying once..."
+            if kill -0 "${UI_PID}" 2>/dev/null; then
+                kill "${UI_PID}" 2>/dev/null || true
+                wait "${UI_PID}" 2>/dev/null || true
+            fi
+            stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
+            sleep 1
+            (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
+            UI_PID=$!
+            if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
+                echo "Warning: JARVIS UI is still not responding at http://localhost:${UI_PORT}."
+                echo "         Check the UI error above or rerun ./start.sh after freeing port ${UI_PORT}."
+            fi
+        fi
         if [[ "${JARVIS_OPEN_DASHBOARD}" != "false" && "${JARVIS_OPEN_DASHBOARD}" != "0" ]] && command -v open &>/dev/null; then
             echo "Opening JARVIS Dashboard at http://localhost:${UI_PORT} ..."
             open "http://localhost:${UI_PORT}" >/dev/null 2>&1 || true
