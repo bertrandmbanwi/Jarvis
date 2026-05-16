@@ -6,6 +6,7 @@ in SQLite, with a lazy importer for the earlier JSON files.
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -17,6 +18,7 @@ from jarvis.core import routines, sqlite_state
 WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
 WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
 WORKFLOW_APPROVALS_FILE = settings.DATA_DIR / "workflow_approvals.json"
+WORKFLOW_VERSIONS_FILE = settings.DATA_DIR / "workflow_versions.json"
 
 TRIGGER_TYPES = {"manual", "schedule", "calendar_event", "startup", "hotkey", "webhook"}
 ACTION_TYPES = {
@@ -242,6 +244,42 @@ def _save_approvals(items: list[dict[str, Any]]) -> None:
     _save_list("workflow_approvals", items[-500:])
 
 
+def _load_versions() -> list[dict[str, Any]]:
+    return _load_list("workflow_versions", WORKFLOW_VERSIONS_FILE, [])
+
+
+def _save_versions(items: list[dict[str, Any]]) -> None:
+    _save_list("workflow_versions", items[-1000:])
+
+
+def _record_workflow_version(
+    workflow: dict[str, Any],
+    *,
+    event: str,
+    actor_id: str = "local-owner",
+    note: str = "",
+    previous: dict[str, Any] | None = None,
+    changed_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    record = {
+        "id": uuid.uuid4().hex,
+        "workflow_id": str(workflow.get("id") or ""),
+        "workflow_name": _clean_text(workflow.get("name"), 120),
+        "version": int(workflow.get("version", 1) or 1),
+        "previous_version": int(previous.get("version", 0) or 0) if previous else None,
+        "event": _clean_text(event, 40),
+        "actor_id": _clean_text(actor_id or "local-owner", 120),
+        "note": _clean_text(note, 500),
+        "changed_fields": sorted({field for field in (changed_fields or []) if field}),
+        "snapshot": copy.deepcopy(workflow),
+        "created_at": _now(),
+    }
+    versions = _load_versions()
+    versions.append(record)
+    _save_versions(versions)
+    return record
+
+
 def list_templates() -> list[dict[str, Any]]:
     return [dict(template) for template in TEMPLATES]
 
@@ -257,6 +295,22 @@ def get_workflow(workflow_id: str) -> dict[str, Any] | None:
     return next((item for item in _load_workflows() if item.get("id") == workflow_id), None)
 
 
+def list_workflow_versions(workflow_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    versions = [item for item in _load_versions() if item.get("workflow_id") == workflow_id]
+    return sorted(versions, key=lambda item: float(item.get("created_at", 0)), reverse=True)[: max(1, min(limit, 200))]
+
+
+def get_workflow_version(workflow_id: str, version_id: str) -> dict[str, Any] | None:
+    return next(
+        (
+            item
+            for item in _load_versions()
+            if item.get("workflow_id") == workflow_id and item.get("id") == version_id
+        ),
+        None,
+    )
+
+
 def create_workflow(
     *,
     name: str,
@@ -268,6 +322,8 @@ def create_workflow(
     owner_id: str = "local-owner",
     visibility: str = "private",
     permissions: list[str] | None = None,
+    actor_id: str = "local-owner",
+    note: str = "",
 ) -> dict[str, Any]:
     now = _now()
     item = {
@@ -289,10 +345,16 @@ def create_workflow(
     items = _load_workflows()
     items.append(item)
     _save_workflows(items)
+    _record_workflow_version(item, event="created", actor_id=actor_id or str(item["owner_id"]), note=note)
     return item
 
 
-def create_workflow_from_template(template_id: str, *, owner_id: str = "local-owner") -> dict[str, Any] | None:
+def create_workflow_from_template(
+    template_id: str,
+    *,
+    owner_id: str = "local-owner",
+    actor_id: str = "local-owner",
+) -> dict[str, Any] | None:
     template = next((item for item in TEMPLATES if item["id"] == template_id), None)
     if template is None:
         return None
@@ -306,14 +368,33 @@ def create_workflow_from_template(template_id: str, *, owner_id: str = "local-ow
         owner_id=owner_id,
         visibility="private",
         permissions=template["permissions"],
+        actor_id=actor_id or owner_id,
+        note=f"Created from template: {template_id}",
     )
 
 
-def update_workflow(workflow_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+def update_workflow(
+    workflow_id: str,
+    updates: dict[str, Any],
+    *,
+    actor_id: str = "local-owner",
+    note: str = "",
+) -> dict[str, Any] | None:
     items = _load_workflows()
     for item in items:
         if item.get("id") != workflow_id:
             continue
+        previous = copy.deepcopy(item)
+        changed_fields = [field for field in updates if field in {
+            "name",
+            "description",
+            "trigger",
+            "actions",
+            "enabled",
+            "tags",
+            "visibility",
+            "permissions",
+        }]
         if "name" in updates:
             item["name"] = _clean_text(updates["name"], 120)
         if "description" in updates:
@@ -334,16 +415,68 @@ def update_workflow(workflow_id: str, updates: dict[str, Any]) -> dict[str, Any]
         item["version"] = int(item.get("version", 1)) + 1
         item["updated_at"] = _now()
         _save_workflows(items)
+        _record_workflow_version(
+            item,
+            event="updated",
+            actor_id=actor_id,
+            note=note,
+            previous=previous,
+            changed_fields=changed_fields,
+        )
         return item
     return None
 
 
-def delete_workflow(workflow_id: str) -> bool:
+def restore_workflow_version(
+    workflow_id: str,
+    version_id: str,
+    *,
+    actor_id: str = "local-owner",
+    note: str = "",
+) -> dict[str, Any] | None:
+    version = get_workflow_version(workflow_id, version_id)
+    snapshot = copy.deepcopy(version.get("snapshot")) if version else None
+    if not isinstance(snapshot, dict):
+        return None
+    version_number = version.get("version") if version else 0
+
     items = _load_workflows()
+    now = _now()
+    existing_index = next((index for index, item in enumerate(items) if item.get("id") == workflow_id), -1)
+    previous = copy.deepcopy(items[existing_index]) if existing_index >= 0 else None
+
+    restored = copy.deepcopy(snapshot)
+    restored["id"] = workflow_id
+    restored["version"] = int((previous or snapshot).get("version", 1) or 1) + 1
+    restored["created_at"] = (previous or snapshot).get("created_at", now)
+    restored["updated_at"] = now
+    restored["last_run_at"] = (previous or snapshot).get("last_run_at")
+
+    if existing_index >= 0:
+        items[existing_index] = restored
+    else:
+        items.append(restored)
+    _save_workflows(items)
+    _record_workflow_version(
+        restored,
+        event="restored",
+        actor_id=actor_id,
+        note=note or f"Restored from version {version_number}",
+        previous=previous,
+        changed_fields=["restore"],
+    )
+    return restored
+
+
+def delete_workflow(workflow_id: str, *, actor_id: str = "local-owner", note: str = "") -> bool:
+    items = _load_workflows()
+    removed = next((item for item in items if item.get("id") == workflow_id), None)
     kept = [item for item in items if item.get("id") != workflow_id]
     if len(kept) == len(items):
         return False
     _save_workflows(kept)
+    if removed is not None:
+        _record_workflow_version(removed, event="deleted", actor_id=actor_id, note=note)
     return True
 
 
@@ -1014,8 +1147,8 @@ def get_overview() -> dict[str, Any]:
         "pending_approval_count": len(list_approvals(status="pending", limit=200)),
         "recent_runs": runs,
         "next_foundation_steps": [
-            "Replace JSON storage with a multi-user database when team mode is enabled.",
-            "Add collaborative workflow editing with audit history.",
-            "Add visual run timelines with per-step inputs, outputs, and retry traces.",
+            "Move high-volume workflow runs from document snapshots into queryable relational tables.",
+            "Add team presence and conflict handling for simultaneous workflow edits.",
+            "Attach workflow versions to release channels so stable automations can be promoted safely.",
         ],
     }

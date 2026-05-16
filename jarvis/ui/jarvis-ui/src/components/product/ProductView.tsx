@@ -44,6 +44,7 @@ interface WorkflowTemplate {
 
 interface Workflow {
   id: string;
+  version?: number;
   name: string;
   description: string;
   trigger: { type: string; rrule?: string; minutes_before?: number };
@@ -52,6 +53,20 @@ interface Workflow {
   tags?: string[];
   visibility?: string;
   last_run_at?: number | null;
+}
+
+interface WorkflowVersion {
+  id: string;
+  workflow_id: string;
+  workflow_name: string;
+  version: number;
+  previous_version?: number | null;
+  event: string;
+  actor_id: string;
+  note?: string;
+  changed_fields?: string[];
+  snapshot?: Partial<Workflow>;
+  created_at: number;
 }
 
 interface WorkflowRun {
@@ -215,11 +230,14 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<WorkflowRun | null>(null);
+  const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([]);
+  const [selectedWorkflowForHistory, setSelectedWorkflowForHistory] = useState<Workflow | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [calendar, setCalendar] = useState<CalendarState>(emptyCalendar);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [message, setMessage] = useState("");
   const [customName, setCustomName] = useState("Quick Workflow");
+  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
   const [triggerMode, setTriggerMode] = useState("manual");
   const [dailyTime, setDailyTime] = useState("08:30");
   const [builderActions, setBuilderActions] = useState<WorkflowAction[]>([defaultBuilderAction("prompt", "prompt-initial")]);
@@ -284,10 +302,44 @@ export default function ProductView({ authToken }: ProductViewProps) {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  function resetBuilder() {
+    setEditingWorkflowId(null);
+    setCustomName("Quick Workflow");
+    setTriggerMode("manual");
+    setDailyTime("08:30");
+    setBuilderActions([defaultBuilderAction("prompt")]);
+  }
+
+  function loadWorkflowIntoBuilder(workflow: Workflow) {
+    const rrule = workflow.trigger?.rrule || "";
+    const hour = rrule.match(/BYHOUR=(\d+)/)?.[1] || "08";
+    const minute = rrule.match(/BYMINUTE=(\d+)/)?.[1] || "30";
+    setEditingWorkflowId(workflow.id);
+    setCustomName(workflow.name);
+    setTriggerMode(workflow.trigger?.type === "schedule" ? "schedule" : "manual");
+    setDailyTime(`${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`);
+    setBuilderActions((workflow.actions?.length ? workflow.actions : [defaultBuilderAction("prompt")]).map((action, index) => ({
+      ...action,
+      id: action.id || `edit-${index}-${Date.now()}`,
+      attendees: Array.isArray(action.attendees) ? action.attendees.join(", ") : action.attendees,
+      condition: action.condition || { type: "always" },
+      retry_count: action.retry_count || 0,
+      retry_delay_ms: action.retry_delay_ms || 0,
+      on_error: action.on_error || "stop",
+    })));
+    setMessage(`Editing ${workflow.name}.`);
+  }
+
+  async function loadWorkflowVersions(workflow: Workflow) {
+    const data = await api(`/workflows/${workflow.id}/versions?limit=12`);
+    setSelectedWorkflowForHistory(workflow);
+    setWorkflowVersions(data.versions || []);
+  }
+
   async function createFromTemplate(templateId: string) {
     await api("/workflows/from-template", {
       method: "POST",
-      body: JSON.stringify({ template_id: templateId }),
+      body: JSON.stringify({ template_id: templateId, actor_id: "local-owner" }),
     });
     setMessage("Workflow created from template.");
     await loadData();
@@ -319,8 +371,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
       if (action.type === "notification") return ["system:notify"];
       return ["llm:chat"];
     })));
-    await api("/workflows", {
-      method: "POST",
+    const endpoint = editingWorkflowId ? `/workflows/${editingWorkflowId}` : "/workflows";
+    const saved = await api(endpoint, {
+      method: editingWorkflowId ? "PUT" : "POST",
       body: JSON.stringify({
         name: customName,
         description: actions.map((action) => action.title).join(" -> ").slice(0, 180),
@@ -328,10 +381,29 @@ export default function ProductView({ authToken }: ProductViewProps) {
         actions,
         tags: triggerMode === "schedule" ? ["scheduled"] : ["manual"],
         permissions,
+        actor_id: "local-owner",
+        version_note: editingWorkflowId ? "Updated from workflow builder." : "Created from workflow builder.",
       }),
     });
-    setMessage("Workflow created.");
+    setMessage(editingWorkflowId ? "Workflow updated and versioned." : "Workflow created.");
+    setEditingWorkflowId(null);
     await loadData();
+    if (saved?.id) {
+      await loadWorkflowVersions(saved);
+    }
+  }
+
+  async function restoreWorkflowVersion(workflowId: string, versionId: string) {
+    const restored = await api(`/workflows/${workflowId}/versions/${versionId}/restore`, {
+      method: "POST",
+      body: JSON.stringify({
+        actor_id: "local-owner",
+        note: "Restored from workflow history.",
+      }),
+    });
+    setMessage(`Restored ${restored.name || "workflow"} from history.`);
+    await loadData();
+    await loadWorkflowVersions(restored);
   }
 
   async function runWorkflow(id: string, dryRun: boolean) {
@@ -525,7 +597,16 @@ export default function ProductView({ authToken }: ProductViewProps) {
             </section>
 
             <section className="jarvis-card">
-              <div className="jarvis-card-header">Workflow Builder</div>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="jarvis-card-header mb-0">
+                  {editingWorkflowId ? "Workflow Builder · Editing" : "Workflow Builder"}
+                </div>
+                {editingWorkflowId && (
+                  <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={resetBuilder}>
+                    Cancel
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-1 lg:grid-cols-[0.7fr_1fr] gap-3">
                 <div className="space-y-3">
                   <label className="block">
@@ -563,7 +644,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                     ))}
                   </div>
                   <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={createCustomWorkflow}>
-                    Save Workflow
+                    {editingWorkflowId ? "Update Workflow" : "Save Workflow"}
                   </button>
                 </div>
                 <div className="space-y-3">
@@ -620,12 +701,19 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="text-sm text-jarvis-text/75 font-medium">{workflow.name}</span>
+                          <span className="jarvis-badge">v{workflow.version || 1}</span>
                           <span className="jarvis-badge">{workflow.trigger?.type || "manual"}</span>
                           {!workflow.enabled && <span className="jarvis-badge">disabled</span>}
                         </div>
                         <p className="text-xs text-jarvis-text-dim/55 mt-1 max-w-2xl">{workflow.description || workflow.actions?.[0]?.prompt}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => loadWorkflowIntoBuilder(workflow)}>
+                          Edit
+                        </button>
+                        <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => loadWorkflowVersions(workflow)}>
+                          History
+                        </button>
                         <button className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={() => runWorkflow(workflow.id, true)}>
                           Dry Run
                         </button>
@@ -638,6 +726,53 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 ))}
               </div>
             </section>
+
+            {selectedWorkflowForHistory && (
+              <section className="jarvis-card">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="jarvis-card-header mb-0">Version History</div>
+                  <span className="jarvis-badge">{selectedWorkflowForHistory.name}</span>
+                </div>
+                <div className="space-y-3">
+                  {workflowVersions.length === 0 ? (
+                    <p className="text-sm text-jarvis-text-dim/45">No versions recorded.</p>
+                  ) : workflowVersions.map((version) => (
+                    <div key={version.id} className="rounded-md border border-white/[0.04] bg-white/[0.015] px-3 py-3">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs text-jarvis-text/70">Version {version.version}</span>
+                            <span className="jarvis-badge">{version.event}</span>
+                            <span className="text-2xs text-jarvis-text-dim/45 font-mono">
+                              {new Date(version.created_at * 1000).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="text-2xs text-jarvis-text-dim/45 mt-1">
+                            {version.actor_id || "local-owner"}
+                            {version.changed_fields?.length ? ` · ${version.changed_fields.join(", ")}` : ""}
+                            {version.note ? ` · ${version.note}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                            onClick={() => version.snapshot && loadWorkflowIntoBuilder(version.snapshot as Workflow)}
+                          >
+                            Load
+                          </button>
+                          <button
+                            className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md"
+                            onClick={() => restoreWorkflowVersion(version.workflow_id, version.id)}
+                          >
+                            Restore
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="jarvis-card">
               <div className="jarvis-card-header">Recent Runs</div>
