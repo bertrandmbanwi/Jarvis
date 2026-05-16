@@ -713,11 +713,11 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
       };
 
       ws.onerror = (err) => {
-        console.error("[JARVIS WS] Error:", err);
+        console.warn("[JARVIS WS] Error:", err);
         setStatus("error");
       };
     } catch (e) {
-      console.error("[JARVIS WS] Connection failed:", e);
+      console.warn("[JARVIS WS] Connection failed:", e);
       setStatus("error");
     }
   }, [authToken]);
