@@ -59,6 +59,25 @@ export interface CostInsights {
   };
 }
 
+export interface ProductFoundationStatus {
+  workflows: {
+    workflowCount: number;
+    enabledCount: number;
+    templateCount: number;
+    recentRunCount: number;
+  };
+  team: {
+    mode: string;
+    memberCount: number;
+  };
+  calendar: {
+    connectedCount: number;
+    providerCount: number;
+    conflictStrategy: string;
+    autoCreateEvents: boolean;
+  };
+}
+
 export interface ServerStatus {
   status: string;
   version: string;

@@ -4,11 +4,12 @@ HTTP + WebSocket API for interacting with JARVIS.
 Used by the UI and can also be used by iPhone/external clients.
 """
 import asyncio
+import json
 import logging
 import os
 import time
 from contextlib import asynccontextmanager, suppress
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from jarvis.config import settings
-from jarvis.core import anthropic_batch, auth, cost_tracker, feedback, jobs, routines
+from jarvis.core import (
+    anthropic_batch,
+    auth,
+    calendar_accounts,
+    cost_tracker,
+    feedback,
+    jobs,
+    routines,
+    team,
+    workflows,
+)
 from jarvis.core import profile as user_profile
 from jarvis.core.brain import JarvisBrain
 from jarvis.core.permissions import TOOL_PERMISSIONS, list_tool_audit, summarize_permissions
@@ -804,6 +815,62 @@ class PrivacyRequest(BaseModel):
     enabled: bool
 
 
+class WorkflowRequest(BaseModel):
+    name: str
+    description: str = ""
+    trigger: dict[str, Any] = {}
+    actions: list[dict[str, Any]] = []
+    enabled: bool = True
+    tags: list[str] = []
+    owner_id: str = "local-owner"
+    visibility: str = "private"
+    permissions: list[str] = []
+
+
+class WorkflowTemplateRequest(BaseModel):
+    template_id: str
+    owner_id: str = "local-owner"
+
+
+class WorkflowRunRequest(BaseModel):
+    background: bool = False
+    dry_run: bool = False
+
+
+class TeamMemberRequest(BaseModel):
+    name: str
+    email: str = ""
+    role: str = "member"
+    member_id: str = ""
+    status: str = "active"
+
+
+class CalendarConnectionRequest(BaseModel):
+    provider: str
+    account_label: str = ""
+    enabled: bool = False
+    status: str = "not_connected"
+    scopes: list[str] = []
+
+
+class CalendarPolicyRequest(BaseModel):
+    timezone: str | None = None
+    working_hours: dict[str, Any] | None = None
+    default_duration_minutes: int | None = None
+    conflict_strategy: str | None = None
+    auto_create_events: bool | None = None
+    require_confirmation_for_guests: bool | None = None
+    buffer_minutes: int | None = None
+
+
+class ScheduleAssessmentRequest(BaseModel):
+    title: str
+    start: str = ""
+    end: str = ""
+    attendees: list[str] = []
+    provider: str = ""
+
+
 class ChatResponse(BaseModel):
     response: str
     elapsed_ms: float
@@ -857,6 +924,38 @@ async def _run_chat_job(job_id: str, message: str) -> None:
         record_event("job.completed", job_id=job_id)
     except Exception as exc:
         logger.exception("Background job %s failed", job_id)
+        jobs.mark_failed(job_id, str(exc))
+        record_event("job.failed", job_id=job_id, error=str(exc))
+    finally:
+        reset_trace_id(token)
+
+
+async def _run_workflow_job(job_id: str, workflow_id: str, dry_run: bool = False) -> None:
+    job = jobs.get_job(job_id)
+    if job is None or job.status == jobs.JobStatus.CANCELLED.value:
+        return
+
+    token = set_trace_id(job.trace_id)
+    try:
+        jobs.mark_running(job_id)
+        record_event("job.started", job_id=job_id, kind=job.kind, workflow_id=workflow_id)
+        run = await workflows.run_workflow(
+            workflow_id,
+            runner=brain.process if not dry_run else None,
+            triggered_by="background",
+            dry_run=dry_run,
+        )
+        latest = jobs.get_job(job_id)
+        if latest is not None and latest.status == jobs.JobStatus.CANCELLED.value:
+            record_event("job.cancelled", job_id=job_id)
+            return
+        if run is None:
+            jobs.mark_failed(job_id, "Workflow not found.")
+            return
+        jobs.mark_completed(job_id, json.dumps(run, sort_keys=True, default=str))
+        record_event("job.completed", job_id=job_id, workflow_id=workflow_id)
+    except Exception as exc:
+        logger.exception("Workflow job %s failed", job_id)
         jobs.mark_failed(job_id, str(exc))
         record_event("job.failed", job_id=job_id, error=str(exc))
     finally:
@@ -1008,6 +1107,121 @@ async def run_routine(routine_id: str, request: RoutineRunRequest):
         "response": response,
         "elapsed_ms": round((time.time() - start) * 1000, 1),
     }
+
+
+@app.get("/workflows/overview", dependencies=[Depends(require_auth)])
+async def workflow_overview():
+    """Get workflow-builder foundation status."""
+    return workflows.get_overview()
+
+
+@app.get("/workflows/templates", dependencies=[Depends(require_auth)])
+async def workflow_templates():
+    """List starter workflow templates."""
+    return {"templates": workflows.list_templates()}
+
+
+@app.get("/workflows", dependencies=[Depends(require_auth)])
+async def list_workflows(include_disabled: bool = True):
+    """List saved workflows."""
+    items = workflows.list_workflows(include_disabled=include_disabled)
+    return {"workflows": items, "count": len(items)}
+
+
+@app.post("/workflows", dependencies=[Depends(require_auth)])
+async def create_workflow(request: WorkflowRequest):
+    """Create a workflow definition for the workflow builder."""
+    if not request.name.strip():
+        return JSONResponse(status_code=400, content={"error": "Workflow name is required."})
+    workflow = workflows.create_workflow(
+        name=request.name,
+        description=request.description,
+        trigger=request.trigger,
+        actions=request.actions,
+        enabled=request.enabled,
+        tags=request.tags,
+        owner_id=request.owner_id,
+        visibility=request.visibility,
+        permissions=request.permissions,
+    )
+    return workflow
+
+
+@app.post("/workflows/from-template", dependencies=[Depends(require_auth)])
+async def create_workflow_from_template(request: WorkflowTemplateRequest):
+    """Create a workflow from a starter template."""
+    workflow = workflows.create_workflow_from_template(request.template_id, owner_id=request.owner_id)
+    if workflow is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow template not found."})
+    return workflow
+
+
+@app.get("/workflows/runs", dependencies=[Depends(require_auth)])
+async def list_workflow_runs(workflow_id: str = "", limit: int = 50):
+    """List workflow execution history."""
+    runs = workflows.list_runs(workflow_id=workflow_id, limit=limit)
+    return {"runs": runs, "count": len(runs)}
+
+
+@app.get("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
+async def get_workflow(workflow_id: str):
+    """Get one workflow definition."""
+    workflow = workflows.get_workflow(workflow_id)
+    if workflow is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    return workflow
+
+
+@app.put("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
+async def update_workflow(workflow_id: str, request: WorkflowRequest):
+    """Update a workflow definition."""
+    workflow = workflows.update_workflow(
+        workflow_id,
+        {
+            "name": request.name,
+            "description": request.description,
+            "trigger": request.trigger,
+            "actions": request.actions,
+            "enabled": request.enabled,
+            "tags": request.tags,
+            "visibility": request.visibility,
+            "permissions": request.permissions,
+        },
+    )
+    if workflow is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    return workflow
+
+
+@app.delete("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
+async def delete_workflow(workflow_id: str):
+    """Delete a workflow definition."""
+    if not workflows.delete_workflow(workflow_id):
+        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    return {"status": "deleted"}
+
+
+@app.post("/workflows/{workflow_id}/run", dependencies=[Depends(require_auth)])
+async def run_workflow(workflow_id: str, request: WorkflowRunRequest):
+    """Run a workflow now, either inline or in a durable background job."""
+    workflow = workflows.get_workflow(workflow_id)
+    if workflow is None:
+        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
+    if request.background:
+        job = jobs.create_job(
+            "workflow",
+            {"workflow_id": workflow_id, "dry_run": request.dry_run},
+            trace_id=get_trace_id(),
+        )
+        asyncio.create_task(_run_workflow_job(job.id, workflow_id, request.dry_run))
+        return {"workflow": workflow, "job": _serialize_job(job)}
+    run = await workflows.run_workflow(
+        workflow_id,
+        runner=brain.process if not request.dry_run else None,
+        triggered_by="manual",
+        dry_run=request.dry_run,
+    )
+    return {"workflow": workflows.get_workflow(workflow_id), "run": run}
 
 
 @app.get("/feedback", dependencies=[Depends(require_auth)])
@@ -1320,6 +1534,98 @@ async def get_failure_patterns():
         "patterns": brain.learning.get_common_failure_patterns(limit=10),
         "plan_stats": brain.learning.get_plan_success_rate(),
     }
+
+
+@app.get("/team", dependencies=[Depends(require_auth)])
+async def get_team():
+    """Get local team mode, members, and role capability matrix."""
+    return team.get_team()
+
+
+@app.get("/team/members", dependencies=[Depends(require_auth)])
+async def list_team_members():
+    """List team members."""
+    members = team.list_members()
+    return {"members": members, "count": len(members)}
+
+
+@app.put("/team/members", dependencies=[Depends(require_auth)])
+async def upsert_team_member(request: TeamMemberRequest):
+    """Create or update a team member record."""
+    if not request.name.strip():
+        return JSONResponse(status_code=400, content={"error": "Member name is required."})
+    member = team.upsert_member(
+        name=request.name,
+        email=request.email,
+        role=request.role,
+        member_id=request.member_id,
+        status=request.status,
+    )
+    return member
+
+
+@app.delete("/team/members/{member_id}", dependencies=[Depends(require_auth)])
+async def delete_team_member(member_id: str):
+    """Delete a team member, except the local owner."""
+    if not team.delete_member(member_id):
+        return JSONResponse(status_code=404, content={"error": "Member not found or cannot be deleted."})
+    return {"status": "deleted"}
+
+
+@app.get("/team/permissions", dependencies=[Depends(require_auth)])
+async def team_permissions():
+    """Get role capability mappings."""
+    return {"roles": team.permission_matrix()}
+
+
+@app.get("/calendar/connections", dependencies=[Depends(require_auth)])
+async def get_calendar_connections():
+    """Get calendar provider connection metadata and scheduling policy."""
+    return calendar_accounts.get_state()
+
+
+@app.put("/calendar/connections", dependencies=[Depends(require_auth)])
+async def upsert_calendar_connection(request: CalendarConnectionRequest):
+    """Create or update calendar provider connection metadata."""
+    connection = calendar_accounts.upsert_connection(
+        provider=request.provider,
+        account_label=request.account_label,
+        enabled=request.enabled,
+        status=request.status,
+        scopes=request.scopes,
+    )
+    if connection is None:
+        return JSONResponse(status_code=400, content={"error": "Unsupported calendar provider."})
+    return connection
+
+
+@app.delete("/calendar/connections/{provider}", dependencies=[Depends(require_auth)])
+async def delete_calendar_connection(provider: str):
+    """Remove calendar provider connection metadata."""
+    if not calendar_accounts.remove_connection(provider):
+        return JSONResponse(status_code=404, content={"error": "Calendar connection not found."})
+    return {"status": "deleted"}
+
+
+@app.put("/calendar/policy", dependencies=[Depends(require_auth)])
+async def update_calendar_policy(request: CalendarPolicyRequest):
+    """Update safe scheduling policy."""
+    updates = request.model_dump(exclude_none=True)
+    return calendar_accounts.update_policy(updates)
+
+
+@app.post("/calendar/scheduling/assess", dependencies=[Depends(require_auth)])
+async def assess_calendar_scheduling(request: ScheduleAssessmentRequest):
+    """Assess whether a calendar event can be safely auto-scheduled."""
+    if not request.title.strip():
+        return JSONResponse(status_code=400, content={"error": "Event title is required."})
+    return calendar_accounts.assess_scheduling_request(
+        title=request.title,
+        start=request.start,
+        end=request.end,
+        attendees=request.attendees,
+        provider=request.provider,
+    )
 
 
 @app.get("/calendar", dependencies=[Depends(require_auth)])

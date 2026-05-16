@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ChatMessage, CostInsights, CostSummary, ServerStatus } from "@/lib/types";
+import { ChatMessage, CostInsights, CostSummary, ProductFoundationStatus, ServerStatus } from "@/lib/types";
 import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 import AgentBadge from "@/components/shared/AgentBadge";
 
@@ -24,6 +24,7 @@ export default function DashboardView({
 }: DashboardViewProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [costInsights, setCostInsights] = useState<CostInsights | null>(null);
+  const [productStatus, setProductStatus] = useState<ProductFoundationStatus | null>(null);
 
   const loadCostInsights = useCallback(async () => {
     try {
@@ -64,6 +65,47 @@ export default function DashboardView({
     }
   }, [authToken]);
 
+  const loadProductStatus = useCallback(async () => {
+    try {
+      const headers = jarvisHeaders(authToken);
+      const [workflowResponse, teamResponse, calendarResponse] = await Promise.all([
+        fetch(`${getApiBaseUrl()}/workflows/overview`, { headers }),
+        fetch(`${getApiBaseUrl()}/team`, { headers }),
+        fetch(`${getApiBaseUrl()}/calendar/connections`, { headers }),
+      ]);
+      if (!workflowResponse.ok || !teamResponse.ok || !calendarResponse.ok) return;
+      const [workflowData, teamData, calendarData] = await Promise.all([
+        workflowResponse.json(),
+        teamResponse.json(),
+        calendarResponse.json(),
+      ]);
+      const connections = Array.isArray(calendarData.connections) ? calendarData.connections : [];
+      const providers = calendarData.providers || {};
+      setProductStatus({
+        workflows: {
+          workflowCount: workflowData.workflow_count || 0,
+          enabledCount: workflowData.enabled_count || 0,
+          templateCount: workflowData.template_count || 0,
+          recentRunCount: Array.isArray(workflowData.recent_runs) ? workflowData.recent_runs.length : 0,
+        },
+        team: {
+          mode: teamData.mode || "single_user",
+          memberCount: Array.isArray(teamData.members) ? teamData.members.length : 0,
+        },
+        calendar: {
+          connectedCount: connections.filter((item: { enabled?: boolean; status?: string }) => (
+            item.enabled && item.status === "connected"
+          )).length,
+          providerCount: Object.keys(providers).length,
+          conflictStrategy: calendarData.policy?.conflict_strategy || "ask",
+          autoCreateEvents: Boolean(calendarData.policy?.auto_create_events),
+        },
+      });
+    } catch {
+      // Product foundation data is additive; dashboard core should keep working.
+    }
+  }, [authToken]);
+
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTo({
@@ -78,6 +120,12 @@ export default function DashboardView({
     const interval = setInterval(loadCostInsights, 15000);
     return () => clearInterval(interval);
   }, [loadCostInsights]);
+
+  useEffect(() => {
+    loadProductStatus();
+    const interval = setInterval(loadProductStatus, 30000);
+    return () => clearInterval(interval);
+  }, [loadProductStatus]);
 
   const visibleMessages = messages.filter(
     (msg) => msg.content || (msg.role === "assistant" && msg.isStreaming)
@@ -307,6 +355,47 @@ export default function DashboardView({
                 ))}
               </div>
             ) : null}
+          </div>
+
+          <div className="jarvis-card">
+            <div className="jarvis-card-header flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-jarvis-cyan/40">
+                <path d="M4 6h16" />
+                <path d="M4 12h10" />
+                <path d="M4 18h7" />
+                <path d="M17 15l3 3 3-5" />
+              </svg>
+              Product Bets
+            </div>
+            <div className="space-y-2.5">
+              <InfoRow
+                label="Workflows"
+                value={`${productStatus?.workflows.enabledCount || 0}/${productStatus?.workflows.workflowCount || 0}`}
+                highlight={(productStatus?.workflows.workflowCount || 0) > 0}
+              />
+              <InfoRow
+                label="Templates"
+                value={`${productStatus?.workflows.templateCount || 0}`}
+              />
+              <InfoRow
+                label="Team mode"
+                value={productStatus?.team.mode || "single_user"}
+                highlight={productStatus?.team.mode === "team"}
+              />
+              <InfoRow
+                label="Members"
+                value={`${productStatus?.team.memberCount || 1}`}
+              />
+              <InfoRow
+                label="Calendars"
+                value={`${productStatus?.calendar.connectedCount || 0}/${productStatus?.calendar.providerCount || 0}`}
+                highlight={(productStatus?.calendar.connectedCount || 0) > 0}
+              />
+              <InfoRow
+                label="Scheduling"
+                value={productStatus?.calendar.autoCreateEvents ? "auto" : productStatus?.calendar.conflictStrategy || "ask"}
+              />
+            </div>
           </div>
 
           {costSummary?.requestsByTier && Object.values(costSummary.requestsByTier).some(c => c > 0) && (
