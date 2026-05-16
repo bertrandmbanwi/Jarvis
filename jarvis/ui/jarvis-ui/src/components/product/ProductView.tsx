@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 
+interface WorkflowCondition {
+  type: string;
+  action_id?: string;
+  value?: string;
+}
+
 interface WorkflowAction {
   id?: string;
   type: string;
@@ -23,6 +29,10 @@ interface WorkflowAction {
   days?: number;
   count?: number;
   requires_approval?: boolean;
+  condition?: WorkflowCondition;
+  retry_count?: number;
+  retry_delay_ms?: number;
+  on_error?: string;
 }
 
 interface WorkflowTemplate {
@@ -133,13 +143,13 @@ const emptyCalendar: CalendarState = {
 
 const defaultBuilderAction = (type: string, id = `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`): WorkflowAction => {
   if (type === "calendar_brief") {
-    return { id, type, title: "Read calendar", days: 1, count: 10 };
+    return { id, type, title: "Read calendar", days: 1, count: 10, condition: { type: "always" }, retry_count: 0, retry_delay_ms: 0, on_error: "stop" };
   }
   if (type === "email_digest") {
-    return { id, type, title: "Check mail", mailbox: "INBOX", count: 5 };
+    return { id, type, title: "Check mail", mailbox: "INBOX", count: 5, condition: { type: "always" }, retry_count: 0, retry_delay_ms: 0, on_error: "stop" };
   }
   if (type === "notification") {
-    return { id, type, title: "Notify", message: "Workflow step completed." };
+    return { id, type, title: "Notify", message: "Workflow step completed.", condition: { type: "always" }, retry_count: 0, retry_delay_ms: 0, on_error: "stop" };
   }
   if (type === "create_calendar_event") {
     return {
@@ -152,12 +162,25 @@ const defaultBuilderAction = (type: string, id = `${type}-${Date.now()}-${Math.r
       timezone: "America/Chicago",
       attendees: "",
       requires_approval: true,
+      condition: { type: "always" },
+      retry_count: 0,
+      retry_delay_ms: 0,
+      on_error: "stop",
     };
   }
   if (type === "wait_for_approval") {
-    return { id, type, title: "Approval", requires_approval: true };
+    return { id, type, title: "Approval", requires_approval: true, condition: { type: "always" }, retry_count: 0, retry_delay_ms: 0, on_error: "stop" };
   }
-  return { id, type: "prompt", title: "Run prompt", prompt: "Summarize what needs attention and suggest next steps." };
+  return {
+    id,
+    type: "prompt",
+    title: "Run prompt",
+    prompt: "Summarize what needs attention and suggest next steps.",
+    condition: { type: "always" },
+    retry_count: 0,
+    retry_delay_ms: 0,
+    on_error: "stop",
+  };
 };
 
 export default function ProductView({ authToken }: ProductViewProps) {
@@ -253,6 +276,10 @@ export default function ProductView({ authToken }: ProductViewProps) {
       attendees: typeof action.attendees === "string"
         ? action.attendees.split(",").map((value) => value.trim()).filter(Boolean)
         : action.attendees,
+      condition: action.condition?.type && action.condition.type !== "always" ? action.condition : undefined,
+      retry_count: Math.max(0, Math.min(Number(action.retry_count || 0), 3)),
+      retry_delay_ms: Math.max(0, Math.min(Number(action.retry_delay_ms || 0), 30000)),
+      on_error: action.on_error || "stop",
       requires_approval: action.type === "create_calendar_event" || action.type === "wait_for_approval"
         ? action.requires_approval !== false
         : Boolean(action.requires_approval),
@@ -532,6 +559,12 @@ export default function ProductView({ authToken }: ProductViewProps) {
                         action={action}
                         index={index}
                         calendar={calendar}
+                        updateAction={updateBuilderAction}
+                      />
+                      <ActionPolicyFields
+                        action={action}
+                        index={index}
+                        actions={builderActions}
                         updateAction={updateBuilderAction}
                       />
                     </div>
@@ -909,6 +942,113 @@ function ActionFields({
   return (
     <div className="text-xs text-jarvis-text-dim/55">
       {action.requires_approval === false ? "Approval disabled" : "Approval required"}
+    </div>
+  );
+}
+
+function ActionPolicyFields({
+  action,
+  index,
+  actions,
+  updateAction,
+}: {
+  action: WorkflowAction;
+  index: number;
+  actions: WorkflowAction[];
+  updateAction: (index: number, updates: Partial<WorkflowAction>) => void;
+}) {
+  const condition = action.condition || { type: "always" };
+  const previousActions = actions.slice(0, index);
+  const setCondition = (updates: Partial<WorkflowCondition>) => {
+    updateAction(index, { condition: { ...condition, ...updates } });
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.8fr] gap-3 rounded-md border border-white/[0.04] bg-black/20 p-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Condition</span>
+          <select
+            className="jarvis-input mt-1"
+            value={condition.type}
+            onChange={(event) => setCondition({ type: event.target.value })}
+          >
+            <option value="always">Always</option>
+            <option value="previous_status">Previous status</option>
+            <option value="previous_response_contains">Response contains</option>
+            <option value="previous_response_not_contains">Response excludes</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Step</span>
+          <select
+            className="jarvis-input mt-1"
+            value={condition.action_id || ""}
+            disabled={condition.type === "always" || previousActions.length === 0}
+            onChange={(event) => setCondition({ action_id: event.target.value })}
+          >
+            <option value="">Previous</option>
+            {previousActions.map((item, actionIndex) => (
+              <option key={item.id || actionIndex} value={item.id || ""}>
+                {actionIndex + 1}. {item.title || item.type}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Value</span>
+          {condition.type === "previous_status" ? (
+            <select
+              className="jarvis-input mt-1"
+              value={condition.value || "completed"}
+              onChange={(event) => setCondition({ value: event.target.value })}
+            >
+              <option value="completed">Completed</option>
+              <option value="skipped">Skipped</option>
+              <option value="approval_required">Approval</option>
+              <option value="failed">Failed</option>
+            </select>
+          ) : (
+            <input
+              className="jarvis-input mt-1"
+              value={condition.value || ""}
+              disabled={condition.type === "always"}
+              onChange={(event) => setCondition({ value: event.target.value })}
+            />
+          )}
+        </label>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Retries</span>
+          <input
+            className="jarvis-input mt-1"
+            type="number"
+            min={0}
+            max={3}
+            value={action.retry_count || 0}
+            onChange={(event) => updateAction(index, { retry_count: Number.parseInt(event.target.value, 10) || 0 })}
+          />
+        </label>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Delay ms</span>
+          <input
+            className="jarvis-input mt-1"
+            type="number"
+            min={0}
+            max={30000}
+            value={action.retry_delay_ms || 0}
+            onChange={(event) => updateAction(index, { retry_delay_ms: Number.parseInt(event.target.value, 10) || 0 })}
+          />
+        </label>
+        <label className="block">
+          <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">On Error</span>
+          <select className="jarvis-input mt-1" value={action.on_error || "stop"} onChange={(event) => updateAction(index, { on_error: event.target.value })}>
+            <option value="stop">Stop</option>
+            <option value="continue">Continue</option>
+          </select>
+        </label>
+      </div>
     </div>
   );
 }
