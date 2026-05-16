@@ -31,6 +31,8 @@ UI_PORT="${UI_PORT:-3000}"
 NEXT_FALLBACK_PORT=$((UI_PORT + 1))
 JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-$(read_env_value JARVIS_OPEN_DASHBOARD)}"
 JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-true}"
+JARVIS_PIN_AUTH_ENABLED="${JARVIS_PIN_AUTH_ENABLED:-$(read_env_value JARVIS_PIN_AUTH_ENABLED)}"
+JARVIS_PIN_AUTH_ENABLED="${JARVIS_PIN_AUTH_ENABLED:-false}"
 
 # Track child PIDs for cleanup
 UI_PID=""
@@ -376,8 +378,12 @@ if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${MODE}" == "full" || "${MODE}" ==
             echo "  JARVIS Mobile Access (open on your phone):"
             echo "  ${TUNNEL_URL}"
             echo ""
-            echo "  You will be prompted for a PIN on first connect."
-            echo "  The PIN is shown above when JARVIS starts."
+            if [[ "${JARVIS_PIN_AUTH_ENABLED}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+                echo "  You will be prompted for a PIN on first connect."
+                echo "  The PIN is shown above when JARVIS starts."
+            else
+                echo "  PIN authentication is disabled; the dashboard opens directly."
+            fi
             echo "=================================================="
             echo ""
             break

@@ -241,7 +241,7 @@ jarvis/
 ## Security Considerations
 
 - The extension only connects to `localhost:8741` (JARVIS server). No external connections.
-- The WebSocket connection is authenticated using the same PIN system JARVIS already uses.
+- The WebSocket connection stays local by default; optional PIN authentication can be enabled for remote browser/mobile access.
 - Content scripts run in an isolated world; they cannot access the page's JavaScript variables
   unless explicitly using `chrome.scripting.executeScript` with `world: "MAIN"`.
 - The `execute_js` action should be used sparingly and logged for auditability.
@@ -273,7 +273,7 @@ functionality. Key differences in our approach:
 | Aspect | Claude in Chrome | JARVIS Extension |
 |--------|-----------------|------------------|
 | Connection | Cloud-based (Anthropic servers) | Local only (localhost:8741) |
-| Auth | Anthropic account | Local PIN |
+| Auth | Anthropic account | Optional local PIN |
 | DOM access | Yes, via content scripts | Yes, via content scripts |
 | Screenshot | `captureVisibleTab` | `captureVisibleTab` + fallback to Playwright |
 | Tool model | MCP tools (navigate, read_page, etc.) | JARVIS tool registry |

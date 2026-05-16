@@ -35,7 +35,7 @@ JARVIS routes each request to the right intelligence tier: a fast model for quic
 Speak naturally and JARVIS responds with a warm British accent. Powered by Moonshine ONNX (primary STT, low hallucination) with faster-whisper as fallback, and Kokoro TTS with chunked Opus streaming for sub-second latency. Wake word detection ("Hey JARVIS") runs continuously in the background via OpenWakeWord.
 
 **Cinematic Web UI**
-A GLSL shader-driven Three.js particle orb with 2,400 particles across three shells, simplex noise displacement, electric arcs, dust motes, and holographic rings. The orb pulses and reacts to JARVIS' state: idle, listening, thinking, speaking, error. Three views: Voice (the orb), Chat (message interface), and System (dashboard with live cost tracking). PIN-protected for mobile access.
+A GLSL shader-driven Three.js particle orb with 2,400 particles across three shells, simplex noise displacement, electric arcs, dust motes, and holographic rings. The orb pulses and reacts to JARVIS' state: idle, listening, thinking, speaking, error. Three views: Voice (the orb), Chat (message interface), and System (dashboard with live cost tracking). Optional PIN protection is available for mobile access.
 
 **Desktop Overlay (macOS)**
 A native Swift overlay that floats above all windows in the bottom-right corner. Shows JARVIS' current state (Standing By, Listening, Processing, Speaking) with a miniature Three.js particle orb and live conversation text. Connects via WebSocket, launches automatically with `./start.sh full`, and supports `Control+Option+J` global voice activation. Built with WKWebView for transparent rendering over your desktop.
@@ -74,7 +74,7 @@ Task-specific prompt templates (build, feature, fix, refactor, research) guide t
 Connect from your Mac, phone, and tablet simultaneously. Each device registers independently and audio is routed only to devices that want it. Interrupt JARVIS mid-sentence from any device.
 
 **Mobile Access**
-Built-in Cloudflare Tunnel support. Start JARVIS and get an HTTPS URL you can open on your phone. The UI is fully responsive, and the microphone works over HTTPS. No port forwarding or DNS configuration needed. PIN authentication protects remote access.
+Built-in Cloudflare Tunnel support. Start JARVIS and get an HTTPS URL you can open on your phone. The UI is fully responsive, and the microphone works over HTTPS. No port forwarding or DNS configuration needed. PIN authentication can be enabled for remote access by setting `JARVIS_PIN_AUTH_ENABLED=true`.
 
 <p align="center">
   <img src="docs/screenshots/system-dashboard.png" alt="JARVIS System Dashboard" width="700" />

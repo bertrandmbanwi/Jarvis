@@ -188,7 +188,7 @@ The console will print a URL like:
 https://random-words-here.trycloudflare.com
 ```
 
-Open that URL on your phone's browser. The JARVIS UI is fully responsive and the microphone works over HTTPS. You will be prompted for a PIN on first connect (displayed in the JARVIS console on your Mac).
+Open that URL on your phone's browser. The JARVIS UI is fully responsive and the microphone works over HTTPS. PIN authentication is disabled by default; set `JARVIS_PIN_AUTH_ENABLED=true` before launch if you want first-connect PIN protection for remote access.
 
 For a persistent URL (instead of random words each time), set up a Named Cloudflare Tunnel:
 ```bash
@@ -242,7 +242,7 @@ Jarvis/
       server.py               # FastAPI + WebSocket server (UI, overlay, extension)
       brain.py                # Conversation engine, tool dispatch
       llm.py                  # LLM API + Ollama backend abstraction
-      auth.py                 # PIN-based mobile authentication
+      auth.py                 # Optional PIN-based mobile authentication
       cache.py                # Response caching layer
       cost_tracker.py         # Per-request cost logging
       hardening.py            # Rate limiting, input validation, retry logic
@@ -302,7 +302,7 @@ Jarvis/
             cinematic/        # WebGL particle orb (Three.js GLSL shaders)
             chat/             # Chat message interface
             dashboard/        # System status dashboard
-            auth/             # PIN entry screen
+            auth/             # PIN entry screen when PIN auth is enabled
             settings/         # Settings panel (runtime config)
             shared/           # Reusable UI components (status bar, plan progress, etc.)
           hooks/
@@ -392,8 +392,8 @@ Key REST API endpoints:
 |----------|------|---------|
 | `GET /health/ping` | None | Lightweight liveness probe (used by Chrome extension keepalive) |
 | `GET /health` | Required | Full health report with backend, memory, cache stats |
-| `POST /auth/login` | None | PIN verification, returns session token |
-| `GET /auth/status` | None | Check if current request is authenticated |
+| `POST /auth/login` | None | PIN verification when PIN auth is enabled, returns session token |
+| `GET /auth/status` | None | Check whether PIN auth is required and current request is authenticated |
 | `GET /api/settings` | Required | Read runtime settings |
 | `PUT /api/settings` | Required | Update runtime settings |
 | `POST /voice/transcribe` | None | Upload audio for speech-to-text |
@@ -416,9 +416,15 @@ To run with coverage:
 python -m pytest tests/ -v --cov=jarvis --cov-report=term-missing
 ```
 
-## PIN Authentication
+## Optional PIN Authentication
 
-JARVIS uses PIN-based authentication for browser and mobile access. The PIN is displayed in the terminal on first launch and persists across restarts.
+JARVIS opens directly by default for browser, keyboard hotkey, and mobile dashboard workflows. To require PIN-based authentication for browser and mobile access, enable it before launch:
+
+```bash
+JARVIS_PIN_AUTH_ENABLED=true ./start.sh full
+```
+
+When enabled, the PIN is displayed in the terminal on first launch and persists across restarts.
 
 To regenerate the PIN:
 
@@ -426,7 +432,7 @@ To regenerate the PIN:
 JARVIS_REGEN_PIN=true ./start.sh full
 ```
 
-The new PIN will be printed to the console before the server starts. Local connections (from the same machine) bypass PIN authentication automatically.
+The new PIN will be printed to the console before the server starts. Local connections (from the same machine) bypass PIN authentication automatically when PIN auth is enabled.
 
 ## Settings Panel
 
