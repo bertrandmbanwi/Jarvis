@@ -1,14 +1,13 @@
 """Calendar connection metadata and scheduling policy scaffolding."""
 from __future__ import annotations
 
-import json
 import secrets
 import time
 from contextlib import suppress
 from typing import Any
 
 from jarvis.config import settings
-from jarvis.core import profile
+from jarvis.core import profile, sqlite_state
 
 CALENDAR_STATE_FILE = settings.DATA_DIR / "calendar_state.json"
 
@@ -58,21 +57,27 @@ def _default_state() -> dict[str, Any]:
     }
 
 
+def _state_db_path():
+    return sqlite_state.db_path_for(CALENDAR_STATE_FILE)
+
+
 def _load() -> dict[str, Any]:
-    if not CALENDAR_STATE_FILE.exists():
-        state = _default_state()
-        _save(state)
-        return state
-    try:
-        data = json.loads(CALENDAR_STATE_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else _default_state()
-    except (OSError, json.JSONDecodeError):
-        return _default_state()
+    default = _default_state()
+    data = sqlite_state.load_document(
+        db_path=_state_db_path(),
+        namespace="calendar_state",
+        legacy_path=CALENDAR_STATE_FILE,
+        default=default,
+    )
+    return data if isinstance(data, dict) else default
 
 
 def _save(state: dict[str, Any]) -> None:
-    CALENDAR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CALENDAR_STATE_FILE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    sqlite_state.save_document(
+        db_path=_state_db_path(),
+        namespace="calendar_state",
+        data=state,
+    )
 
 
 def _clean(value: Any, limit: int = 240) -> str:

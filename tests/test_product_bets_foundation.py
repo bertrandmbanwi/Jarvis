@@ -1,10 +1,11 @@
 """Tests for workflow, team, and calendar product-bet foundations."""
+import json
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from jarvis.core import calendar_accounts, calendar_oauth, team, workflow_scheduler, workflows
+from jarvis.core import calendar_accounts, calendar_oauth, sqlite_state, team, workflow_scheduler, workflows
 from jarvis.tools import calendar_email, mac_control
 
 
@@ -185,6 +186,89 @@ def test_team_roles_and_capabilities(product_bet_files):
     assert team.member_has_capability(member["id"], "workflow:run") is True
     assert team.member_has_capability(member["id"], "team:write") is False
     assert team.get_team()["mode"] == "team"
+
+
+def test_product_state_imports_legacy_json_to_sqlite(product_bet_files):
+    now = 1778940000.0
+    legacy_workflow = {
+        "id": "legacy-workflow",
+        "version": 1,
+        "name": "Legacy Workflow",
+        "description": "Imported from JSON",
+        "trigger": {"type": "manual"},
+        "actions": [{"id": "action-1", "type": "prompt", "title": "Ask", "prompt": "hello"}],
+        "enabled": True,
+        "tags": [],
+        "owner_id": "local-owner",
+        "visibility": "private",
+        "permissions": ["llm:chat"],
+        "created_at": now,
+        "updated_at": now,
+        "last_run_at": None,
+    }
+    workflows.WORKFLOWS_FILE.write_text(json.dumps([legacy_workflow]), encoding="utf-8")
+    team.TEAM_FILE.write_text(json.dumps({
+        "id": "legacy-team",
+        "name": "Imported Team",
+        "mode": "team",
+        "created_at": now,
+        "updated_at": now,
+        "members": [
+            {
+                "id": "local-owner",
+                "name": "Becs",
+                "email": "",
+                "role": "owner",
+                "status": "active",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "member-1",
+                "name": "Operator",
+                "email": "operator@example.com",
+                "role": "member",
+                "status": "active",
+                "created_at": now,
+                "updated_at": now,
+            },
+        ],
+    }), encoding="utf-8")
+    calendar_accounts.CALENDAR_STATE_FILE.write_text(json.dumps({
+        "connections": [
+            {
+                "provider": "google",
+                "name": "Google Calendar",
+                "account_label": "Work",
+                "enabled": True,
+                "status": "connected",
+                "scopes": ["calendar.events"],
+                "created_at": now,
+                "updated_at": now,
+            }
+        ],
+        "policy": {
+            "timezone": "America/Chicago",
+            "working_hours": {"start": "09:00", "end": "17:00"},
+            "default_duration_minutes": 30,
+            "conflict_strategy": "ask",
+            "auto_create_events": True,
+            "require_confirmation_for_guests": False,
+            "buffer_minutes": 10,
+        },
+        "created_at": now,
+        "updated_at": now,
+    }), encoding="utf-8")
+
+    assert workflows.list_workflows()[0]["id"] == "legacy-workflow"
+    assert team.get_team()["name"] == "Imported Team"
+    assert calendar_accounts.list_connections()[0]["provider"] == "google"
+
+    status = sqlite_state.migration_status(sqlite_state.db_path_for(workflows.WORKFLOWS_FILE))
+
+    assert status["workflows"]["migrated_from"] == str(workflows.WORKFLOWS_FILE)
+    assert status["team"]["migrated_from"] == str(team.TEAM_FILE)
+    assert status["calendar_state"]["migrated_from"] == str(calendar_accounts.CALENDAR_STATE_FILE)
 
 
 def test_calendar_policy_blocks_auto_schedule_until_connected(product_bet_files):
