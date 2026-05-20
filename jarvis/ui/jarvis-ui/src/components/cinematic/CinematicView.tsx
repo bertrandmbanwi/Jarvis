@@ -27,24 +27,48 @@ interface CinematicViewProps {
   authToken?: string | null;
 }
 
-const BOOT_DURATION_MS = 4500;
-const CROSSFADE_MS = 1500;
-const TRANSCRIPT_DISPLAY_MS = 8000;
+const BOOT_DURATION_MS = 900;
+const CROSSFADE_MS = 600;
+const TRANSCRIPT_DISPLAY_MS = 11000;
 
 const stateLabels: Record<OrbState, string> = {
-  idle: "Standing By",
+  offline: "Offline",
+  idle: "Waking up",
+  ready: "Ready",
   listening: "Listening",
   thinking: "Processing",
   speaking: "Speaking",
-  error: "Connection Error",
+  error: "Connection error",
+};
+
+const stateDescriptions: Record<OrbState, string> = {
+  offline: "Local control link is unavailable.",
+  idle: "Local interface is preparing the control link.",
+  ready: "Ready when you are.",
+  listening: "Listening.",
+  thinking: "Working through the request.",
+  speaking: "Responding.",
+  error: "Something needs attention before Jarvis can respond.",
 };
 
 const stateColors: Record<OrbState, string> = {
-  idle: "text-jarvis-cyan/40",
-  listening: "text-jarvis-cyan/70",
-  thinking: "text-jarvis-gold/60",
-  speaking: "text-jarvis-gold/70",
-  error: "text-jarvis-error/60",
+  offline: "text-jarvis-text-dim/70",
+  idle: "text-jarvis-cyan/58",
+  ready: "text-jarvis-cyan/75",
+  listening: "text-jarvis-cyan",
+  thinking: "text-jarvis-gold",
+  speaking: "text-jarvis-gold",
+  error: "text-jarvis-error",
+};
+
+const stateDotStyles: Record<OrbState, string> = {
+  offline: "bg-jarvis-text-muted/55 shadow-[0_0_10px_rgba(108,131,148,0.18)]",
+  idle: "bg-jarvis-cyan/35 shadow-[0_0_10px_rgba(0,212,255,0.14)] animate-pulse",
+  ready: "bg-jarvis-cyan/55 shadow-[0_0_12px_rgba(0,212,255,0.24)]",
+  listening: "bg-jarvis-cyan shadow-[0_0_18px_rgba(0,212,255,0.55)] animate-pulse",
+  thinking: "bg-jarvis-gold shadow-[0_0_18px_rgba(255,225,140,0.42)] animate-pulse",
+  speaking: "bg-jarvis-gold shadow-[0_0_18px_rgba(255,225,140,0.46)]",
+  error: "bg-jarvis-error shadow-[0_0_18px_rgba(255,68,68,0.42)] animate-pulse",
 };
 
 export default function CinematicView({
@@ -120,22 +144,33 @@ export default function CinematicView({
   const latestAssistant = [...messages]
     .reverse()
     .find((m) => m.role === "assistant" && m.content);
+  const latestUser = [...messages]
+    .reverse()
+    .find((m) => m.role === "user" && m.content);
+  const recentMessages = useMemo(
+    () => messages
+      .filter((message) => Boolean(message.content))
+      .slice(-4),
+    [messages]
+  );
 
   useEffect(() => {
-    if (!latestAssistant) return;
+    if (!latestAssistant && !latestUser) return;
 
     // Reset opacity when new message arrives
     setTranscriptOpacity(1);
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
 
-    fadeTimerRef.current = setTimeout(() => {
-      setTranscriptOpacity(0);
-    }, TRANSCRIPT_DISPLAY_MS);
+    if (latestAssistant) {
+      fadeTimerRef.current = setTimeout(() => {
+        setTranscriptOpacity(0);
+      }, TRANSCRIPT_DISPLAY_MS);
+    }
 
     return () => {
       if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
     };
-  }, [latestAssistant]);
+  }, [latestAssistant, latestUser]);
 
   const toggleTranscript = useCallback(() => {
     setShowTranscript((prev) => !prev);
@@ -156,14 +191,43 @@ export default function CinematicView({
         (bootElapsed - (BOOT_DURATION_MS - CROSSFADE_MS)) / CROSSFADE_MS
       );
 
+  const hasConversation = Boolean(latestAssistant?.content || latestUser?.content);
+  const isQuietStandby = orbState === "ready" || orbState === "idle";
+  const showVoiceStateCard =
+    orbState === "listening" ||
+    orbState === "thinking" ||
+    orbState === "offline" ||
+    orbState === "error" ||
+    isRecording ||
+    isTranscribing;
+  const showCommandStream =
+    orbState === "thinking" ||
+    (!isQuietStandby && recentMessages.length > 0);
+  const showTranscriptButton = hasConversation;
+  const showLiveCaption =
+    isQuietStandby ||
+    (showTranscript &&
+      (hasConversation ||
+        orbState === "speaking" ||
+        orbState === "thinking" ||
+        orbState === "listening" ||
+        orbState === "offline" ||
+        orbState === "error"));
+  const captionSource = latestAssistant?.content || latestUser?.content || stateDescriptions[orbState];
+  const captionText = captionSource.length > 260
+    ? `${captionSource.slice(0, 260)}...`
+    : captionSource;
+  const captionLabel = latestAssistant?.content
+    ? "Jarvis"
+    : latestUser?.content
+      ? "You"
+      : stateLabels[orbState];
+  const signalLevel = Math.min(100, Math.round(Math.max(0, currentAmplitude) * 100));
+  const micStatus = isRecording ? "Open" : isTranscribing ? "Transcribing" : micSupported ? "Ready" : "Unavailable";
+  const captionOpacity = latestAssistant ? transcriptOpacity : 1;
+
   return (
-    <div
-      className="flex-1 relative overflow-hidden bg-black"
-      style={{
-        background:
-          "radial-gradient(circle at 50% 52%, rgba(0, 58, 78, 0.26) 0%, rgba(0, 18, 36, 0.18) 32%, rgba(0, 0, 0, 1) 72%)",
-      }}
-    >
+    <div className="flex-1 relative overflow-hidden ambient-stage">
       {showBoot && (
         <div className="absolute inset-0" style={{ zIndex: 2 }}>
           <BootScreen progress={bootProgress} />
@@ -179,68 +243,92 @@ export default function CinematicView({
         </div>
       )}
 
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          zIndex: 10,
-          opacity: 0.02,
-          backgroundImage:
-            "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,190,255,0.08) 2px, rgba(0,190,255,0.08) 3px)",
-          backgroundSize: "100% 4px",
-        }}
-      />
+      {!showBoot && (showVoiceStateCard || showCommandStream) && (
+        <>
+          {showVoiceStateCard && (
+            <section
+              className="voice-state-card absolute top-5 left-5 w-[min(22rem,calc(100vw-2.5rem))] p-4 hidden sm:block"
+              style={{ zIndex: 20 }}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${stateDotStyles[orbState]}`} />
+                    <span className={`text-xs font-semibold ${stateColors[orbState]}`}>
+                      {stateLabels[orbState]}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-jarvis-text-dim/80">
+                    {stateDescriptions[orbState]}
+                  </p>
+                </div>
+                {isProcessing && (
+                  <div className="typing-dots flex items-center pt-1">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                )}
+              </div>
 
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          zIndex: 10,
-          background:
-            "radial-gradient(ellipse at center, transparent 42%, rgba(0,0,0,0.42) 100%)",
-        }}
-      />
-
-      <div
-        className="absolute inset-x-0 top-0 h-24 pointer-events-none"
-        style={{
-          zIndex: 10,
-          background: "linear-gradient(to bottom, rgba(0,0,0,0.42) 0%, transparent 100%)",
-        }}
-      />
-
-      {!showBoot && (
-        <div
-          className="absolute top-4 right-5 flex items-center gap-2.5"
-          style={{ zIndex: 20 }}
-        >
-          <div className={`w-1.5 h-1.5 rounded-full ${
-            orbState === 'idle' ? 'bg-jarvis-cyan/30' :
-            orbState === 'listening' ? 'bg-jarvis-cyan/60 animate-pulse' :
-            orbState === 'thinking' ? 'bg-jarvis-gold/50 animate-pulse' :
-            orbState === 'speaking' ? 'bg-jarvis-gold/60' :
-            'bg-jarvis-error/50'
-          }`} />
-          <span className={`text-3xs font-mono uppercase tracking-[0.2em] ${stateColors[orbState]} transition-colors duration-500`}>
-            {stateLabels[orbState]}
-          </span>
-          {isProcessing && (
-            <div className="typing-dots flex items-center scale-75">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <SignalTile label="Mic" value={micStatus} active={isRecording || isTranscribing} />
+                <SignalTile label="Signal" value={`${signalLevel}%`} active={signalLevel > 3} />
+                <SignalTile label="Link" value={disabled ? "Lost" : "Live"} active={!disabled} />
+              </div>
+            </section>
           )}
-        </div>
+
+          {showCommandStream && (
+            <section
+              className="signal-rail absolute top-5 right-5 w-64 p-4 hidden lg:block"
+              style={{ zIndex: 20 }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-jarvis-text-dim/80">
+                  Command stream
+                </span>
+                <span className="text-[10px] font-mono text-jarvis-cyan/80">
+                  {recentMessages.length}
+                </span>
+              </div>
+              <div className="mt-4 space-y-3">
+                {recentMessages.length ? (
+                  recentMessages.map((message) => (
+                    <div key={message.id} className="flex gap-2.5">
+                      <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        message.role === "assistant" ? "bg-jarvis-gold/70" : "bg-jarvis-cyan/70"
+                      }`} />
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-medium text-jarvis-text/75">
+                          {message.role === "assistant" ? "Jarvis" : "You"}
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-jarvis-text-dim/68 line-clamp-2">
+                          {message.content}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs leading-relaxed text-jarvis-text-dim/70">
+                    {stateDescriptions[orbState]}
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+        </>
       )}
 
-      {!showBoot && (
+      {!showBoot && showTranscriptButton && (
         <button
           onClick={toggleTranscript}
           className={`
-            absolute bottom-6 right-5 w-8 h-8 rounded-lg flex items-center justify-center
+            absolute bottom-5 right-5 w-9 h-9 rounded-xl flex items-center justify-center
             transition-all duration-300 border
             ${showTranscript
-              ? "bg-jarvis-cyan/6 border-jarvis-cyan/12 text-jarvis-cyan/50"
-              : "bg-white/[0.02] border-white/[0.04] text-jarvis-text-dim/20 hover:text-jarvis-text-dim/40"
+              ? "bg-jarvis-cyan/10 border-jarvis-cyan/20 text-jarvis-cyan/80"
+              : "bg-white/[0.04] border-white/[0.08] text-jarvis-text-dim/50 hover:text-jarvis-text"
             }
           `}
           style={{ zIndex: 20 }}
@@ -268,46 +356,32 @@ export default function CinematicView({
         </button>
       )}
 
-      {!showBoot && showTranscript && latestAssistant && (
+      {!showBoot && showLiveCaption && (
         <div
-          className="absolute bottom-20 sm:bottom-8 left-1/2 -translate-x-1/2 max-w-[75%] sm:max-w-[65%] pointer-events-none"
+          className="absolute bottom-24 sm:bottom-7 left-1/2 -translate-x-1/2 w-[min(46rem,calc(100vw-2rem))] pointer-events-none"
           style={{
             zIndex: 20,
-            opacity: transcriptOpacity,
+            opacity: captionOpacity,
             transition: "opacity 1.5s ease-out",
           }}
         >
-          <div className="jarvis-glass-subtle text-center px-5 py-3 rounded-2xl">
-            <div className="text-xs leading-relaxed text-jarvis-text/50">
-              {latestAssistant.content.length > 200
-                ? latestAssistant.content.slice(0, 200) + "..."
-                : latestAssistant.content}
+          <div className="live-caption px-5 py-4">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <span className={`w-1.5 h-1.5 rounded-full ${stateDotStyles[orbState]}`} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-jarvis-text-dim/75">
+                {captionLabel}
+              </span>
             </div>
-          </div>
-        </div>
-      )}
-
-      {!showBoot && orbState === "speaking" && !isRecording && (
-        <div
-          className="absolute bottom-32 sm:bottom-28 left-1/2 -translate-x-1/2"
-          style={{
-            zIndex: 19,
-            opacity: showTranscript && latestAssistant ? 0 : 0.5,
-            transition: "opacity 0.8s ease",
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-jarvis-gold/50 animate-pulse" />
-            <span className="text-3xs font-mono text-jarvis-gold/40 uppercase tracking-[0.15em]">
-              Speaking
-            </span>
+            <p className="text-sm sm:text-[15px] leading-relaxed text-center text-jarvis-text/86">
+              {captionText}
+            </p>
           </div>
         </div>
       )}
 
       {!showBoot && micSupported && (
         <div
-          className="absolute bottom-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2.5"
+          className="absolute bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2.5"
           style={{ zIndex: 25 }}
         >
           {micError && (
@@ -324,7 +398,7 @@ export default function CinematicView({
           )}
 
           {(isRecording || isTranscribing) && (
-            <span className="text-3xs font-mono uppercase tracking-[0.15em] text-jarvis-cyan/50 animate-fade-in">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-jarvis-cyan/80 animate-fade-in">
               {isRecording ? "Listening..." : "Transcribing..."}
             </span>
           )}
@@ -334,14 +408,14 @@ export default function CinematicView({
             disabled={disabled || isProcessing || isTranscribing}
             className={`
               relative w-14 h-14 rounded-2xl flex items-center justify-center
-              transition-all duration-300 border-2 backdrop-blur-md
+              transition-all duration-300 border backdrop-blur-md
               ${isRecording
-                ? "bg-red-500/12 border-red-400/40 text-red-400 shadow-[0_0_24px_rgba(239,68,68,0.2)] mic-ring-pulse"
+                ? "bg-red-500/14 border-red-300/45 text-red-300 shadow-[0_0_26px_rgba(239,68,68,0.22)] mic-ring-pulse"
                 : isTranscribing
-                  ? "bg-jarvis-cyan/8 border-jarvis-cyan/20 text-jarvis-cyan/50"
-                  : "bg-white/[0.03] border-white/[0.08] text-jarvis-text-dim/40 hover:text-jarvis-cyan hover:border-jarvis-cyan/30 hover:bg-jarvis-cyan/5 hover:shadow-[0_0_20px_rgba(0,190,255,0.12)]"
+                  ? "bg-jarvis-cyan/12 border-jarvis-cyan/25 text-jarvis-cyan/75"
+                  : "bg-white/[0.07] border-white/[0.12] text-jarvis-text-dim/75 hover:text-jarvis-cyan hover:border-jarvis-cyan/35 hover:bg-jarvis-cyan/8 hover:shadow-[0_0_24px_rgba(0,190,255,0.16)]"
               }
-              disabled:opacity-15 disabled:cursor-not-allowed
+              disabled:opacity-25 disabled:cursor-not-allowed
               active:scale-95
             `}
             title={
@@ -379,6 +453,27 @@ export default function CinematicView({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function SignalTile({
+  label,
+  value,
+  active,
+}: {
+  label: string;
+  value: string;
+  active: boolean;
+}) {
+  return (
+    <div className="metric-tile px-3 py-2">
+      <div className="text-[10px] text-jarvis-text-dim/65 font-medium">
+        {label}
+      </div>
+      <div className={`mt-0.5 text-xs font-semibold ${active ? "text-jarvis-cyan" : "text-jarvis-text-dim/70"}`}>
+        {value}
+      </div>
     </div>
   );
 }

@@ -23,8 +23,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
 APP_NAME="JarvisOverlay"
 APP_BUNDLE="${BUILD_DIR}/${APP_NAME}.app"
+CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${APP_BUNDLE}/Contents/MacOS"
-RESOURCES_DIR="${APP_BUNDLE}/Contents"
+RESOURCES_DIR="${APP_BUNDLE}/Contents/Resources"
 
 # Clean previous build
 if [ -d "$BUILD_DIR" ]; then
@@ -34,7 +35,7 @@ fi
 
 # Create app bundle structure
 echo -e "${YELLOW}Creating app bundle structure...${NC}"
-mkdir -p "$MACOS_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/vendor"
 
 # Compile Swift file
 echo -e "${YELLOW}Compiling Swift code...${NC}"
@@ -51,7 +52,7 @@ echo -e "${GREEN}Compilation successful${NC}"
 
 # Create Info.plist
 echo -e "${YELLOW}Creating Info.plist...${NC}"
-cat > "${RESOURCES_DIR}/Info.plist" << 'EOF'
+cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -88,6 +89,14 @@ cat > "${RESOURCES_DIR}/Info.plist" << 'EOF'
 EOF
 
 echo -e "${GREEN}Info.plist created${NC}"
+
+if [ ! -f "${SCRIPT_DIR}/vendor/three.module.min.js" ]; then
+    echo -e "${RED}Missing bundled Three.js runtime at desktop-overlay/vendor/three.module.min.js${NC}"
+    exit 1
+fi
+
+echo -e "${YELLOW}Copying bundled web assets...${NC}"
+cp "${SCRIPT_DIR}/vendor/three.module.min.js" "${RESOURCES_DIR}/vendor/three.module.min.js"
 
 # Make executable
 chmod +x "${MACOS_DIR}/${APP_NAME}"

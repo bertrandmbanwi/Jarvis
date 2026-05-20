@@ -464,6 +464,17 @@ const defaultBuilderAssertion = (
   return { id, type: "run_status_equals", title: "Run completed", expected_status: "completed", enabled: true };
 };
 
+const builderActionOptions = [
+  { type: "prompt", label: "Prompt" },
+  { type: "calendar_brief", label: "Calendar Brief" },
+  { type: "email_digest", label: "Email Digest" },
+  { type: "create_calendar_event", label: "Calendar Event" },
+  { type: "notification", label: "Notify" },
+  { type: "wait_for_approval", label: "Approval Gate" },
+];
+
+type WorkbenchTab = "build" | "runs" | "approvals" | "settings";
+
 export default function ProductView({ authToken }: ProductViewProps) {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -499,6 +510,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
   const [calendarClientIds, setCalendarClientIds] = useState<Record<string, string>>({});
   const [calendarClientSecrets, setCalendarClientSecrets] = useState<Record<string, string>>({});
   const [calendarPreviews, setCalendarPreviews] = useState<Record<string, CalendarPreviewEvent[]>>({});
+  const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<WorkbenchTab>("build");
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const isJsonBody = typeof init?.body === "string";
@@ -1069,37 +1081,69 @@ export default function ProductView({ authToken }: ProductViewProps) {
     setMessage(data.message || "JARVIS quit scheduled.");
   }
 
+  const connectedCalendars = calendar.connections.filter((item) => (
+    item.enabled && item.status === "connected"
+  )).length;
+  const workbenchTabs: Array<{ id: WorkbenchTab; label: string; meta: string }> = [
+    { id: "build", label: "Build", meta: `${workflows.length} saved` },
+    { id: "runs", label: "Runs", meta: `${runs.length} recent` },
+    { id: "approvals", label: "Approvals", meta: `${approvals.length} pending` },
+    { id: "settings", label: "Settings", meta: `${connectedCalendars}/${Object.keys(calendar.providers).length} calendars` },
+  ];
+
   return (
-    <div className="flex-1 overflow-y-auto jarvis-scrollbar bg-black">
-      <div className="px-4 sm:px-6 py-5 space-y-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between border-b border-white/[0.04] pb-4">
+    <div className="flex-1 overflow-y-auto jarvis-scrollbar dashboard-shell">
+      <div className="px-5 sm:px-7 lg:px-8 py-6 space-y-5">
+        <div className="dashboard-hero p-4 sm:p-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-sm sm:text-base font-semibold tracking-[0.18em] uppercase text-jarvis-text/75">
-              Workflows
+            <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-jarvis-text-dim/80 mb-2">
+              Automations
+            </div>
+            <h1 className="text-xl sm:text-2xl font-semibold text-jarvis-text">
+              Workflow command deck
             </h1>
+            <p className="text-sm text-jarvis-text-dim/78 mt-1">
+              Templates, releases, dry runs, approvals, and scheduling controls.
+            </p>
           </div>
-          <div className="flex items-center gap-2 text-2xs font-mono text-jarvis-text-dim/55">
+          <div className="metric-tile px-3 py-2 flex items-center gap-2 text-2xs font-mono text-jarvis-text-dim/80">
             <span className={`status-dot ${scheduler?.enabled ? "connected" : "disconnected"}`} />
             Scheduler {scheduler?.enabled ? "enabled" : "manual"}
-            <span className="text-jarvis-cyan/50">{scheduler?.due_count || 0} due</span>
+            <span className="text-jarvis-cyan/85">{scheduler?.due_count || 0} due</span>
           </div>
         </div>
 
         {message && (
-          <div className="rounded-md border border-jarvis-cyan/10 bg-jarvis-cyan/5 px-3 py-2 text-xs text-jarvis-text/70">
+          <div className="rounded-md border border-jarvis-cyan/18 bg-jarvis-cyan/8 px-3 py-2 text-xs text-jarvis-text/82">
             {message}
           </div>
         )}
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1.45fr_0.9fr] gap-5">
-          <div className="space-y-5">
+        <div className="jarvis-workbench-tabs" role="tablist" aria-label="Automation workbench">
+          {workbenchTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeWorkbenchTab === tab.id}
+              className={`jarvis-workbench-tab ${activeWorkbenchTab === tab.id ? "jarvis-workbench-tab-active" : ""}`}
+              onClick={() => setActiveWorkbenchTab(tab.id)}
+            >
+              <span>{tab.label}</span>
+              <span>{tab.meta}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="space-y-5">
+          <div className={activeWorkbenchTab === "build" ? "space-y-5 min-w-0" : "hidden"}>
             <section className="jarvis-card">
               <div className="jarvis-card-header">Starter Templates</div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {templates.map((template) => (
-                  <div key={template.id} className="rounded-md border border-white/[0.05] bg-white/[0.02] p-3 min-h-36 flex flex-col">
-                    <div className="text-sm text-jarvis-text/75 font-medium">{template.name}</div>
-                    <p className="text-xs text-jarvis-text-dim/55 leading-relaxed mt-2 flex-1">
+                  <div key={template.id} className="metric-tile p-3 min-h-36 flex flex-col">
+                    <div className="text-sm text-jarvis-text/88 font-semibold">{template.name}</div>
+                    <p className="text-xs text-jarvis-text-dim/78 leading-relaxed mt-2 flex-1">
                       {template.description}
                     </p>
                     <div className="grid grid-cols-2 gap-2 mt-3">
@@ -1175,7 +1219,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
                   )}
                 </div>
               )}
-              <div className="grid grid-cols-1 lg:grid-cols-[0.7fr_1fr] gap-3">
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(260px,0.55fr)_minmax(0,1fr)] gap-4">
                 <div className="space-y-3">
                   <label className="block">
                     <span className="text-2xs text-jarvis-text-dim/50 uppercase tracking-wider">Name</span>
@@ -1235,14 +1279,14 @@ export default function ProductView({ authToken }: ProductViewProps) {
                       />
                     </label>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {["prompt", "calendar_brief", "email_digest", "create_calendar_event", "notification", "wait_for_approval"].map((type) => (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {builderActionOptions.map((option) => (
                       <button
-                        key={type}
-                        className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-2 py-2 rounded-md"
-                        onClick={() => addBuilderAction(type)}
+                        key={option.type}
+                        className="jarvis-btn-ghost min-h-10 text-2xs uppercase tracking-wider leading-tight px-3 py-2 rounded-md"
+                        onClick={() => addBuilderAction(option.type)}
                       >
-                        + {type.replaceAll("_", " ")}
+                        + {option.label}
                       </button>
                     ))}
                   </div>
@@ -1479,7 +1523,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 </div>
               </section>
             )}
+          </div>
 
+          <div className={activeWorkbenchTab === "runs" ? "space-y-5 min-w-0" : "hidden"}>
             <section className="jarvis-card">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
                 <div className="jarvis-card-header mb-0">Run Analytics</div>
@@ -1630,7 +1676,7 @@ export default function ProductView({ authToken }: ProductViewProps) {
             )}
           </div>
 
-          <div className="space-y-5">
+          <div className={activeWorkbenchTab === "settings" ? "grid grid-cols-1 xl:grid-cols-2 gap-5 min-w-0" : "hidden"}>
             <section className="jarvis-card">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="jarvis-card-header mb-0">App Lifecycle</div>
@@ -1709,7 +1755,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 </button>
               </div>
             </section>
+          </div>
 
+          <div className={activeWorkbenchTab === "approvals" ? "space-y-5 min-w-0" : "hidden"}>
             <section className="jarvis-card">
               <div className="jarvis-card-header">Approval Queue</div>
               <div className="space-y-3">
@@ -1745,7 +1793,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 ))}
               </div>
             </section>
+          </div>
 
+          <div className={activeWorkbenchTab === "settings" ? "grid grid-cols-1 xl:grid-cols-2 gap-5 min-w-0" : "hidden"}>
             <section className="jarvis-card">
               <div className="jarvis-card-header">Calendar Providers</div>
               <div className="space-y-3">

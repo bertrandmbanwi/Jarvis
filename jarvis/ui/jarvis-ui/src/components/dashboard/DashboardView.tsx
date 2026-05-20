@@ -12,6 +12,7 @@ interface DashboardViewProps {
   isProcessing: boolean;
   onClearConversation: () => void;
   authToken?: string | null;
+  userName?: string;
 }
 
 export default function DashboardView({
@@ -21,6 +22,7 @@ export default function DashboardView({
   isProcessing,
   onClearConversation,
   authToken,
+  userName = "You",
 }: DashboardViewProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [costInsights, setCostInsights] = useState<CostInsights | null>(null);
@@ -135,97 +137,126 @@ export default function DashboardView({
     ?? 0;
 
   return (
-    <div className="flex-1 flex flex-col sm:flex-row overflow-hidden">
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex items-center justify-between px-5 py-2.5 border-b border-white/[0.04] bg-jarvis-surface/60 backdrop-blur-lg">
-          <div className="flex items-center gap-2">
-            <h2 className="text-2xs font-medium text-jarvis-text-dim/55 uppercase tracking-[0.12em]">
-              Activity Log
-            </h2>
-            {visibleMessages.length > 0 && (
-              <span className="text-3xs text-jarvis-text-dim/25 font-mono tabular-nums">
-                {visibleMessages.length}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={onClearConversation}
-            className="jarvis-btn-ghost text-3xs uppercase tracking-wider px-2 py-1 rounded-md"
-            aria-label="Clear activity log"
-          >
-            Clear
-          </button>
-        </div>
-
-        <div
-          ref={chatScrollRef}
-          className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-1 jarvis-scrollbar"
-        >
-          {visibleMessages.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center h-full">
-              <p className="text-sm text-jarvis-text-dim/30 font-light">
-                No activity yet. Use Voice or Chat to interact with JARVIS.
-              </p>
-            </div>
-          ) : (
-            visibleMessages.map((msg) => {
-              const isUser = msg.role === "user";
-              return (
-                <div key={msg.id} className="animate-fade-in py-2">
-                  <div className="flex items-start gap-3">
-                    <div className={`
-                        w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0
-                        text-3xs font-semibold mt-0.5
-                        ${isUser
-                          ? "bg-jarvis-cyan/8 text-jarvis-cyan/50 border border-jarvis-cyan/10"
-                          : "bg-white/[0.03] text-jarvis-text-dim/40 border border-white/[0.05]"
-                        }
-                      `}>
-                      {isUser ? "B" : "J"}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-2xs font-medium text-jarvis-text-dim/50">
-                          {isUser ? "Becs" : "JARVIS"}
-                        </span>
-                        {!isUser && (msg.agentType || msg.tierUsed) && (
-                          <AgentBadge agentType={msg.agentType} tierUsed={msg.tierUsed} />
-                        )}
-                        <span className="text-3xs text-jarvis-text-dim/20 font-mono tabular-nums">
-                          {new Date(msg.timestamp).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                      <div className="text-[13px] text-jarvis-text/70 leading-relaxed whitespace-pre-wrap">
-                        {msg.content || (
-                          <span className="text-jarvis-text-dim/40 italic text-xs">
-                            Processing...
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+    <div className="flex-1 dashboard-shell overflow-hidden p-4 sm:p-5">
+      <div className="h-full min-h-0 flex flex-col lg:flex-row gap-4">
+        <div className="flex-1 flex flex-col min-h-0 gap-4">
+          <section className="dashboard-hero p-4 sm:p-5 flex-shrink-0">
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`status-dot ${serverStatus?.status === "ok" ? "connected" : isProcessing ? "connecting" : "connected"}`} />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-jarvis-text-dim/80">
+                    Command center
+                  </span>
                 </div>
-              );
-            })
-          )}
-
-          {isProcessing && (
-            <div className="flex items-center gap-2.5 text-jarvis-text-dim/50 text-xs pl-9 py-2 animate-fade-in">
-              <div className="typing-dots flex items-center">
-                <span></span>
-                <span></span>
-                <span></span>
+                <h2 className="text-xl sm:text-2xl font-semibold text-jarvis-text">
+                  Systems overview
+                </h2>
+                <p className="text-sm text-jarvis-text-dim/78 mt-1">
+                  Live activity, model routing, memory, product workflows, and cost posture.
+                </p>
               </div>
-              <span className="text-2xs font-mono">Processing...</span>
-            </div>
-          )}
-        </div>
-      </div>
 
-      <div className="hidden sm:flex w-72 flex-col border-l border-white/[0.04] bg-jarvis-surface/40 backdrop-blur-lg overflow-y-auto jarvis-scrollbar">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 min-w-0 sm:min-w-[28rem]">
+                <MetricTile label="Backend" value={serverStatus?.activeBackend || "..."} />
+                <MetricTile label="Memory" value={`${memoryCount}`} />
+                <MetricTile label="Turns" value={`${serverStatus?.conversationTurns || 0}`} />
+                <MetricTile label="Cost" value={`$${(costSummary?.sessionCostUsd || 0).toFixed(3)}`} accent />
+              </div>
+            </div>
+          </section>
+
+          <section className="activity-feed flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.07] bg-black/18 backdrop-blur-lg">
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-semibold text-jarvis-text/82">
+                  Activity log
+                </h3>
+                {visibleMessages.length > 0 && (
+                  <span className="text-2xs text-jarvis-text-dim/65 font-mono tabular-nums">
+                    {visibleMessages.length}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={onClearConversation}
+                className="jarvis-btn-ghost text-2xs px-3 py-1.5 rounded-md"
+                aria-label="Clear activity log"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div
+              ref={chatScrollRef}
+              className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-1 jarvis-scrollbar"
+            >
+              {visibleMessages.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center h-full">
+                  <p className="text-sm text-jarvis-text-dim/72 font-medium">
+                    No activity yet.
+                  </p>
+                </div>
+              ) : (
+                visibleMessages.map((msg) => {
+                  const isUser = msg.role === "user";
+                  return (
+                    <div key={msg.id} className="animate-fade-in py-2">
+                      <div className="flex items-start gap-3">
+                        <div className={`
+                            w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0
+                            text-[10px] font-semibold mt-0.5
+                            ${isUser
+                              ? "bg-jarvis-cyan/12 text-jarvis-cyan/80 border border-jarvis-cyan/18"
+                              : "bg-jarvis-gold/10 text-jarvis-gold/80 border border-jarvis-gold/18"
+                            }
+                          `}>
+                          {isUser ? userName.slice(0, 1).toUpperCase() || "Y" : "J"}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-semibold text-jarvis-text/78">
+                              {isUser ? userName : "Jarvis"}
+                            </span>
+                            {!isUser && (msg.agentType || msg.tierUsed) && (
+                              <AgentBadge agentType={msg.agentType} tierUsed={msg.tierUsed} />
+                            )}
+                            <span className="text-2xs text-jarvis-text-dim/45 font-mono tabular-nums">
+                              {new Date(msg.timestamp).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <div className="text-[14px] text-jarvis-text/84 leading-relaxed whitespace-pre-wrap">
+                            {msg.content || (
+                              <span className="text-jarvis-text-dim/70 italic text-xs">
+                                Processing...
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+
+              {isProcessing && (
+                <div className="flex items-center gap-2.5 text-jarvis-text-dim/72 text-xs pl-9 py-2 animate-fade-in">
+                  <div className="typing-dots flex items-center">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <span className="text-2xs font-mono">Processing...</span>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <aside className="hidden lg:flex w-80 flex-col overflow-y-auto jarvis-scrollbar">
         <div className="p-4 space-y-4">
           <div className="jarvis-card">
             <div className="jarvis-card-header flex items-center gap-2">
@@ -445,6 +476,7 @@ export default function DashboardView({
             </div>
           )}
         </div>
+        </aside>
       </div>
     </div>
   );
@@ -461,12 +493,33 @@ function InfoRow({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-2xs text-jarvis-text-dim/45">{label}</span>
+      <span className="text-2xs text-jarvis-text-dim/70">{label}</span>
       <span className={`text-2xs font-mono tabular-nums ${
-        highlight ? 'text-jarvis-cyan/60' : 'text-jarvis-text/55'
+        highlight ? 'text-jarvis-cyan/85' : 'text-jarvis-text/72'
       }`}>
         {value}
       </span>
+    </div>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="metric-tile px-3 py-2.5 min-w-0">
+      <div className="text-[10px] text-jarvis-text-dim/68 font-medium">
+        {label}
+      </div>
+      <div className={`mt-1 text-sm font-semibold truncate ${accent ? "text-jarvis-gold" : "text-jarvis-text/88"}`}>
+        {value}
+      </div>
     </div>
   );
 }
