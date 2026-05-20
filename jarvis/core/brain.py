@@ -399,6 +399,75 @@ class JarvisBrain:
         except Exception as e:
             logger.debug("Monitor analysis failed (non-critical): %s", e)
 
+        # Track experiment outcomes and suggestions for completed plans
+        task_elapsed = time.time() - start_time
+        if hasattr(self, '_last_plan') and self._last_plan:
+            plan = self._last_plan
+            failed_markers = (
+                "i encountered an error",
+                "error executing",
+                "traceback",
+                "timed out",
+                "i hit my processing limit",
+                "i hit a processing limit",
+            )
+            response_lower = response.lower()
+            task_succeeded = (
+                plan.status == "completed"
+                and plan.failed_count == 0
+                and not any(marker in response_lower for marker in failed_markers)
+            )
+            try:
+                self.planner.record_experiment_outcome(plan, task_succeeded)
+            except Exception as e:
+                logger.debug("Experiment tracking failed: %s", e)
+
+            # Record in success tracker and evolution pipeline
+            try:
+                self.success_tracker.log_task(
+                    task_type="planned",
+                    prompt=user_input[:200],
+                    success=task_succeeded,
+                    duration_seconds=task_elapsed,
+                )
+                self.evolution.on_task_complete(
+                    task_type="planned",
+                    success=task_succeeded,
+                    duration=task_elapsed,
+                )
+            except Exception as e:
+                logger.debug("Success/evolution tracking failed (non-critical): %s", e)
+
+            # Proactive follow-up suggestions: sync version first
+            try:
+                suggestion = suggest_followup(
+                    task_type="planned",
+                    task_description=user_input[:200],
+                    working_dir=str(settings.JARVIS_HOME),
+                ) if task_succeeded else None
+                if suggestion:
+                    response += f"\n\nBy the way, sir: {suggestion.text}"
+                    logger.info("Follow-up suggestion appended: %s", suggestion.action_type)
+            except Exception as e:
+                logger.debug("Suggestion generation failed (non-critical): %s", e)
+
+            # Async follow-up suggestions (richer, checks project files)
+            try:
+                async_suggestion = await suggest_task_followup(
+                    completed_task=user_input[:200],
+                    task_result=response[:1000],
+                    working_dir=str(settings.JARVIS_HOME),
+                ) if task_succeeded else None
+                if async_suggestion:
+                    response += f"\n\n{async_suggestion}"
+                    logger.info("Async follow-up appended.")
+            except Exception as e:
+                logger.debug("Async suggestion failed (non-critical): %s", e)
+
+            self._last_plan = None
+
+        assistant_turn.content = response
+
         if not self._privacy_mode and settings.MEMORY_ENABLED:
             self.memory.add(
                 text=f"User: {user_input}\nJARVIS: {response}",
@@ -414,58 +483,6 @@ class JarvisBrain:
                 assistant_response=response,
                 tier=tier,
             )
-
-        # Track experiment outcomes and suggestions for completed plans
-        task_elapsed = time.time() - start_time
-        if hasattr(self, '_last_plan') and self._last_plan:
-            try:
-                self.planner.record_experiment_outcome(self._last_plan, True)
-            except Exception as e:
-                logger.debug("Experiment tracking failed: %s", e)
-
-            # Record in success tracker and evolution pipeline
-            try:
-                self.success_tracker.log_task(
-                    task_type="build",
-                    prompt=user_input[:200],
-                    success=True,
-                    duration_seconds=task_elapsed,
-                )
-                self.evolution.on_task_complete(
-                    task_type="build",
-                    success=True,
-                    duration=task_elapsed,
-                )
-            except Exception as e:
-                logger.debug("Success/evolution tracking failed (non-critical): %s", e)
-
-            # Proactive follow-up suggestions: sync version first
-            try:
-                suggestion = suggest_followup(
-                    task_type="build",
-                    task_description=user_input[:200],
-                    working_dir=str(settings.JARVIS_HOME),
-                )
-                if suggestion:
-                    response += f"\n\nBy the way, sir: {suggestion.text}"
-                    logger.info("Follow-up suggestion appended: %s", suggestion.action_type)
-            except Exception as e:
-                logger.debug("Suggestion generation failed (non-critical): %s", e)
-
-            # Async follow-up suggestions (richer, checks project files)
-            try:
-                async_suggestion = await suggest_task_followup(
-                    completed_task=user_input[:200],
-                    task_result=response[:1000],
-                    working_dir=str(settings.JARVIS_HOME),
-                )
-                if async_suggestion:
-                    response += f"\n\n{async_suggestion}"
-                    logger.info("Async follow-up appended.")
-            except Exception as e:
-                logger.debug("Async suggestion failed (non-critical): %s", e)
-
-            self._last_plan = None
 
         if not self._privacy_mode:
             self._save_turn(assistant_turn)

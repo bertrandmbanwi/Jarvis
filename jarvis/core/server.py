@@ -649,17 +649,23 @@ class SetPinRequest(BaseModel):
 
 
 async def require_auth(request: Request) -> bool:
-    """FastAPI dependency for optional PIN auth. Local connections bypass auth.
+    """FastAPI dependency for local-bypass / remote-required auth.
 
-    Remote connections require valid session token via header, cookie, or query param.
+    Local connections bypass auth. Remote connections always require PIN auth to
+    be enabled and a valid session token via header, cookie, or query param.
     """
     client_host = request.client.host if request.client else ""
 
-    if not auth.pin_auth_enabled():
-        return True
-
     if auth.is_local_request(client_host):
         return True
+
+    from fastapi import HTTPException
+
+    if not auth.pin_auth_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Remote access requires PIN authentication. Set JARVIS_PIN_AUTH_ENABLED=true.",
+        )
 
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
@@ -676,7 +682,6 @@ async def require_auth(request: Request) -> bool:
         logger.warning("Auth via query param token (less secure). Use Authorization header or cookie instead.")
         return True
 
-    from fastapi import HTTPException
     raise HTTPException(status_code=401, detail="Authentication required. Please log in with your PIN.")
 
 
@@ -692,11 +697,18 @@ async def auth_login(request: Request, body: PinRequest):
     This endpoint is always accessible (no auth required).
     Rate-limited by client IP.
     """
+    client_host = request.client.host if request.client else ""
+    is_local = auth.is_local_request(client_host)
+
     if not auth.pin_auth_enabled():
+        if not is_local:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Remote access requires PIN authentication."},
+            )
         # The token key is part of the public auth API response, not a secret.
         return {"token": None, "expires_in": 0, "auth_required": False}  # nosec B105
 
-    client_host = request.client.host if request.client else ""
     token = auth.verify_pin(body.pin, client_ip=client_host)
 
     if token is None:
@@ -722,14 +734,16 @@ async def auth_status(request: Request):
     """Check whether the current request is authenticated."""
     client_host = request.client.host if request.client else ""
 
+    is_local = auth.is_local_request(client_host)
+
     if not auth.pin_auth_enabled():
         return {
-            "authenticated": True,
-            "local": auth.is_local_request(client_host),
-            "auth_required": False,
+            "authenticated": is_local,
+            "local": is_local,
+            "auth_required": not is_local,
         }
 
-    if auth.is_local_request(client_host):
+    if is_local:
         return {"authenticated": True, "local": True, "auth_required": True}
 
     for token_source in [
@@ -1295,6 +1309,28 @@ async def workflow_overview():
     return {
         **workflows.get_overview(),
         "scheduler": workflow_scheduler.get_scheduler_status(),
+    }
+
+
+@app.get("/product/overview", dependencies=[Depends(require_auth)])
+async def product_overview(status: str = "", dry_run: bool | None = None):
+    """Return the product console's common data in one low-chatter payload."""
+    runs = workflows.list_runs(status=status, dry_run=dry_run, limit=8)
+    workflow_items = workflows.list_workflows(include_disabled=True)
+    approvals = workflows.list_approvals(status="pending", limit=8)
+    return {
+        "templates": workflows.list_templates(),
+        "workflows": workflow_items,
+        "workflow_count": len(workflow_items),
+        "runs": runs,
+        "run_count": len(runs),
+        "analytics": workflows.get_run_analytics(limit=200),
+        "team": team.get_team(),
+        "calendar": calendar_accounts.get_state(),
+        "scheduler": workflow_scheduler.get_scheduler_status(),
+        "approvals": approvals,
+        "approval_count": len(approvals),
+        "lifecycle": app_lifecycle.get_status(),
     }
 
 
@@ -2456,8 +2492,12 @@ async def websocket_chat(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else ""
     is_local = auth.is_local_request(client_host)
 
+    if not is_local and not auth.pin_auth_enabled():
+        await websocket.close(code=4001, reason="Remote access requires PIN authentication")
+        return
+
     if not is_local and auth.pin_auth_enabled():
-        ws_token = websocket.query_params.get("token", "")
+        ws_token = websocket.cookies.get("jarvis_token", "") or websocket.query_params.get("token", "")
         if not ws_token or not auth.validate_token(ws_token):
             await websocket.close(code=4001, reason="Authentication required")
             return
@@ -2597,8 +2637,12 @@ async def websocket_extension(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else ""
     is_local = auth.is_local_request(client_host)
 
+    if not is_local and not auth.pin_auth_enabled():
+        await websocket.close(code=4001, reason="Remote access requires PIN authentication")
+        return
+
     if not is_local and auth.pin_auth_enabled():
-        ws_token = websocket.query_params.get("token", "")
+        ws_token = websocket.cookies.get("jarvis_token", "") or websocket.query_params.get("token", "")
         if not ws_token or not auth.validate_token(ws_token):
             await websocket.close(code=4001, reason="Authentication required")
             return

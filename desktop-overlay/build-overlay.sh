@@ -24,7 +24,8 @@ BUILD_DIR="${SCRIPT_DIR}/build"
 APP_NAME="JarvisOverlay"
 APP_BUNDLE="${BUILD_DIR}/${APP_NAME}.app"
 MACOS_DIR="${APP_BUNDLE}/Contents/MacOS"
-RESOURCES_DIR="${APP_BUNDLE}/Contents"
+CONTENTS_DIR="${APP_BUNDLE}/Contents"
+RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
 # Clean previous build
 if [ -d "$BUILD_DIR" ]; then
@@ -35,6 +36,7 @@ fi
 # Create app bundle structure
 echo -e "${YELLOW}Creating app bundle structure...${NC}"
 mkdir -p "$MACOS_DIR"
+mkdir -p "$RESOURCES_DIR"
 
 # Compile Swift file
 echo -e "${YELLOW}Compiling Swift code...${NC}"
@@ -51,7 +53,7 @@ echo -e "${GREEN}Compilation successful${NC}"
 
 # Create Info.plist
 echo -e "${YELLOW}Creating Info.plist...${NC}"
-cat > "${RESOURCES_DIR}/Info.plist" << 'EOF'
+cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -88,6 +90,16 @@ cat > "${RESOURCES_DIR}/Info.plist" << 'EOF'
 EOF
 
 echo -e "${GREEN}Info.plist created${NC}"
+
+THREE_MODULE="${SCRIPT_DIR}/../jarvis/ui/jarvis-ui/node_modules/three/build/three.module.min.js"
+if [ -f "$THREE_MODULE" ]; then
+    cp "$THREE_MODULE" "${RESOURCES_DIR}/three.module.min.js"
+    echo -e "${GREEN}Bundled local Three.js module${NC}"
+else
+    echo -e "${RED}Missing local Three.js module at ${THREE_MODULE}.${NC}"
+    echo "Run npm install in jarvis/ui/jarvis-ui before building the overlay."
+    exit 1
+fi
 
 # Make executable
 chmod +x "${MACOS_DIR}/${APP_NAME}"

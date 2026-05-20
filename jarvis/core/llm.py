@@ -516,34 +516,12 @@ class JarvisLLM:
                 messages.append({"role": "user", "content": tool_results})
 
             elif resp.stop_reason == "end_turn":
-                try:
-                    async with client.messages.stream(
-                        model=config["model"],
-                        max_tokens=config["max_tokens"],
-                        temperature=config["temperature"],
-                        system=system_blocks,
-                        messages=messages + [{"role": "user", "content": "Continue with your final response."}]
-                        if not any(hasattr(b, "text") and b.text for b in resp.content)
-                        else messages,
-                    ) as stream:
-                        has_text = any(hasattr(b, "text") and b.text.strip() for b in resp.content)
-                        if has_text:
-                            for block in resp.content:
-                                if hasattr(block, "text") and block.text.strip():
-                                    yield block.text
-                            return
-
-                        async for text in stream.text_stream:
-                            yield text
-
-                        final_message = await stream.get_final_message()
-                        if final_message and final_message.usage:
-                            elapsed2 = time.time() - start
-                            self._track_usage(final_message.usage, config["model"], tier, elapsed2)
-                except Exception:
-                    for block in resp.content:
-                        if hasattr(block, "text"):
-                            yield block.text
+                text_parts = [
+                    block.text
+                    for block in resp.content
+                    if hasattr(block, "text") and block.text.strip()
+                ]
+                yield "\n".join(text_parts).strip() or "I completed the tool work, but did not receive a final response."
                 return
 
             else:

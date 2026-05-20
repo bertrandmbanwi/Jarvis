@@ -19,8 +19,8 @@ const config = {
           surface: "rgba(0, 10, 25, 0.95)",
           "surface-hover": "rgba(0, 15, 35, 0.95)",
           text: "#e0f0ff",
-          "text-dim": "#6699bb",
-          "text-muted": "#5588aa",
+          "text-dim": "#78a9c6",
+          "text-muted": "#6a93aa",
           gold: "#ffe18c",
           "gold-dim": "#ccaa44",
           accent: "#ff6600",
@@ -38,8 +38,8 @@ const config = {
         "3xs": ["9px", { lineHeight: "12px" }],
       },
       borderRadius: {
-        "2xl": "16px",
-        "3xl": "20px",
+        "2xl": "10px",
+        "3xl": "12px",
       },
       animation: {
         "pulse-glow": "pulseGlow 3s ease-in-out infinite",

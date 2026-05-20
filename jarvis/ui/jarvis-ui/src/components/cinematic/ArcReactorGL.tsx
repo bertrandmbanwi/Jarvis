@@ -412,10 +412,21 @@ function fibSphere(i: number, n: number): [number, number, number] {
   ];
 }
 
+function seededRandom(seed: number): () => number {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6D2B79F5;
+    let t = value;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // Random unit vector
-function randAxis(): [number, number, number] {
-  const u = Math.random() * 2 - 1;
-  const t = Math.random() * Math.PI * 2;
+function randAxis(random: () => number = Math.random): [number, number, number] {
+  const u = random() * 2 - 1;
+  const t = random() * Math.PI * 2;
   const s = Math.sqrt(1 - u * u);
   return [s * Math.cos(t), u, s * Math.sin(t)];
 }
@@ -454,20 +465,24 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const isCompact = window.matchMedia("(max-width: 640px)").matches;
+    const layoutRandom = seededRandom(0x4a415256);
+    let isVisible = document.visibilityState !== "hidden";
 
     // ---- Renderer ----
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
-      powerPreference: "high-performance",
+      powerPreference: prefersReducedMotion ? "low-power" : "high-performance",
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, isCompact || prefersReducedMotion ? 1.35 : 2));
     renderer.setClearColor(0x000000, 0);
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-    camera.position.set(0, 0, 3.5);
+    const camera = new THREE.PerspectiveCamera(isCompact ? 34 : 40, 1, 0.1, 100);
+    camera.position.set(0, 0, isCompact ? 3.05 : 3.5);
     camera.lookAt(0, 0, 0);
 
     //  1. PARTICLE POINT CLOUD
@@ -498,7 +513,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       } else {
         rMin = 0.55; rMax = 0.85;
       }
-      const r = rMin + Math.random() * (rMax - rMin);
+      const r = rMin + layoutRandom() * (rMax - rMin);
 
       // Use a unique base index for Fibonacci distribution per shell
       const shellBaseIdx = shell === 0 ? 0 : shell === 1 ? 800 : 2000;
@@ -512,23 +527,23 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       // Shell-specific size and brightness
       if (shell === 0) {
         // Core particles: readable but not a white disk.
-        sizes[i] = 1.25 + Math.random() * 0.85;
-        brights[i] = 0.58 + Math.random() * 0.16;
+        sizes[i] = 1.25 + layoutRandom() * 0.85;
+        brights[i] = 0.58 + layoutRandom() * 0.16;
       } else if (shell === 1) {
         // Mid-layer particles: medium size, solid brightness (main visible body)
-        sizes[i] = 2.0 + Math.random() * 1.6;
-        brights[i] = 0.48 + Math.random() * 0.20;
+        sizes[i] = 2.0 + layoutRandom() * 1.6;
+        brights[i] = 0.48 + layoutRandom() * 0.20;
       } else {
         // Outer particles: larger, still clearly visible but softer
-        sizes[i] = 2.8 + Math.random() * 2.2;
-        brights[i] = 0.36 + Math.random() * 0.18;
+        sizes[i] = 2.8 + layoutRandom() * 2.2;
+        brights[i] = 0.36 + layoutRandom() * 0.18;
       }
 
       shells[i] = shell / 2.0; // Normalized to 0, 0.5, or 1.0
-      phases[i] = Math.random();
+      phases[i] = layoutRandom();
 
       // Unique orbit axis per particle (tilted from Y to add variety)
-      const ax = randAxis();
+      const ax = randAxis(layoutRandom);
       orbAxes[i*3]   = ax[0];
       orbAxes[i*3+1] = ax[1];
       orbAxes[i*3+2] = ax[2];
@@ -595,13 +610,13 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     const dSizes = new Float32Array(DUST_COUNT);
     const dPhases = new Float32Array(DUST_COUNT);
     for (let i = 0; i < DUST_COUNT; i++) {
-      const r = 0.8 + Math.random() * 0.6;
+      const r = 0.8 + layoutRandom() * 0.6;
       const [x, y, z] = fibSphere(i, DUST_COUNT);
       dPos[i*3]   = x * r;
       dPos[i*3+1] = y * r;
       dPos[i*3+2] = z * r;
-      dSizes[i] = 1.0 + Math.random() * 2.5;
-      dPhases[i] = Math.random();
+      dSizes[i] = 1.0 + layoutRandom() * 2.5;
+      dPhases[i] = layoutRandom();
     }
     const dGeom = new THREE.BufferGeometry();
     dGeom.setAttribute("position", new THREE.BufferAttribute(dPos, 3));
@@ -705,17 +720,28 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       if (!mount) return;
       const w = mount.clientWidth;
       const h = mount.clientHeight;
+      if (w <= 0 || h <= 0) return;
+      camera.fov = w < 640 ? 34 : 40;
+      camera.position.z = w < 640 ? 3.05 : 3.5;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
     onResize();
     window.addEventListener("resize", onResize);
+    const onVisibilityChange = () => {
+      isVisible = document.visibilityState !== "hidden";
+      if (isVisible) {
+        clockRef.current.getDelta();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     clockRef.current.start();
 
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
+      if (!isVisible) return;
       const dt = Math.min(clockRef.current.getDelta(), 0.05); // cap dt
       const t = clockRef.current.elapsedTime;
 
@@ -846,6 +872,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     return () => {
       cancelAnimationFrame(frameRef.current);
       window.removeEventListener("resize", onResize);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       renderer.dispose();
       if (mount.contains(renderer.domElement)) {
         mount.removeChild(renderer.domElement);

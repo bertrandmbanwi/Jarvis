@@ -238,8 +238,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     <div id="response-text"></div>
                 </div>
             </div>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-            <script>
+            <script type="module">
+                import * as THREE from './three.module.min.js';
                 // --- DOM refs ---
                 const statusDot = document.getElementById('status-dot');
                 const statusLabel = document.getElementById('status-label');
@@ -787,7 +787,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         </html>
         """
 
-        webView.loadHTMLString(htmlContent, baseURL: nil)
+        webView.loadHTMLString(htmlContent, baseURL: Bundle.main.resourceURL)
         window.makeKeyAndOrderFront(nil)
         registerGlobalHotKey()
     }

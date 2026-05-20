@@ -161,7 +161,7 @@ export default function CinematicView({
       className="flex-1 relative overflow-hidden bg-black"
       style={{
         background:
-          "radial-gradient(circle at 50% 52%, rgba(0, 58, 78, 0.26) 0%, rgba(0, 18, 36, 0.18) 32%, rgba(0, 0, 0, 1) 72%)",
+          "radial-gradient(circle at 50% 52%, rgba(0, 86, 112, 0.34) 0%, rgba(0, 26, 48, 0.24) 36%, rgba(0, 0, 0, 1) 76%)",
       }}
     >
       {showBoot && (

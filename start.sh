@@ -32,7 +32,12 @@ NEXT_FALLBACK_PORT=$((UI_PORT + 1))
 JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-$(read_env_value JARVIS_OPEN_DASHBOARD)}"
 JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-true}"
 JARVIS_PIN_AUTH_ENABLED="${JARVIS_PIN_AUTH_ENABLED:-$(read_env_value JARVIS_PIN_AUTH_ENABLED)}"
-JARVIS_PIN_AUTH_ENABLED="${JARVIS_PIN_AUTH_ENABLED:-false}"
+JARVIS_PIN_AUTH_ENABLED="${JARVIS_PIN_AUTH_ENABLED:-true}"
+JARVIS_ENABLE_TUNNEL="${JARVIS_ENABLE_TUNNEL:-$(read_env_value JARVIS_ENABLE_TUNNEL)}"
+JARVIS_ENABLE_TUNNEL="${JARVIS_ENABLE_TUNNEL:-false}"
+JARVIS_UI_MODE="${JARVIS_UI_MODE:-$(read_env_value JARVIS_UI_MODE)}"
+JARVIS_UI_MODE="${JARVIS_UI_MODE:-production}"
+export JARVIS_PIN_AUTH_ENABLED
 
 # Track child PIDs for cleanup
 UI_PID=""
@@ -203,20 +208,21 @@ fi
 # Activate virtual environment
 source "${VENV_DIR}/bin/activate"
 
-# Ensure python-multipart is installed (required for browser voice upload)
-python -c "import multipart" 2>/dev/null || pip install python-multipart -q
+# Verify launch-critical Python dependencies without mutating the environment.
+python -c "import multipart" 2>/dev/null || {
+    echo "Missing python-multipart. Run ./setup.sh before launching JARVIS."
+    exit 1
+}
+python -c "import yaml" 2>/dev/null || {
+    echo "Missing PyYAML. Run ./setup.sh before launching JARVIS."
+    exit 1
+}
 
-# Ensure Playwright is installed with Chromium (required for browser automation)
-if python -c "import playwright" 2>/dev/null; then
-    if ! python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.executable_path; p.stop()" 2>/dev/null; then
-        echo "Installing Playwright Chromium browser..."
-        playwright install chromium
-    fi
-else
-    echo "Installing Playwright..."
-    pip install playwright -q
-    echo "Installing Playwright Chromium browser..."
-    playwright install chromium
+# Browser automation is optional at launch, but should be installed by setup.
+if ! python -c "import playwright" 2>/dev/null; then
+    echo "Warning: Playwright is not installed. Browser automation tools will be unavailable until ./setup.sh is rerun."
+elif ! python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.executable_path; p.stop()" 2>/dev/null; then
+    echo "Warning: Playwright Chromium is missing. Run 'playwright install chromium' after setup."
 fi
 
 # Check for Claude Code CLI (optional, for development tasks)
@@ -237,7 +243,7 @@ mkdir -p "${BROWSER_PROFILE}"
 echo "Browser automation: persistent profile at data/browser-profile/"
 echo "  (Sessions and logins persist between JARVIS restarts)"
 
-# Detect cloudflared for remote/mobile access via Cloudflare Tunnel.
+# Detect cloudflared for opt-in remote/mobile access via Cloudflare Tunnel.
 # This gives you an HTTPS URL accessible from your phone (mic works over HTTPS).
 # Quick Tunnel: random *.trycloudflare.com URL, no account needed.
 # Named Tunnel: persistent URL, requires free Cloudflare account + domain.
@@ -246,7 +252,11 @@ if command -v cloudflared &>/dev/null; then
     CLOUDFLARED_AVAILABLE="true"
     echo ""
     echo "Cloudflare Tunnel: cloudflared found ($(cloudflared --version 2>&1 | head -1))"
-    echo "  A tunnel will start after JARVIS is ready. Check the logs for your phone URL."
+    if [[ "${JARVIS_ENABLE_TUNNEL}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+        echo "  Tunnel is enabled. Remote access will require PIN authentication."
+    else
+        echo "  Tunnel is disabled by default. Set JARVIS_ENABLE_TUNNEL=true for phone access."
+    fi
 else
     echo ""
     echo "Note: Install cloudflared for mobile/phone access:"
@@ -264,9 +274,6 @@ if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
     echo "Ollama started (PID: ${OLLAMA_PID})"
     echo ""
 fi
-
-# Ensure pyyaml is installed (required for prompt templates)
-python -c "import yaml" 2>/dev/null || pip install pyyaml -q
 
 # Ensure data directories exist for SQLite databases
 mkdir -p "${SCRIPT_DIR}/data"
@@ -327,8 +334,18 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
         # Give the OS a moment to release the port
         sleep 1
 
-        echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} ..."
-        (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
+        if [[ "${JARVIS_UI_MODE}" == "dev" ]]; then
+            UI_COMMAND=(npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}")
+        else
+            if [[ ! -d "${UI_DIR}/.next" ]]; then
+                echo "Building JARVIS UI for production..."
+                (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run build)
+            fi
+            UI_COMMAND=(npm run start)
+        fi
+
+        echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} (${JARVIS_UI_MODE}) ..."
+        (cd "${UI_DIR}" && UI_PORT="${UI_PORT}" JARVIS_API_PORT="${API_PORT}" "${UI_COMMAND[@]}") &
         UI_PID=$!
         if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
             echo "Warning: UI did not become ready on port ${UI_PORT}. Retrying once..."
@@ -338,7 +355,7 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
             fi
             stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
             sleep 1
-            (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
+            (cd "${UI_DIR}" && UI_PORT="${UI_PORT}" JARVIS_API_PORT="${API_PORT}" "${UI_COMMAND[@]}") &
             UI_PID=$!
             if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
                 echo "Warning: JARVIS UI is still not responding at http://localhost:${UI_PORT}."
@@ -354,11 +371,16 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
     fi
 fi
 
-# Start Cloudflare Tunnel for mobile/remote access (if cloudflared is installed).
+# Start Cloudflare Tunnel for mobile/remote access when explicitly enabled.
 # The tunnel exposes the Next.js UI over HTTPS. API and WebSocket
 # requests from the phone are proxied through Next.js rewrites, so only one
 # tunnel is needed. The tunnel URL is printed to the console.
-if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
+if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${JARVIS_ENABLE_TUNNEL}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]] && [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
+    if [[ ! "${JARVIS_PIN_AUTH_ENABLED}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
+        echo "Remote tunnel requested; enabling PIN authentication for this session."
+        JARVIS_PIN_AUTH_ENABLED="true"
+        export JARVIS_PIN_AUTH_ENABLED
+    fi
     echo ""
     echo "Starting Cloudflare Tunnel..."
     TUNNEL_LOG="${SCRIPT_DIR}/data/logs/cloudflared.log"
@@ -378,12 +400,8 @@ if [[ -n "${CLOUDFLARED_AVAILABLE}" ]] && [[ "${MODE}" == "full" || "${MODE}" ==
             echo "  JARVIS Mobile Access (open on your phone):"
             echo "  ${TUNNEL_URL}"
             echo ""
-            if [[ "${JARVIS_PIN_AUTH_ENABLED}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn])$ ]]; then
-                echo "  You will be prompted for a PIN on first connect."
-                echo "  The PIN is shown above when JARVIS starts."
-            else
-                echo "  PIN authentication is disabled; the dashboard opens directly."
-            fi
+            echo "  You will be prompted for a PIN on first connect."
+            echo "  The PIN is shown above when JARVIS starts."
             echo "=================================================="
             echo ""
             break

@@ -402,7 +402,8 @@ async def update_settings(
                 else:
                     delete_secret(key)
                     os.environ.pop(key, None)
-                settings.ANTHROPIC_API_KEY = secret_value
+                if hasattr(settings, key):
+                    setattr(settings, key, secret_value)
             else:
                 env_content[key] = _env_value(value)
                 os.environ[key] = _env_value(value)
