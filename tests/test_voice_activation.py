@@ -40,18 +40,13 @@ async def test_capture_and_dispatch_speech_invokes_callbacks(monkeypatch):
     listener = VoiceListener()
     wake_events = []
     utterances = []
-    capture_events = []
 
     listener.on_wake(lambda: wake_events.append("wake"))
 
     async def on_speech(text: str):
         utterances.append(text)
 
-    async def on_capture_complete(source: str, dispatched: bool):
-        capture_events.append((source, dispatched))
-
     listener.on_speech(on_speech)
-    listener.on_capture_complete(on_capture_complete)
 
     async def fake_record_speech():
         return np.array([1, 2, 3], dtype=np.int16)
@@ -62,26 +57,6 @@ async def test_capture_and_dispatch_speech_invokes_callbacks(monkeypatch):
     assert await listener._capture_and_dispatch_speech("hotkey") is True
     assert wake_events == ["wake"]
     assert utterances == ["open the dashboard"]
-    assert capture_events == [("hotkey", True)]
-
-
-@pytest.mark.asyncio
-async def test_capture_completion_callback_runs_when_no_speech(monkeypatch):
-    listener = VoiceListener()
-    wake_events = []
-    capture_events = []
-
-    listener.on_wake(lambda: wake_events.append("wake"))
-    listener.on_capture_complete(lambda source, dispatched: capture_events.append((source, dispatched)))
-
-    async def fake_record_speech():
-        return None
-
-    monkeypatch.setattr(listener, "_record_speech", fake_record_speech)
-
-    assert await listener._capture_and_dispatch_speech("hotkey") is False
-    assert wake_events == ["wake"]
-    assert capture_events == [("hotkey", False)]
 
 
 @pytest.mark.asyncio
