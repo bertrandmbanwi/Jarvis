@@ -211,9 +211,10 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     setStatus("connecting");
 
     try {
-      // Add auth token for remote connections
+      // Prefer the secure httpOnly cookie on HTTPS/WSS. Only append the
+      // session token on insecure/local sockets where secure cookies are not sent.
       let wsUrl = JARVIS_WS_URL;
-      if (authToken) {
+      if (authToken && wsUrl.startsWith("ws://")) {
         const sep = wsUrl.includes("?") ? "&" : "?";
         wsUrl = `${wsUrl}${sep}token=${encodeURIComponent(authToken)}`;
       }

@@ -518,43 +518,24 @@ export default function ProductView({ authToken }: ProductViewProps) {
 
   const loadData = useCallback(async () => {
     try {
-      const runParams = new URLSearchParams({ limit: "8" });
+      const runParams = new URLSearchParams();
       if (runStatusFilter) {
         runParams.set("status", runStatusFilter);
       }
       if (runModeFilter !== "all") {
         runParams.set("dry_run", runModeFilter === "dry" ? "true" : "false");
       }
-      const [
-        templateData,
-        workflowData,
-        runData,
-        analyticsData,
-        teamData,
-        calendarData,
-        schedulerData,
-        approvalData,
-        lifecycleData,
-      ] = await Promise.all([
-        api("/workflows/templates"),
-        api("/workflows"),
-        api(`/workflows/runs?${runParams.toString()}`),
-        api("/workflows/analytics?limit=200"),
-        api("/team"),
-        api("/calendar/connections"),
-        api("/workflows/scheduler/status"),
-        api("/workflows/approvals?status=pending&limit=8"),
-        api("/app/lifecycle/status"),
-      ]);
-      setTemplates(templateData.templates || []);
-      setWorkflows(workflowData.workflows || []);
-      setRuns(runData.runs || []);
-      setRunAnalytics(analyticsData || null);
-      setMembers(teamData.members || []);
-      setCalendar({ ...emptyCalendar, ...calendarData });
-      setScheduler(schedulerData);
-      setApprovals(approvalData.approvals || []);
-      setLifecycle(lifecycleData || null);
+      const query = runParams.toString();
+      const data = await api(`/product/overview${query ? `?${query}` : ""}`);
+      setTemplates(data.templates || []);
+      setWorkflows(data.workflows || []);
+      setRuns(data.runs || []);
+      setRunAnalytics(data.analytics || null);
+      setMembers(data.team?.members || []);
+      setCalendar({ ...emptyCalendar, ...(data.calendar || {}) });
+      setScheduler(data.scheduler || null);
+      setApprovals(data.approvals || []);
+      setLifecycle(data.lifecycle || null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load product data.");
     }
@@ -1054,6 +1035,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
   }
 
   async function restartJarvis() {
+    if (!window.confirm("Restart JARVIS now? Active voice, workflow, and socket sessions will briefly disconnect.")) {
+      return;
+    }
     const data = await api("/app/lifecycle/restart", {
       method: "POST",
       body: JSON.stringify({ mode: lifecycle?.runtime.mode || "full", dry_run: false }),
@@ -1062,6 +1046,9 @@ export default function ProductView({ authToken }: ProductViewProps) {
   }
 
   async function quitJarvis() {
+    if (!window.confirm("Quit JARVIS now? You will need to relaunch it from the desktop or terminal.")) {
+      return;
+    }
     const data = await api("/app/lifecycle/quit", {
       method: "POST",
       body: JSON.stringify({ dry_run: false, force_after_seconds: 8 }),

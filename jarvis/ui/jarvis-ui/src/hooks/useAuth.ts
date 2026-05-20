@@ -68,15 +68,14 @@ export function useAuth(): AuthState {
           setToken(storedToken);
         }
       } else {
-        setAuthRequired(false);
-        setIsAuthenticated(true);
+        setAuthRequired(true);
+        setIsAuthenticated(false);
+        setLoginError("JARVIS is reachable, but auth status could not be verified.");
       }
     } catch {
-      // No-PIN is the default. If the API is still booting or temporarily
-      // unreachable, keep the dashboard visible instead of showing a stale
-      // credential prompt.
-      setAuthRequired(false);
-      setIsAuthenticated(true);
+      setAuthRequired(true);
+      setIsAuthenticated(false);
+      setLoginError("Cannot reach JARVIS server. Check that the backend is running.");
     } finally {
       setIsLoading(false);
     }

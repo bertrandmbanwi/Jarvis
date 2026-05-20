@@ -206,15 +206,49 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
     }
   }
 
-  const isSmallScreen = typeof window !== "undefined" && window.innerWidth < 768;
+  function updateSettingsDraft(updater: (current: Settings) => Settings) {
+    setSettings((current) => (current ? updater(current) : current));
+  }
+
+  async function applyCurrentStep() {
+    if (!settings) return;
+
+    if (currentStep === "models") {
+      await saveSettings({ CLAUDE_DEFAULT_TIER: settings.models.default });
+      return;
+    }
+
+    if (currentStep === "voice") {
+      await saveSettings({ TTS_SPEED: settings.voice.tts_speed });
+      return;
+    }
+
+    if (currentStep === "costs") {
+      await saveSettings({
+        COST_MODE: settings.costs.mode,
+        COST_DAILY_ALERT: settings.costs.daily_alert_usd,
+        COST_DAILY_HARD_LIMIT: settings.costs.daily_hard_limit_usd,
+        COST_MONTHLY_ALERT: settings.costs.monthly_alert_usd,
+        COST_MONTHLY_HARD_LIMIT: settings.costs.monthly_hard_limit_usd,
+        ANTHROPIC_PROMPT_CACHE_TTL: settings.cost_controls.prompt_cache_ttl,
+        LOCAL_FIRST_ENABLED: settings.cost_controls.local_first_enabled,
+        MEMORY_ENABLED: settings.cost_controls.memory_enabled,
+        PRIVACY_MODE_DEFAULT: settings.cost_controls.privacy_mode_default,
+        ANTHROPIC_CACHE_TOOLS: settings.cost_controls.cache_tools,
+        ANTHROPIC_LAZY_HEALTHCHECK: settings.cost_controls.lazy_healthcheck,
+        WORKFLOW_SCHEDULER_ENABLED: settings.cost_controls.workflow_scheduler_enabled,
+      });
+    }
+  }
 
   return (
     <>
       {/* Settings Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-6 right-6 w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center z-40 backdrop-blur-sm"
+        className="fixed bottom-6 left-5 w-12 h-12 rounded-xl bg-jarvis-panel/85 border border-jarvis-cyan/18 text-jarvis-cyan/80 shadow-[0_0_22px_rgba(0,212,255,0.10)] hover:text-jarvis-cyan hover:border-jarvis-cyan/35 hover:bg-jarvis-cyan/8 transition-all duration-200 flex items-center justify-center z-40 backdrop-blur-xl"
         title="Settings"
+        aria-label="Open settings"
       >
         <svg
           className="w-6 h-6"
@@ -246,17 +280,20 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
       )}
 
       {/* Sliding Panel */}
+      {isOpen && (
       <div
-        className={`fixed top-0 right-0 h-full w-full md:w-96 bg-gradient-to-b from-slate-900 to-slate-800 shadow-2xl z-50 transform transition-transform duration-300 ease-out overflow-y-auto ${
-          isOpen ? "translate-x-0" : "translate-x-full"
-        }`}
+        className="fixed top-0 right-0 h-full w-full md:w-[28rem] bg-[linear-gradient(180deg,rgba(0,14,30,0.98),rgba(0,6,14,0.98))] border-l border-jarvis-cyan/12 shadow-2xl z-50 overflow-y-auto jarvis-scrollbar animate-fade-in"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="jarvis-settings-title"
       >
         {/* Panel Header */}
-        <div className="sticky top-0 bg-gradient-to-b from-slate-900/95 to-slate-800/95 backdrop-blur-md border-b border-slate-700 p-4 flex justify-between items-center">
-          <h2 className="text-xl font-bold text-white">JARVIS Settings</h2>
+        <div className="sticky top-0 bg-[rgba(0,10,24,0.94)] backdrop-blur-xl border-b border-jarvis-cyan/10 p-4 flex justify-between items-center">
+          <h2 id="jarvis-settings-title" className="text-base font-semibold text-jarvis-text tracking-[0.12em] uppercase">JARVIS Settings</h2>
           <button
             onClick={() => setIsOpen(false)}
-            className="text-slate-400 hover:text-white transition"
+            className="w-9 h-9 rounded-lg border border-white/[0.06] text-jarvis-text-dim/70 hover:text-jarvis-cyan hover:border-jarvis-cyan/25 transition flex items-center justify-center"
+            aria-label="Close settings"
           >
             <svg
               className="w-6 h-6"
@@ -450,8 +487,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   Default Tier
                 </label>
                 <select
-                  defaultValue={settings.models.default}
-                  onChange={(e) => saveSettings({ CLAUDE_DEFAULT_TIER: e.target.value })}
+                  value={settings.models.default}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    models: { ...current.models, default: e.target.value },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 >
                   <option value="fast">Fast (Haiku)</option>
@@ -459,6 +499,13 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   <option value="deep">Deep (Opus)</option>
                 </select>
               </div>
+              <button
+                onClick={applyCurrentStep}
+                disabled={loading}
+                className="w-full jarvis-btn jarvis-btn-primary"
+              >
+                {loading ? "Applying..." : "Apply Model Settings"}
+              </button>
             </div>
           )}
 
@@ -486,8 +533,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   min="0.5"
                   max="2.0"
                   step="0.05"
-                  defaultValue={settings.voice.tts_speed}
-                  onChange={(e) => saveSettings({ TTS_SPEED: parseFloat(e.target.value) })}
+                  value={settings.voice.tts_speed}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    voice: { ...current.voice, tts_speed: Number.parseFloat(e.target.value || "1") },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -497,6 +547,13 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                 </label>
                 <p className="text-xs text-slate-400">{settings.voice.stt_engine}</p>
               </div>
+              <button
+                onClick={applyCurrentStep}
+                disabled={loading}
+                className="w-full jarvis-btn jarvis-btn-primary"
+              >
+                {loading ? "Applying..." : "Apply Voice Settings"}
+              </button>
             </div>
           )}
 
@@ -508,8 +565,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   Cost Mode
                 </label>
                 <select
-                  defaultValue={settings.costs.mode}
-                  onChange={(e) => saveSettings({ COST_MODE: e.target.value })}
+                  value={settings.costs.mode}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    costs: { ...current.costs, mode: e.target.value },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 >
                   <option value="economy">Economy</option>
@@ -525,8 +585,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={settings.costs.daily_alert_usd}
-                  onChange={(e) => saveSettings({ COST_DAILY_ALERT: parseFloat(e.target.value) })}
+                  value={settings.costs.daily_alert_usd}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    costs: { ...current.costs, daily_alert_usd: Number.parseFloat(e.target.value || "0") },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -538,8 +601,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={settings.costs.daily_hard_limit_usd}
-                  onChange={(e) => saveSettings({ COST_DAILY_HARD_LIMIT: parseFloat(e.target.value) })}
+                  value={settings.costs.daily_hard_limit_usd}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    costs: { ...current.costs, daily_hard_limit_usd: Number.parseFloat(e.target.value || "0") },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -551,8 +617,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={settings.costs.monthly_alert_usd}
-                  onChange={(e) => saveSettings({ COST_MONTHLY_ALERT: parseFloat(e.target.value) })}
+                  value={settings.costs.monthly_alert_usd}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    costs: { ...current.costs, monthly_alert_usd: Number.parseFloat(e.target.value || "0") },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -564,8 +633,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={settings.costs.monthly_hard_limit_usd}
-                  onChange={(e) => saveSettings({ COST_MONTHLY_HARD_LIMIT: parseFloat(e.target.value) })}
+                  value={settings.costs.monthly_hard_limit_usd}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    costs: { ...current.costs, monthly_hard_limit_usd: Number.parseFloat(e.target.value || "0") },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -574,8 +646,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   Prompt Cache TTL
                 </label>
                 <select
-                  defaultValue={settings.cost_controls.prompt_cache_ttl}
-                  onChange={(e) => saveSettings({ ANTHROPIC_PROMPT_CACHE_TTL: e.target.value })}
+                  value={settings.cost_controls.prompt_cache_ttl}
+                  onChange={(e) => updateSettingsDraft((current) => ({
+                    ...current,
+                    cost_controls: { ...current.cost_controls, prompt_cache_ttl: e.target.value },
+                  }))}
                   className="mt-1 w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500"
                 >
                   <option value="5m">5 minutes</option>
@@ -585,33 +660,58 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
               <ToggleRow
                 label="Local-first routing"
                 checked={settings.cost_controls.local_first_enabled}
-                onChange={(checked) => saveSettings({ LOCAL_FIRST_ENABLED: checked })}
+                onChange={(checked) => updateSettingsDraft((current) => ({
+                  ...current,
+                  cost_controls: { ...current.cost_controls, local_first_enabled: checked },
+                }))}
               />
               <ToggleRow
                 label="Memory storage"
                 checked={settings.cost_controls.memory_enabled}
-                onChange={(checked) => saveSettings({ MEMORY_ENABLED: checked })}
+                onChange={(checked) => updateSettingsDraft((current) => ({
+                  ...current,
+                  cost_controls: { ...current.cost_controls, memory_enabled: checked },
+                }))}
               />
               <ToggleRow
                 label="Privacy by default"
                 checked={settings.cost_controls.privacy_mode_default}
-                onChange={(checked) => saveSettings({ PRIVACY_MODE_DEFAULT: checked })}
+                onChange={(checked) => updateSettingsDraft((current) => ({
+                  ...current,
+                  cost_controls: { ...current.cost_controls, privacy_mode_default: checked },
+                }))}
               />
               <ToggleRow
                 label="Cache tool schemas"
                 checked={settings.cost_controls.cache_tools}
-                onChange={(checked) => saveSettings({ ANTHROPIC_CACHE_TOOLS: checked })}
+                onChange={(checked) => updateSettingsDraft((current) => ({
+                  ...current,
+                  cost_controls: { ...current.cost_controls, cache_tools: checked },
+                }))}
               />
               <ToggleRow
                 label="Lazy Claude healthcheck"
                 checked={settings.cost_controls.lazy_healthcheck}
-                onChange={(checked) => saveSettings({ ANTHROPIC_LAZY_HEALTHCHECK: checked })}
+                onChange={(checked) => updateSettingsDraft((current) => ({
+                  ...current,
+                  cost_controls: { ...current.cost_controls, lazy_healthcheck: checked },
+                }))}
               />
               <ToggleRow
                 label="Workflow scheduler"
                 checked={settings.cost_controls.workflow_scheduler_enabled}
-                onChange={(checked) => saveSettings({ WORKFLOW_SCHEDULER_ENABLED: checked })}
+                onChange={(checked) => updateSettingsDraft((current) => ({
+                  ...current,
+                  cost_controls: { ...current.cost_controls, workflow_scheduler_enabled: checked },
+                }))}
               />
+              <button
+                onClick={applyCurrentStep}
+                disabled={loading}
+                className="w-full jarvis-btn jarvis-btn-primary"
+              >
+                {loading ? "Applying..." : "Apply Cost Controls"}
+              </button>
             </div>
           )}
 
@@ -624,6 +724,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
           )}
         </div>
       </div>
+      )}
     </>
   );
 }

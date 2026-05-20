@@ -1,9 +1,9 @@
 """Tool permission catalog and audit logging.
 
 JARVIS exposes powerful local tools, so every tool has an explicit operational
-classification. The default runtime mode is audit-only to preserve existing
-voice flows, while deployments can set JARVIS_TOOL_PERMISSION_MODE=enforce to
-block calls that require explicit confirmation.
+classification. The default runtime mode enforces confirmation for tools that
+can mutate user data, control the system, or communicate externally. Set
+JARVIS_TOOL_PERMISSION_MODE=audit only for trusted local development sessions.
 """
 from __future__ import annotations
 
@@ -232,7 +232,7 @@ def get_tool_permission(tool_name: str) -> ToolPermission:
 
 
 def _permission_mode() -> str:
-    mode = os.getenv("JARVIS_TOOL_PERMISSION_MODE", "audit").lower().strip()
+    mode = os.getenv("JARVIS_TOOL_PERMISSION_MODE", "enforce").lower().strip()
     return mode if mode in {"audit", "enforce"} else "audit"
 
 

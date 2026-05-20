@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/next.js-14-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js" />
+  <img src="https://img.shields.io/badge/next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js" />
   <img src="https://img.shields.io/badge/three.js-0.183-049EF4?style=flat-square&logo=threedotjs&logoColor=white" alt="Three.js" />
   <img src="https://img.shields.io/badge/platform-macOS-999999?style=flat-square&logo=apple&logoColor=white" alt="macOS" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License" />
@@ -74,7 +74,7 @@ Task-specific prompt templates (build, feature, fix, refactor, research) guide t
 Connect from your Mac, phone, and tablet simultaneously. Each device registers independently and audio is routed only to devices that want it. Interrupt JARVIS mid-sentence from any device.
 
 **Mobile Access**
-Built-in Cloudflare Tunnel support. Start JARVIS and get an HTTPS URL you can open on your phone. The UI is fully responsive, and the microphone works over HTTPS. No port forwarding or DNS configuration needed. PIN authentication can be enabled for remote access by setting `JARVIS_PIN_AUTH_ENABLED=true`.
+Built-in Cloudflare Tunnel support is available when you set `JARVIS_ENABLE_TUNNEL=true`. The UI is fully responsive, and the microphone works over HTTPS. Remote access requires PIN authentication by default; localhost still opens directly.
 
 <p align="center">
   <img src="docs/screenshots/system-dashboard.png" alt="JARVIS System Dashboard" width="700" />
@@ -192,7 +192,7 @@ bash scripts/package_macos_app.sh --install-user
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.11, FastAPI, uvicorn, WebSockets |
-| Frontend | Next.js 14, TypeScript, Three.js 0.183, Tailwind CSS 4 |
+| Frontend | Next.js 15, TypeScript, Three.js 0.183, Tailwind CSS 4 |
 | Desktop Overlay | Swift, WKWebView, Three.js (macOS native) |
 | Chrome Extension | Manifest V3, chrome.alarms keepalive, WebSocket |
 | Intelligence | Claude API (3 tiers) + Ollama (local fallback) |

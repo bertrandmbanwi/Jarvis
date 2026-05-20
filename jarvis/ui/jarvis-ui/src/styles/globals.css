@@ -39,7 +39,7 @@
   --jarvis-panel-border: rgba(0, 212, 255, 0.12);
   --jarvis-surface: var(--color-surface-elevated);
   --jarvis-text: #e0f0ff;
-  --jarvis-text-dim: #5588aa;
+  --jarvis-text-dim: #78a9c6;
   --jarvis-gold: var(--color-gold-300);
 
   /* ---- Motion Tokens ---- */
@@ -65,8 +65,8 @@
   /* ---- Border Radius ---- */
   --radius-sm: 6px;
   --radius-md: 10px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
   --radius-full: 9999px;
 
   /* ---- Elevation/Shadow Scale ---- */

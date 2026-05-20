@@ -70,7 +70,7 @@ export default function StatusBar({
             J.A.R.V.I.S.
           </span>
           <span className="text-3xs text-jarvis-text-dim/30 font-mono hidden sm:inline">
-            v0.2.0
+            v0.3.0
           </span>
         </div>
 
