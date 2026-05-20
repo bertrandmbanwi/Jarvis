@@ -81,6 +81,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return sourceBaseURL
         }()
+        let overlayWebSocketURL: String = {
+            if let explicitURL = ProcessInfo.processInfo.environment["JARVIS_OVERLAY_WS_URL"],
+               !explicitURL.isEmpty {
+                return explicitURL
+            }
+            let apiPort = ProcessInfo.processInfo.environment["JARVIS_API_PORT"] ?? "8741"
+            return "ws://127.0.0.1:\(apiPort)/ws/overlay"
+        }()
+        let overlayWebSocketLiteral: String = {
+            guard
+                let data = try? JSONSerialization.data(withJSONObject: overlayWebSocketURL, options: [.fragmentsAllowed]),
+                let literal = String(data: data, encoding: .utf8)
+            else {
+                return "\"ws://127.0.0.1:8741/ws/overlay\""
+            }
+            return literal
+        }()
 
         let htmlContent = """
         <!DOCTYPE html>
@@ -508,16 +525,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // --- WebSocket ---
                 let ws = null;
                 let reconnectAttempts = 0;
-                const maxReconnectAttempts = 50;
-                const reconnectDelay = 3000;
+                let reconnectTimer = null;
+                const overlayWsUrl = \(overlayWebSocketLiteral);
+                const reconnectBaseDelay = 1000;
+                const reconnectMaxDelay = 5000;
+
+                function scheduleReconnect() {
+                    if (reconnectTimer) return;
+                    reconnectAttempts++;
+                    const delay = Math.min(reconnectMaxDelay, reconnectBaseDelay + reconnectAttempts * 500);
+                    reconnectTimer = setTimeout(() => {
+                        reconnectTimer = null;
+                        connectWebSocket();
+                    }, delay);
+                }
 
                 function connectWebSocket() {
                     try {
-                        ws = new WebSocket('ws://localhost:8741/ws/overlay');
+                        ws = new WebSocket(overlayWsUrl);
 
                         ws.onopen = () => {
                             console.log('Overlay WS connected');
                             reconnectAttempts = 0;
+                            if (reconnectTimer) {
+                                clearTimeout(reconnectTimer);
+                                reconnectTimer = null;
+                            }
                             setState('ready');
                         };
 
@@ -543,20 +576,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                         ws.onclose = () => {
                             setState('offline');
-                            if (reconnectAttempts < maxReconnectAttempts) {
-                                reconnectAttempts++;
-                                setTimeout(connectWebSocket, reconnectDelay);
-                            }
+                            scheduleReconnect();
                         };
 
                         ws.onerror = (error) => {
                             console.error('WS error:', error);
-                            setState('error');
+                            setState('offline');
+                            try { ws?.close(); } catch (e) {}
+                            scheduleReconnect();
                         };
                     } catch (error) {
                         console.error('WS connection failed:', error);
                         setState('offline');
-                        setTimeout(connectWebSocket, reconnectDelay);
+                        scheduleReconnect();
                     }
                 }
 
