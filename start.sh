@@ -316,6 +316,8 @@ if [[ "${MODE}" == "full" ]] && [[ -f "${OVERLAY_DIR}/JarvisOverlay.swift" ]]; t
             sleep 0.5
             echo "Launching Desktop Overlay..."
             # Launch the binary directly (not via 'open') so we get the real PID
+            JARVIS_API_PORT="${API_PORT}" \
+            JARVIS_OVERLAY_WS_URL="ws://127.0.0.1:${API_PORT}/ws/overlay" \
             "${OVERLAY_BIN}" &
             OVERLAY_PID=$!
         fi
@@ -342,7 +344,7 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
         sleep 1
 
         echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} ..."
-        (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
+        (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" NEXT_PUBLIC_JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
         UI_PID=$!
         if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
             echo "Warning: UI did not become ready on port ${UI_PORT}. Retrying once..."
@@ -352,7 +354,7 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
             fi
             stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
             sleep 1
-            (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
+            (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" NEXT_PUBLIC_JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
             UI_PID=$!
             if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
                 echo "Warning: JARVIS UI is still not responding at http://localhost:${UI_PORT}."
