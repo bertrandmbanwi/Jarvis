@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -17,15 +17,20 @@ fi
 "$PYTHON_BIN" scripts/run_evals.py --offline
 "$PYTHON_BIN" -m bandit -q -r jarvis
 
-if [[ -d "$ROOT/jarvis/ui/jarvis-ui/node_modules" ]]; then
+UI_DIR="$ROOT/jarvis/ui/jarvis-ui"
+
+if [[ -d "$UI_DIR/node_modules" ]]; then
   # Next.js can cache absolute paths in .next. On macOS, using the same checkout
   # through different casing (Jarvis vs jarvis) can poison that cache and create
   # duplicate module warnings or prerender failures. Validation should always be
   # path-clean and reproducible.
-  rm -rf "$ROOT/jarvis/ui/jarvis-ui/.next"
-  npm --prefix "$ROOT/jarvis/ui/jarvis-ui" run lint
-  npm --prefix "$ROOT/jarvis/ui/jarvis-ui" run build
-  npm --prefix "$ROOT/jarvis/ui/jarvis-ui" audit --audit-level=high
+  rm -rf "$UI_DIR/.next"
+  (
+    cd "$UI_DIR"
+    npm run lint
+    npm run build
+    npm audit --audit-level=high
+  )
 else
   echo "Skipping frontend validation because node_modules is not installed."
 fi
