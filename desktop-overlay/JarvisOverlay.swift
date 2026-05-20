@@ -10,30 +10,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKeyHandler: EventHandlerRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let mouseLocation = NSEvent.mouseLocation
-        let screens = NSScreen.screens
-        let mouseScreen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
-        let screenMode = ProcessInfo.processInfo.environment["JARVIS_OVERLAY_SCREEN"]?.lowercased() ?? "rightmost"
-        let screen: NSScreen
-        switch screenMode {
-        case "main":
-            screen = NSScreen.main ?? mouseScreen ?? screens[0]
-        case "mouse":
-            screen = mouseScreen ?? NSScreen.main ?? screens[0]
-        case "leftmost":
-            screen = screens.min { $0.visibleFrame.minX < $1.visibleFrame.minX } ?? NSScreen.main ?? screens[0]
-        default:
-            screen = screens.max { $0.visibleFrame.maxX < $1.visibleFrame.maxX } ?? NSScreen.main ?? screens[0]
-        }
-        let screenFrame = screen.visibleFrame
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let screenFrame = screen.frame
 
         // Transparent floating surface for the orb, status, and response text.
-        let windowSize = CGSize(width: 280, height: 280)
-        let horizontalPadding: CGFloat = 44
-        let verticalPadding: CGFloat = 132
+        let windowSize = CGSize(width: 360, height: 400)
+        let padding: CGFloat = 50
         let windowFrame = CGRect(
-            x: screenFrame.maxX - windowSize.width - horizontalPadding,
-            y: screenFrame.minY + verticalPadding,
+            x: screenFrame.width - windowSize.width - padding,
+            y: padding,
             width: windowSize.width,
             height: windowSize.height
         )
@@ -52,10 +37,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let floatingLevel = Int(CGWindowLevelForKey(.floatingWindow))
         window.level = NSWindow.Level(rawValue: floatingLevel)
         window.ignoresMouseEvents = true
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
 
         let webViewConfig = WKWebViewConfiguration()
-        webViewConfig.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
 
         webView = WKWebView(frame: window.contentView?.bounds ?? .zero, configuration: webViewConfig)
         guard let webView = webView else { return }
@@ -69,35 +53,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webView.setValue(false, forKey: "drawsBackground")
 
         window.contentView = webView
-
-        let sourceBaseURL = URL(fileURLWithPath: #file).deletingLastPathComponent()
-        let resourceBaseURL = Bundle.main.resourceURL
-        let bundledThreeURL = resourceBaseURL?.appendingPathComponent("vendor/three.module.min.js")
-        let overlayBaseURL: URL = {
-            if let bundledThreeURL = bundledThreeURL,
-               FileManager.default.fileExists(atPath: bundledThreeURL.path),
-               let resourceBaseURL = resourceBaseURL {
-                return resourceBaseURL
-            }
-            return sourceBaseURL
-        }()
-        let overlayWebSocketURL: String = {
-            if let explicitURL = ProcessInfo.processInfo.environment["JARVIS_OVERLAY_WS_URL"],
-               !explicitURL.isEmpty {
-                return explicitURL
-            }
-            let apiPort = ProcessInfo.processInfo.environment["JARVIS_API_PORT"] ?? "8741"
-            return "ws://127.0.0.1:\(apiPort)/ws/overlay"
-        }()
-        let overlayWebSocketLiteral: String = {
-            guard
-                let data = try? JSONSerialization.data(withJSONObject: overlayWebSocketURL, options: [.fragmentsAllowed]),
-                let literal = String(data: data, encoding: .utf8)
-            else {
-                return "\"ws://127.0.0.1:8741/ws/overlay\""
-            }
-            return literal
-        }()
 
         let htmlContent = """
         <!DOCTYPE html>
@@ -123,60 +78,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     display: flex;
                     flex-direction: column;
                     align-items: center;
-                    justify-content: center;
-                    padding: 0;
+                    justify-content: flex-start;
+                    padding: 18px 10px 8px;
                     position: relative;
                 }
 
                 #panel {
-                    position: absolute;
-                    z-index: 1;
-                    inset: 8px;
-                    border-radius: 50%;
-                    background:
-                        radial-gradient(circle at 50% 48%,
-                            rgba(0, 212, 255, 0.16) 0%,
-                            rgba(4, 18, 30, 0.74) 38%,
-                            rgba(2, 8, 15, 0.66) 67%,
-                            rgba(1, 4, 9, 0.16) 82%,
-                            transparent 100%);
-                    border: 1px solid rgba(0, 212, 255, 0.18);
-                    box-shadow:
-                        inset 0 0 30px rgba(0, 212, 255, 0.10),
-                        0 0 46px rgba(0, 212, 255, 0.11),
-                        0 18px 48px rgba(0, 0, 0, 0.36);
-                    pointer-events: none;
+                    display: none;
                 }
 
                 /* Status indicator row */
                 #status-row {
-                    position: absolute;
-                    top: 24px;
-                    left: 0;
-                    right: 0;
+                    position: relative;
                     z-index: 10;
                     display: flex;
                     align-items: center;
-                    justify-content: center;
                     gap: 8px;
+                    margin-top: 2px;
+                    margin-bottom: 0;
                     text-shadow: 0 0 10px rgba(0, 0, 0, 0.78);
-                    pointer-events: none;
                 }
 
                 #status-dot {
                     width: 6px;
                     height: 6px;
                     border-radius: 50%;
-                    background: rgba(0, 212, 255, 0.62);
+                    background: rgba(0, 212, 255, 0.3);
                     transition: background 0.5s ease, box-shadow 0.5s ease;
-                }
-                #status-dot.offline {
-                    background: rgba(108, 131, 148, 0.5);
-                    box-shadow: 0 0 8px rgba(108, 131, 148, 0.18);
-                }
-                #status-dot.ready {
-                    background: rgba(0, 212, 255, 0.5);
-                    box-shadow: 0 0 8px rgba(0, 212, 255, 0.22);
                 }
                 #status-dot.listening {
                     background: rgba(0, 212, 255, 0.7);
@@ -192,11 +120,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     background: rgba(255, 225, 140, 0.7);
                     box-shadow: 0 0 10px rgba(255, 225, 140, 0.4);
                 }
-                #status-dot.error {
-                    background: rgba(255, 80, 40, 0.7);
-                    box-shadow: 0 0 10px rgba(255, 80, 40, 0.35);
-                    animation: dotPulse 1.0s ease-in-out infinite;
-                }
 
                 @keyframes dotPulse {
                     0%, 100% { opacity: 0.5; transform: scale(1); }
@@ -208,29 +131,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     font-weight: 500;
                     letter-spacing: 0.2em;
                     text-transform: uppercase;
-                    color: rgba(0, 212, 255, 0.68);
+                    color: rgba(0, 212, 255, 0.35);
                     transition: color 0.5s ease;
                     text-shadow: 0 0 12px rgba(0, 0, 0, 0.85);
                 }
-                #status-label.offline { color: rgba(176, 204, 222, 0.72); }
-                #status-label.ready { color: rgba(0, 212, 255, 0.78); }
-                #status-label.listening { color: rgba(0, 212, 255, 0.88); }
-                #status-label.thinking  { color: rgba(255, 225, 140, 0.82); }
-                #status-label.speaking  { color: rgba(255, 225, 140, 0.88); }
-                #status-label.error { color: rgba(255, 160, 140, 0.68); }
+                #status-label.listening { color: rgba(0, 212, 255, 0.65); }
+                #status-label.thinking  { color: rgba(255, 225, 140, 0.55); }
+                #status-label.speaking  { color: rgba(255, 225, 140, 0.65); }
 
                 /* Canvas container for the orb */
                 #orb-container {
                     position: relative;
                     z-index: 5;
-                    width: 248px;
-                    height: 248px;
+                    width: 260px;
+                    height: 260px;
                     flex-shrink: 0;
                     border-radius: 50%;
                     overflow: hidden;
                     -webkit-mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
                     mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
-                    filter: brightness(1.22) saturate(1.16) drop-shadow(0 0 22px rgba(0, 212, 255, 0.30));
+                    filter: brightness(1.1) saturate(1.08) drop-shadow(0 0 18px rgba(0, 212, 255, 0.22));
                 }
                 #orb-container::before {
                     content: '';
@@ -239,9 +159,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     border-radius: 50%;
                     background:
                         radial-gradient(circle,
-                            rgba(1, 7, 15, 0.82) 0%,
-                            rgba(1, 10, 20, 0.68) 42%,
-                            rgba(1, 10, 20, 0.34) 64%,
+                            rgba(1, 7, 15, 0.56) 0%,
+                            rgba(1, 10, 20, 0.36) 42%,
+                            rgba(1, 10, 20, 0.14) 64%,
                             transparent 82%);
                     filter: blur(8px);
                     pointer-events: none;
@@ -256,20 +176,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 /* Text display area below orb */
                 #text-area {
-                    position: absolute;
-                    bottom: 22px;
-                    left: 50%;
-                    transform: translateX(-50%);
+                    position: relative;
                     z-index: 10;
-                    width: 190px;
-                    padding: 0 10px;
+                    width: 320px;
+                    padding: 0 18px;
                     text-align: center;
-                    max-height: 62px;
+                    max-height: 100px;
                     overflow: hidden;
                     text-shadow:
                         0 0 12px rgba(0, 0, 0, 0.95),
                         0 1px 2px rgba(0, 0, 0, 0.95);
-                    pointer-events: none;
                 }
 
                 #user-text {
@@ -292,14 +208,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 #response-text {
-                    font-size: 10px;
+                    font-size: 11px;
                     color: rgba(255, 255, 255, 0.68);
-                    line-height: 1.4;
+                    line-height: 1.5;
                     opacity: 0;
                     transform: translateY(6px);
                     transition: opacity 0.8s ease, transform 0.8s ease;
                     display: -webkit-box;
-                    -webkit-line-clamp: 2;
+                    -webkit-line-clamp: 4;
                     -webkit-box-orient: vertical;
                     overflow: hidden;
                 }
@@ -314,7 +230,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 <div id="panel"></div>
                 <div id="status-row">
                     <div id="status-dot"></div>
-                    <div id="status-label">WAKING UP</div>
+                    <div id="status-label">STANDING BY</div>
                 </div>
                 <div id="orb-container"></div>
                 <div id="text-area">
@@ -322,9 +238,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     <div id="response-text"></div>
                 </div>
             </div>
-            <script type="module">
-                import * as THREE from './vendor/three.module.min.js';
-
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+            <script>
                 // --- DOM refs ---
                 const statusDot = document.getElementById('status-dot');
                 const statusLabel = document.getElementById('status-label');
@@ -333,20 +248,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 const orbContainer = document.getElementById('orb-container');
 
                 const stateLabels = {
-                    offline: 'OFFLINE',
-                    idle: 'WAKING UP',
-                    ready: 'READY',
+                    idle: 'STANDING BY',
                     listening: 'LISTENING',
                     thinking: 'PROCESSING',
-                    speaking: 'SPEAKING',
-                    error: 'ERROR'
+                    speaking: 'SPEAKING'
                 };
 
                 // --- Three.js scene ---
                 const scene = new THREE.Scene();
                 const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
                 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-                renderer.setSize(248, 248);
+                renderer.setSize(260, 260);
                 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
                 renderer.setClearColor(0x000000, 0);
                 orbContainer.appendChild(renderer.domElement);
@@ -512,8 +424,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let amplitudeEnvelope = [];
                 let amplitudeDuration = 0;
                 let amplitudeStartMs = 0;
-                let responseTextTimer = null;
-                let userTextTimer = null;
 
                 // Color targets for state transitions
                 const cyanColor = [0.0, 0.832, 1.0];
@@ -525,40 +435,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // --- WebSocket ---
                 let ws = null;
                 let reconnectAttempts = 0;
-                let reconnectTimer = null;
-                const overlayWsUrl = \(overlayWebSocketLiteral);
-                const reconnectBaseDelay = 1000;
-                const reconnectMaxDelay = 5000;
-
-                function scheduleReconnect() {
-                    if (reconnectTimer) return;
-                    reconnectAttempts++;
-                    const delay = Math.min(reconnectMaxDelay, reconnectBaseDelay + reconnectAttempts * 500);
-                    reconnectTimer = setTimeout(() => {
-                        reconnectTimer = null;
-                        connectWebSocket();
-                    }, delay);
-                }
+                const maxReconnectAttempts = 50;
+                const reconnectDelay = 3000;
 
                 function connectWebSocket() {
                     try {
-                        ws = new WebSocket(overlayWsUrl);
+                        ws = new WebSocket('ws://localhost:8741/ws/overlay');
 
                         ws.onopen = () => {
                             console.log('Overlay WS connected');
                             reconnectAttempts = 0;
-                            if (reconnectTimer) {
-                                clearTimeout(reconnectTimer);
-                                reconnectTimer = null;
-                            }
-                            setState('ready');
                         };
 
                         ws.onmessage = (event) => {
                             try {
                                 const data = JSON.parse(event.data);
-                                if (data.activationAccepted === false) setState('ready');
-                                if (data.state) setState(data.state === 'idle' ? 'ready' : data.state);
+                                if (data.activationAccepted === false) setState('idle');
+                                if (data.state) setState(data.state);
                                 if (data.text !== undefined) setResponseText(data.text);
                                 if (data.userText !== undefined) setUserText(data.userText);
                                 if (data.voiceSpeaking !== undefined || data.voice_speaking !== undefined) {
@@ -575,20 +468,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         };
 
                         ws.onclose = () => {
-                            setState('offline');
-                            scheduleReconnect();
+                            if (reconnectAttempts < maxReconnectAttempts) {
+                                reconnectAttempts++;
+                                setTimeout(connectWebSocket, reconnectDelay);
+                            }
                         };
 
                         ws.onerror = (error) => {
                             console.error('WS error:', error);
-                            setState('offline');
-                            try { ws?.close(); } catch (e) {}
-                            scheduleReconnect();
                         };
                     } catch (error) {
                         console.error('WS connection failed:', error);
-                        setState('offline');
-                        scheduleReconnect();
+                        setTimeout(connectWebSocket, reconnectDelay);
                     }
                 }
 
@@ -621,29 +512,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                     // Update visual targets
                     switch (newState) {
-                        case 'offline':
-                            targetCompactness = 0.74;
-                            targetSpeed = 0.002;
-                            targetBrightness = 0.34;
-                            showConnections = false;
-                            targetColor = [0.42, 0.52, 0.60];
-                            targetGlowIntensity = 0.20;
-                            break;
                         case 'idle':
-                            targetCompactness = 0.78;
-                            targetSpeed = 0.003;
-                            targetBrightness = 0.48;
-                            showConnections = false;
-                            targetColor = cyanColor;
-                            targetGlowIntensity = 0.28;
-                            break;
-                        case 'ready':
                             targetCompactness = 0.85;
                             targetSpeed = 0.005;
-                            targetBrightness = 0.68;
+                            targetBrightness = 0.76;
                             showConnections = false;
                             targetColor = cyanColor;
-                            targetGlowIntensity = 0.36;
+                            targetGlowIntensity = 0.42;
                             break;
                         case 'listening':
                             targetCompactness = 0.92;
@@ -669,54 +544,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             targetColor = goldColor;
                             targetGlowIntensity = 0.62;
                             break;
-                        case 'error':
-                            targetCompactness = 0.74;
-                            targetSpeed = 0.004;
-                            targetBrightness = 0.50;
-                            showConnections = false;
-                            targetColor = [1.0, 0.32, 0.16];
-                            targetGlowIntensity = 0.30;
-                            break;
                     }
                 }
 
                 function setResponseText(text) {
-                    if (responseTextTimer) {
-                        clearTimeout(responseTextTimer);
-                        responseTextTimer = null;
-                    }
                     if (!text) {
                         responseTextEl.classList.remove('visible');
-                        responseTextEl.textContent = '';
                         return;
                     }
                     const display = text.length > 180 ? text.slice(0, 180) + '...' : text;
                     responseTextEl.textContent = display;
                     responseTextEl.classList.add('visible');
-                    responseTextTimer = setTimeout(() => {
-                        responseTextEl.classList.remove('visible');
-                        responseTextEl.textContent = '';
-                        responseTextTimer = null;
-                    }, 12000);
                 }
 
                 function setUserText(text) {
-                    if (userTextTimer) {
-                        clearTimeout(userTextTimer);
-                        userTextTimer = null;
-                    }
                     if (!text) {
                         userTextEl.classList.remove('visible');
-                        userTextEl.textContent = '';
                         return;
                     }
                     userTextEl.textContent = '"' + text + '"';
                     userTextEl.classList.add('visible');
-                    userTextTimer = setTimeout(() => {
-                        userTextEl.classList.remove('visible');
-                        userTextEl.textContent = '';
-                        userTextTimer = null;
-                    }, 8000);
                 }
 
                 function setVoiceSpeaking(speaking) {
@@ -731,7 +578,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     currentAudioAmp = 0;
                     setResponseText('');
                     setUserText('');
-                    if (state === 'speaking') setState('ready');
+                    if (state === 'speaking') setState('idle');
                 }
 
                 function startAmplitudeEnvelope(envelope, duration) {
@@ -940,9 +787,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         </html>
         """
 
-        webView.loadHTMLString(htmlContent, baseURL: overlayBaseURL)
+        webView.loadHTMLString(htmlContent, baseURL: nil)
         window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
         registerGlobalHotKey()
     }
 

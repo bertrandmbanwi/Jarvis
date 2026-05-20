@@ -35,14 +35,10 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
     resize();
     window.addEventListener('resize', resize);
     const t0 = performance.now();
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const draw = (now: number) => {
-      if (!reduceMotion) {
-        frameRef.current = requestAnimationFrame(draw);
-      }
-      const t = reduceMotion ? 0 : (now - t0) / 1000;
-      const effectiveProgress = reduceMotion ? Math.min(1, progress) : progress;
+      frameRef.current = requestAnimationFrame(draw);
+      const t = (now - t0) / 1000;
       const r = canvas.getBoundingClientRect();
       const W = r.width, H = r.height;
       const cx = W / 2, cy = H / 2;
@@ -52,11 +48,11 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
 
-      const masterAlpha = effectiveProgress > 1.0 ? Math.max(0, 2.0 - effectiveProgress) : Math.min(1, effectiveProgress * 1.5);
+      const masterAlpha = progress > 1.0 ? Math.max(0, 2.0 - progress) : Math.min(1, progress * 1.5);
       if (masterAlpha <= 0) return;
       ctx.globalAlpha = masterAlpha;
 
-      const ringReveal = Math.min(1, effectiveProgress * 1.2);
+      const ringReveal = Math.min(1, progress * 1.2);
       const rot = t * 0.08;
 
       // Ambient glow background
@@ -129,7 +125,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
         }
       }
 
-      const dataReveal = Math.max(0, Math.min(1, (effectiveProgress - 0.3) * 2.5));
+      const dataReveal = Math.max(0, Math.min(1, (progress - 0.3) * 2.5));
       if (dataReveal > 0) {
         ctx.globalAlpha = masterAlpha * dataReveal;
 
@@ -159,7 +155,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
         ctx.globalAlpha = masterAlpha;
       }
 
-      const coreReveal = Math.max(0, Math.min(1, (effectiveProgress - 0.1) * 2));
+      const coreReveal = Math.max(0, Math.min(1, (progress - 0.1) * 2));
       const coreR = maxR * 0.15;
       const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
       cg.addColorStop(0, rgba(WHITE, 0.7 * coreReveal));
@@ -178,7 +174,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
       ctx.arc(cx, cy, pulseR, 0, Math.PI * 2);
       ctx.stroke();
 
-      const textReveal = Math.max(0, Math.min(1, (effectiveProgress - 0.4) * 2));
+      const textReveal = Math.max(0, Math.min(1, (progress - 0.4) * 2));
       if (textReveal > 0) {
         const fontSize = Math.max(14, maxR * 0.13);
         ctx.font = `300 ${fontSize}px "SF Pro Display", "Inter", "Segoe UI", system-ui, sans-serif`;
@@ -189,26 +185,26 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
         ctx.shadowColor = rgba(CYAN, 0.8 * textReveal);
         ctx.shadowBlur = 20;
         ctx.fillStyle = rgba(CYAN_BRIGHT, 0.9 * textReveal);
-        ctx.fillText('JARVIS', cx + fontSize * 0.15, cy);
+        ctx.fillText('J . A . R . V . I . S', cx + fontSize * 0.15, cy);
         ctx.shadowBlur = 0;
 
-        const subReveal = Math.max(0, Math.min(1, (effectiveProgress - 0.6) * 2.5));
+        const subReveal = Math.max(0, Math.min(1, (progress - 0.6) * 2.5));
         if (subReveal > 0) {
           const subSize = Math.max(8, maxR * 0.04);
           ctx.font = `300 ${subSize}px "SF Pro Display", "Inter", "Segoe UI", system-ui, sans-serif`;
           ctx.fillStyle = rgba(CYAN, 0.4 * subReveal);
-          ctx.fillText('PRIVATE LOCAL ASSISTANT', cx, cy + fontSize * 1.1);
+          ctx.fillText('JUST A RATHER VERY INTELLIGENT SYSTEM', cx, cy + fontSize * 1.1);
 
-          const verReveal = Math.max(0, Math.min(1, (effectiveProgress - 0.7) * 3));
+          const verReveal = Math.max(0, Math.min(1, (progress - 0.7) * 3));
           if (verReveal > 0) {
             ctx.font = `300 ${subSize * 0.8}px "SF Pro Display", "Inter", "Segoe UI", system-ui, sans-serif`;
             ctx.fillStyle = rgba(CYAN, 0.25 * verReveal);
-            ctx.fillText('LOCAL SYSTEM ONLINE', cx, cy + fontSize * 1.1 + subSize * 2);
+            ctx.fillText('v0.2.0  //  SYSTEMS ONLINE', cx, cy + fontSize * 1.1 + subSize * 2);
           }
         }
       }
 
-      const statusReveal = Math.max(0, Math.min(1, (effectiveProgress - 0.6) * 2));
+      const statusReveal = Math.max(0, Math.min(1, (progress - 0.6) * 2));
       if (statusReveal > 0) {
         ctx.globalAlpha = masterAlpha * statusReveal;
         const labels = ['NEURAL NET', 'VOICE SYS', 'MEMORY', 'COMMS'];
@@ -218,7 +214,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
 
         for (let i = 0; i < labels.length; i++) {
           const lx = startX + spacing * i;
-          const dotOn = effectiveProgress > 0.7 + i * 0.08;
+          const dotOn = progress > 0.7 + i * 0.08;
 
           ctx.fillStyle = dotOn ? rgba(CYAN_BRIGHT, 0.8) : rgba(CYAN, 0.15);
           ctx.beginPath();
@@ -248,11 +244,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ progress, className = ''
       ctx.globalAlpha = 1;
     };
 
-    if (reduceMotion) {
-      draw(performance.now());
-    } else {
-      frameRef.current = requestAnimationFrame(draw);
-    }
+    frameRef.current = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(frameRef.current);
       window.removeEventListener('resize', resize);

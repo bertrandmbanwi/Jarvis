@@ -200,11 +200,4 @@ export interface WSMessage {
   error?: string;
 }
 
-export type OrbState =
-  | "offline"
-  | "idle"
-  | "ready"
-  | "listening"
-  | "thinking"
-  | "speaking"
-  | "error";
+export type OrbState = "idle" | "listening" | "thinking" | "speaking" | "error";

@@ -277,24 +277,10 @@ write_lifecycle_state "starting"
 OVERLAY_DIR="${SCRIPT_DIR}/desktop-overlay"
 OVERLAY_APP="${OVERLAY_DIR}/build/JarvisOverlay.app"
 OVERLAY_BIN="${OVERLAY_APP}/Contents/MacOS/JarvisOverlay"
-OVERLAY_VENDOR_SRC="${OVERLAY_DIR}/vendor/three.module.min.js"
-OVERLAY_VENDOR_BUNDLE="${OVERLAY_APP}/Contents/Resources/vendor/three.module.min.js"
 if [[ "${MODE}" == "full" ]] && [[ -f "${OVERLAY_DIR}/JarvisOverlay.swift" ]]; then
     if command -v swiftc &>/dev/null; then
-        OVERLAY_NEEDS_BUILD=false
+        # Build if executable is missing (not just .app directory)
         if [[ ! -x "${OVERLAY_BIN}" ]]; then
-            OVERLAY_NEEDS_BUILD=true
-        elif [[ "${OVERLAY_DIR}/JarvisOverlay.swift" -nt "${OVERLAY_BIN}" ]]; then
-            OVERLAY_NEEDS_BUILD=true
-        elif [[ "${OVERLAY_DIR}/build-overlay.sh" -nt "${OVERLAY_BIN}" ]]; then
-            OVERLAY_NEEDS_BUILD=true
-        elif [[ ! -f "${OVERLAY_VENDOR_BUNDLE}" ]]; then
-            OVERLAY_NEEDS_BUILD=true
-        elif [[ -f "${OVERLAY_VENDOR_SRC}" && "${OVERLAY_VENDOR_SRC}" -nt "${OVERLAY_VENDOR_BUNDLE}" ]]; then
-            OVERLAY_NEEDS_BUILD=true
-        fi
-
-        if [[ "${OVERLAY_NEEDS_BUILD}" == "true" ]]; then
             # Clean stale/broken builds
             rm -rf "${OVERLAY_DIR}/build" 2>/dev/null || true
             echo "Building JARVIS Desktop Overlay..."
@@ -316,8 +302,6 @@ if [[ "${MODE}" == "full" ]] && [[ -f "${OVERLAY_DIR}/JarvisOverlay.swift" ]]; t
             sleep 0.5
             echo "Launching Desktop Overlay..."
             # Launch the binary directly (not via 'open') so we get the real PID
-            JARVIS_API_PORT="${API_PORT}" \
-            JARVIS_OVERLAY_WS_URL="ws://127.0.0.1:${API_PORT}/ws/overlay" \
             "${OVERLAY_BIN}" &
             OVERLAY_PID=$!
         fi
@@ -344,7 +328,7 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
         sleep 1
 
         echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} ..."
-        (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" NEXT_PUBLIC_JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
+        (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
         UI_PID=$!
         if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
             echo "Warning: UI did not become ready on port ${UI_PORT}. Retrying once..."
@@ -354,7 +338,7 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
             fi
             stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
             sleep 1
-            (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" NEXT_PUBLIC_JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
+            (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}") &
             UI_PID=$!
             if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
                 echo "Warning: JARVIS UI is still not responding at http://localhost:${UI_PORT}."

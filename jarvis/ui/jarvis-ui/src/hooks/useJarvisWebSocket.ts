@@ -241,7 +241,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
           const data: WSMessage = JSON.parse(event.data);
 
           if (data.error) {
-            console.info("[JARVIS WS] Server error:", data.error);
+            console.error("[JARVIS WS] Server error:", data.error);
             setIsProcessing(false);
             setIsStreaming(false);
             return;
@@ -694,7 +694,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
             }
           }
         } catch (e) {
-          console.debug("[JARVIS WS] Parse error:", e);
+          console.error("[JARVIS WS] Parse error:", e);
         }
       };
 
@@ -712,12 +712,12 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
         }
       };
 
-      ws.onerror = () => {
-        console.info("[JARVIS WS] Connection unavailable; waiting to reconnect.");
+      ws.onerror = (err) => {
+        console.warn("[JARVIS WS] Error:", err);
         setStatus("error");
       };
     } catch (e) {
-      console.info("[JARVIS WS] Connection failed:", e);
+      console.warn("[JARVIS WS] Connection failed:", e);
       setStatus("error");
     }
   }, [authToken]);
@@ -738,7 +738,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
 
   const sendMessage = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.debug("[JARVIS WS] Cannot send: not connected");
+      console.error("[JARVIS WS] Cannot send: not connected");
       return;
     }
 

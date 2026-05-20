@@ -5,7 +5,6 @@ import { ViewMode, OrbState } from "@/lib/types";
 import { useJarvisWebSocket } from "@/hooks/useJarvisWebSocket";
 import { useServerStatus } from "@/hooks/useServerStatus";
 import { useAuth } from "@/hooks/useAuth";
-import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 import StatusBar from "@/components/shared/StatusBar";
 import ProactiveToast from "@/components/shared/ProactiveToast";
 import PlanProgress from "@/components/shared/PlanProgress";
@@ -23,8 +22,6 @@ export default function Page() {
   const [viewMode, setViewMode] = useState<ViewMode>("cinematic");
   const [speakingLinger, setSpeakingLinger] = useState(false);
   const [isBrowserMicRecording, setIsBrowserMicRecording] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [userName, setUserName] = useState("You");
   const lingerTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
@@ -44,32 +41,6 @@ export default function Page() {
   } = useJarvisWebSocket(authState.token);
 
   const { serverStatus } = useServerStatus(authState.token);
-
-  useEffect(() => {
-    if (authState.isLoading || !authState.isAuthenticated) return;
-
-    let cancelled = false;
-    async function loadProfile() {
-      try {
-        const response = await fetch(`${getApiBaseUrl()}/profile`, {
-          headers: jarvisHeaders(authState.token),
-        });
-        if (!response.ok) return;
-        const profile = await response.json();
-        const displayName = typeof profile?.name === "string" ? profile.name.trim() : "";
-        if (!cancelled && displayName) {
-          setUserName(displayName);
-        }
-      } catch {
-        // The name is cosmetic; the conversation UI remains usable without it.
-      }
-    }
-
-    loadProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [authState.isAuthenticated, authState.isLoading, authState.token]);
 
   const prevStreamingRef = useRef(false);
   const prevVoiceSpeakingRef = useRef(false);
@@ -118,14 +89,12 @@ export default function Page() {
 
   const orbState: OrbState = useMemo(() => {
     if (connectionStatus === "error") return "error";
-    if (connectionStatus === "disconnected") return "offline";
-    if (connectionStatus === "connecting") return "idle";
     if (isProcessing) return "thinking";
     if (isStreaming) return "speaking";
     if (isVoiceSpeaking) return "speaking";
     if (speakingLinger) return "speaking";
     if (isBrowserMicRecording) return "listening";
-    return "ready";
+    return "idle";
   }, [connectionStatus, isProcessing, isStreaming, isVoiceSpeaking, speakingLinger, isBrowserMicRecording]);
 
   const handleChatSubmit = useCallback(
@@ -155,15 +124,12 @@ export default function Page() {
   }
 
   return (
-    <div className="h-dvh w-screen flex flex-col jarvis-shell overflow-hidden safe-top safe-bottom">
+    <div className="h-dvh w-screen flex flex-col bg-black overflow-hidden safe-top safe-bottom">
       <StatusBar
         viewMode={viewMode}
         onModeChange={handleModeChange}
         connectionStatus={connectionStatus}
         sessionCost={sessionCost}
-        version={serverStatus?.version}
-        settingsOpen={isSettingsOpen}
-        onSettingsClick={() => setIsSettingsOpen((open) => !open)}
       />
 
       <div
@@ -191,7 +157,6 @@ export default function Page() {
           disabled={connectionStatus !== "connected"}
           onBrowserMicState={handleBrowserMicState}
           authToken={authState.token}
-          userName={userName}
         />
       )}
 
@@ -203,7 +168,6 @@ export default function Page() {
           isProcessing={isActive}
           onClearConversation={clearMessages}
           authToken={authState.token}
-          userName={userName}
         />
       )}
 
@@ -218,11 +182,7 @@ export default function Page() {
 
       <PlanProgress plan={activePlan} />
 
-      <SettingsPanel
-        authToken={authState.token}
-        isOpen={isSettingsOpen}
-        onOpenChange={setIsSettingsOpen}
-      />
+      <SettingsPanel authToken={authState.token} />
     </div>
   );
 }
