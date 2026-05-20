@@ -1,6 +1,7 @@
 """Tests for the macOS app packaging script."""
 import plistlib
 import subprocess
+from pathlib import Path
 
 
 def test_package_macos_app_creates_launcher_bundle(tmp_path):
@@ -25,7 +26,9 @@ def test_package_macos_app_creates_launcher_bundle(tmp_path):
     assert "Created" in result.stdout
     assert executable.exists()
     assert executable.stat().st_mode & 0o111
-    assert home_file.read_text(encoding="utf-8").strip().endswith("Jarvis")
+    linked_home = Path(home_file.read_text(encoding="utf-8").strip())
+    assert linked_home.exists()
+    assert linked_home.samefile(Path.cwd())
 
     with plist_path.open("rb") as fh:
         plist = plistlib.load(fh)
