@@ -13,7 +13,6 @@ interface ChatViewProps {
   disabled: boolean;
   onBrowserMicState?: (recording: boolean) => void;
   authToken?: string | null;
-  userName?: string;
 }
 
 export default function ChatView({
@@ -24,7 +23,6 @@ export default function ChatView({
   disabled,
   onBrowserMicState,
   authToken,
-  userName = "You",
 }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -42,21 +40,21 @@ export default function ChatView({
   );
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden dashboard-shell">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.07] bg-black/20 backdrop-blur-xl flex-shrink-0">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-2.5 border-b border-white/[0.04] bg-jarvis-surface/60 backdrop-blur-lg flex-shrink-0">
         <div className="flex items-center gap-2">
-          <h2 className="text-xs font-semibold text-jarvis-text/82">
+          <h2 className="text-2xs font-medium text-jarvis-text-dim/55 uppercase tracking-[0.12em]">
             Conversation
           </h2>
           {visibleMessages.length > 0 && (
-            <span className="text-2xs text-jarvis-text-dim/65 font-mono tabular-nums">
+            <span className="text-3xs text-jarvis-text-dim/25 font-mono tabular-nums">
               {visibleMessages.length}
             </span>
           )}
         </div>
         <button
           onClick={onClearConversation}
-          className="jarvis-btn-ghost text-2xs px-3 py-1.5 rounded-md"
+          className="jarvis-btn-ghost text-3xs uppercase tracking-wider px-2 py-1 rounded-md"
           aria-label="Clear conversation"
         >
           Clear
@@ -65,7 +63,7 @@ export default function ChatView({
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 jarvis-scrollbar"
+        className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 jarvis-scrollbar"
       >
         {visibleMessages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center h-full">
@@ -81,8 +79,8 @@ export default function ChatView({
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth="1.4"
-                  className="text-jarvis-cyan/55"
+                  strokeWidth="1"
+                  className="text-jarvis-cyan/20"
                 >
                   <path
                     d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
@@ -91,13 +89,16 @@ export default function ChatView({
                   />
                 </svg>
               </div>
-              <p className="text-base text-jarvis-text/82 font-medium">
-                Conversation ready
+              <p className="text-sm text-jarvis-text-dim/35 font-light">
+                Start a conversation with JARVIS
+              </p>
+              <p className="text-2xs text-jarvis-text-dim/20 mt-1.5">
+                Type below or switch to Voice mode
               </p>
             </div>
           </div>
         ) : (
-          <div className="space-y-2 max-w-4xl mx-auto">
+          <div className="space-y-1 max-w-3xl mx-auto">
             {visibleMessages.map((msg, index) => {
               const isUser = msg.role === "user";
               const isLast = index === visibleMessages.length - 1;
@@ -109,26 +110,26 @@ export default function ChatView({
                 >
                   <div className="flex items-start gap-3">
                     <div className={`
-                        w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0
-                        text-[11px] font-semibold mt-0.5
+                        w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0
+                        text-3xs font-semibold mt-0.5
                         transition-colors duration-200
                         ${isUser
-                          ? "bg-jarvis-cyan/12 text-jarvis-cyan border border-jarvis-cyan/20"
-                          : "bg-jarvis-gold/10 text-jarvis-gold/80 border border-jarvis-gold/20"
+                          ? "bg-jarvis-cyan/8 text-jarvis-cyan/60 border border-jarvis-cyan/12"
+                          : "bg-white/[0.03] text-jarvis-text-dim/50 border border-white/[0.06]"
                         }
                       `}>
-                      {isUser ? userName.slice(0, 1).toUpperCase() || "Y" : "J"}
+                      {isUser ? "B" : "J"}
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-semibold text-jarvis-text/75">
-                          {isUser ? userName : "Jarvis"}
+                        <span className="text-2xs font-medium text-jarvis-text-dim/55">
+                          {isUser ? "Becs" : "JARVIS"}
                         </span>
                         {!isUser && (msg.agentType || msg.tierUsed) && (
                           <AgentBadge agentType={msg.agentType} tierUsed={msg.tierUsed} />
                         )}
-                        <span className="text-2xs text-jarvis-text-dim/45 font-mono tabular-nums">
+                        <span className="text-3xs text-jarvis-text-dim/20 font-mono tabular-nums">
                           {new Date(msg.timestamp).toLocaleTimeString([], {
                             hour: "2-digit",
                             minute: "2-digit",
@@ -137,9 +138,9 @@ export default function ChatView({
                       </div>
 
                       <div className={`message-bubble ${isUser ? 'message-bubble-user' : 'message-bubble-assistant'}`}>
-                        <div className="text-[14px] text-jarvis-text/88 leading-relaxed whitespace-pre-wrap">
+                        <div className="text-[13px] text-jarvis-text/80 leading-relaxed whitespace-pre-wrap">
                           {msg.content || (
-                            <span className="text-jarvis-text-dim/70 italic text-xs">
+                            <span className="text-jarvis-text-dim/40 italic text-xs">
                               Thinking...
                             </span>
                           )}
@@ -152,7 +153,7 @@ export default function ChatView({
             })}
 
             {isProcessing && (
-              <div className="flex items-center gap-2.5 text-jarvis-text-dim/70 text-xs pl-10 py-3 animate-fade-in">
+              <div className="flex items-center gap-2.5 text-jarvis-text-dim/50 text-xs pl-10 py-3 animate-fade-in">
                 <div className="typing-dots flex items-center">
                   <span></span>
                   <span></span>

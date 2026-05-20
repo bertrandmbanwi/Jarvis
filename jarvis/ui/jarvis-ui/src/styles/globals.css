@@ -19,12 +19,9 @@
   --color-green-400: #00ff88;
   --color-amber-400: #ffaa00;
   --color-red-400: #ff4444;
-  --color-surface-base: #03070b;
-  --color-surface-deep: #050b12;
-  --color-surface-elevated: rgba(9, 18, 28, 0.94);
-  --color-surface-overlay: rgba(9, 22, 34, 0.82);
-  --color-surface-frost: rgba(18, 30, 43, 0.68);
-  --color-surface-warm: rgba(28, 24, 18, 0.62);
+  --color-surface-base: #000408;
+  --color-surface-elevated: rgba(0, 10, 25, 0.95);
+  --color-surface-overlay: rgba(0, 20, 40, 0.85);
   --color-white-alpha-3: rgba(255, 255, 255, 0.03);
   --color-white-alpha-5: rgba(255, 255, 255, 0.05);
   --color-white-alpha-6: rgba(255, 255, 255, 0.06);
@@ -39,14 +36,11 @@
   --jarvis-blue-dark: var(--color-blue-900);
   --jarvis-glow: #00e5ff;
   --jarvis-panel: var(--color-surface-overlay);
-  --jarvis-panel-border: rgba(117, 213, 255, 0.16);
+  --jarvis-panel-border: rgba(0, 212, 255, 0.12);
   --jarvis-surface: var(--color-surface-elevated);
-  --jarvis-text: #f2f8ff;
-  --jarvis-text-dim: #9bb6c8;
-  --jarvis-text-muted: #6c8394;
+  --jarvis-text: #e0f0ff;
+  --jarvis-text-dim: #5588aa;
   --jarvis-gold: var(--color-gold-300);
-  --jarvis-ember: #ff9f5a;
-  --jarvis-violet: #9f8cff;
 
   /* ---- Motion Tokens ---- */
   --duration-fast: 150ms;
@@ -70,9 +64,9 @@
 
   /* ---- Border Radius ---- */
   --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
 
   /* ---- Elevation/Shadow Scale ---- */
@@ -80,8 +74,8 @@
   --shadow-glow-md: 0 0 16px rgba(0, 212, 255, 0.2), 0 0 4px rgba(0, 212, 255, 0.1);
   --shadow-glow-lg: 0 0 30px rgba(0, 212, 255, 0.25), 0 0 8px rgba(0, 212, 255, 0.15);
   --shadow-glow-gold: 0 0 20px rgba(255, 225, 140, 0.2), 0 0 6px rgba(255, 225, 140, 0.1);
-  --shadow-glass: 0 20px 70px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  --shadow-panel: 0 10px 40px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+  --shadow-panel: 0 2px 12px rgba(0, 0, 0, 0.3), inset 0 0.5px 0 rgba(255, 255, 255, 0.04);
 }
 
 /* ============================================================
@@ -97,26 +91,12 @@
 html, body {
   height: 100%;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(0, 212, 255, 0.08), transparent 30%),
-    radial-gradient(circle at 82% 16%, rgba(255, 225, 140, 0.045), transparent 28%),
-    linear-gradient(135deg, #020508 0%, #07111a 45%, #020407 100%);
+  background: var(--color-surface-base);
   color: var(--jarvis-text);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
-}
-
-button,
-input {
-  font: inherit;
-}
-
-button:focus-visible,
-input:focus-visible {
-  outline: 2px solid rgba(126, 219, 255, 0.72);
-  outline-offset: 3px;
 }
 
 /* ============================================================
@@ -161,250 +141,20 @@ input:focus-visible {
 }
 
 .jarvis-glass {
-  background: linear-gradient(145deg, rgba(17, 31, 44, 0.74), rgba(6, 15, 24, 0.68));
-  border: 1px solid rgba(145, 220, 255, 0.12);
+  background: rgba(0, 15, 35, 0.6);
+  border: 1px solid rgba(0, 212, 255, 0.08);
   border-radius: var(--radius-lg);
-  backdrop-filter: blur(26px) saturate(1.25);
-  -webkit-backdrop-filter: blur(26px) saturate(1.25);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
   box-shadow: var(--shadow-glass);
 }
 
 .jarvis-glass-subtle {
-  background: rgba(12, 23, 34, 0.56);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 12, 28, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: var(--radius-md);
-  backdrop-filter: blur(18px) saturate(1.12);
-  -webkit-backdrop-filter: blur(18px) saturate(1.12);
-}
-
-.jarvis-shell {
-  background:
-    radial-gradient(circle at 25% 0%, rgba(0, 212, 255, 0.10), transparent 28%),
-    radial-gradient(circle at 78% 12%, rgba(255, 225, 140, 0.055), transparent 24%),
-    linear-gradient(135deg, #020509 0%, #07111a 42%, #020406 100%);
-}
-
-.jarvis-command-bar {
-  background:
-    linear-gradient(180deg, rgba(15, 27, 39, 0.92), rgba(5, 12, 20, 0.82)),
-    radial-gradient(circle at 18% 0%, rgba(0, 212, 255, 0.14), transparent 40%);
-  border-bottom: 1px solid rgba(151, 221, 255, 0.12);
-  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.055);
-}
-
-.jarvis-nav-shell {
-  background: rgba(1, 7, 12, 0.46);
-  border: 1px solid rgba(157, 223, 255, 0.10);
-  border-radius: var(--radius-full);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
-}
-
-.jarvis-nav-tab {
-  min-height: 34px;
-  border-radius: var(--radius-full);
-}
-
-.jarvis-nav-tab-active {
-  background:
-    linear-gradient(180deg, rgba(0, 212, 255, 0.17), rgba(0, 117, 153, 0.10)),
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.11), transparent 58%);
-  border-color: rgba(121, 223, 255, 0.25);
-  box-shadow: 0 0 18px rgba(0, 212, 255, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.09);
-}
-
-.quiet-icon-button {
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(145, 220, 255, 0.12);
-  border-radius: var(--radius-md);
-  color: rgba(187, 215, 230, 0.72);
-  background: rgba(255, 255, 255, 0.035);
-  transition:
-    color var(--duration-base) var(--ease-out),
-    background var(--duration-base) var(--ease-out),
-    border-color var(--duration-base) var(--ease-out),
-    box-shadow var(--duration-smooth) var(--ease-out);
-}
-
-.quiet-icon-button:hover,
-.quiet-icon-button-active {
-  color: var(--jarvis-cyan);
-  background: rgba(0, 212, 255, 0.10);
-  border-color: rgba(0, 212, 255, 0.24);
-  box-shadow: 0 0 18px rgba(0, 212, 255, 0.10);
-}
-
-.ambient-stage {
-  background:
-    radial-gradient(circle at 50% 45%, rgba(0, 132, 172, 0.18) 0%, rgba(0, 38, 54, 0.14) 28%, rgba(0, 0, 0, 0) 57%),
-    linear-gradient(180deg, rgba(5, 12, 19, 0.10), rgba(0, 0, 0, 0.35));
-}
-
-.ambient-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.012) 1px, transparent 1px);
-  background-size: 56px 56px;
-  mask-image: radial-gradient(circle at 50% 48%, black, transparent 76%);
-  opacity: 0.35;
-}
-
-.ambient-stage::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.44) 100%),
-    linear-gradient(to bottom, rgba(0, 0, 0, 0.34), transparent 18%, transparent 78%, rgba(0, 0, 0, 0.46));
-}
-
-.voice-state-card {
-  background:
-    linear-gradient(145deg, rgba(15, 30, 43, 0.74), rgba(5, 13, 22, 0.56)),
-    radial-gradient(circle at 0% 0%, rgba(0, 212, 255, 0.12), transparent 42%);
-  border: 1px solid rgba(142, 219, 255, 0.14);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-panel);
-  backdrop-filter: blur(22px) saturate(1.18);
-  -webkit-backdrop-filter: blur(22px) saturate(1.18);
-}
-
-.live-caption {
-  background:
-    linear-gradient(180deg, rgba(16, 27, 39, 0.82), rgba(5, 11, 18, 0.72)),
-    radial-gradient(circle at 50% 0%, rgba(255, 225, 140, 0.08), transparent 55%);
-  border: 1px solid rgba(194, 228, 244, 0.13);
-  border-radius: var(--radius-xl);
-  box-shadow: 0 16px 54px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(24px) saturate(1.16);
-  -webkit-backdrop-filter: blur(24px) saturate(1.16);
-}
-
-.signal-rail {
-  background: linear-gradient(180deg, rgba(14, 26, 37, 0.68), rgba(4, 10, 17, 0.42));
-  border: 1px solid rgba(151, 221, 255, 0.10);
-  border-radius: var(--radius-lg);
-  backdrop-filter: blur(18px) saturate(1.1);
-  -webkit-backdrop-filter: blur(18px) saturate(1.1);
-}
-
-.jarvis-settings-panel {
-  background:
-    linear-gradient(180deg, rgba(8, 18, 28, 0.97), rgba(2, 7, 12, 0.98)),
-    radial-gradient(circle at 20% 0%, rgba(0, 212, 255, 0.10), transparent 35%);
-  border-left: 1px solid rgba(145, 220, 255, 0.13);
-  box-shadow: -30px 0 80px rgba(0, 0, 0, 0.46), inset 1px 0 0 rgba(255, 255, 255, 0.045);
-}
-
-.jarvis-settings-header {
-  background: rgba(3, 9, 15, 0.72);
-  border-bottom: 1px solid rgba(145, 220, 255, 0.10);
-  backdrop-filter: blur(22px) saturate(1.18);
-  -webkit-backdrop-filter: blur(22px) saturate(1.18);
-}
-
-.jarvis-settings-tabs,
-.jarvis-workbench-tabs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid rgba(145, 220, 255, 0.10);
-  border-radius: var(--radius-md);
-  background: rgba(1, 7, 12, 0.46);
-}
-
-.jarvis-settings-tab,
-.jarvis-workbench-tab {
-  min-height: 36px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: rgba(155, 182, 200, 0.72);
-  background: transparent;
-  font-size: 10px;
-  font-weight: 650;
-  transition: all var(--duration-base) var(--ease-out);
-}
-
-.jarvis-workbench-tab {
-  min-height: 48px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  padding: 8px 12px;
-  text-align: left;
-}
-
-.jarvis-workbench-tab span:first-child {
-  color: inherit;
-  font-size: 12px;
-}
-
-.jarvis-workbench-tab span:last-child {
-  color: rgba(155, 182, 200, 0.48);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  font-weight: 500;
-}
-
-.jarvis-settings-tab:hover,
-.jarvis-workbench-tab:hover {
-  color: var(--jarvis-text);
-  background: rgba(255, 255, 255, 0.035);
-}
-
-.jarvis-settings-tab-active,
-.jarvis-workbench-tab-active {
-  color: var(--jarvis-cyan);
-  border-color: rgba(0, 212, 255, 0.22);
-  background:
-    linear-gradient(180deg, rgba(0, 212, 255, 0.13), rgba(0, 117, 153, 0.08)),
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.10), transparent 60%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-.jarvis-workbench-tab-active span:last-child {
-  color: rgba(0, 212, 255, 0.68);
-}
-
-.dashboard-shell {
-  background:
-    radial-gradient(circle at 0% 0%, rgba(0, 212, 255, 0.09), transparent 34%),
-    radial-gradient(circle at 92% 12%, rgba(255, 225, 140, 0.055), transparent 30%),
-    linear-gradient(135deg, rgba(8, 18, 28, 0.92), rgba(2, 5, 9, 0.98));
-}
-
-.dashboard-hero {
-  background:
-    linear-gradient(135deg, rgba(17, 32, 46, 0.78), rgba(8, 15, 24, 0.62)),
-    radial-gradient(circle at 10% 10%, rgba(0, 212, 255, 0.13), transparent 38%),
-    radial-gradient(circle at 92% 12%, rgba(255, 225, 140, 0.08), transparent 34%);
-  border: 1px solid rgba(152, 224, 255, 0.13);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-panel);
-}
-
-.metric-tile {
-  background: rgba(4, 12, 20, 0.54);
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: var(--radius-md);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-.activity-feed {
-  background: rgba(3, 9, 15, 0.44);
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: var(--radius-lg);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
 }
 
 /* ============================================================
@@ -429,8 +179,8 @@ input:focus-visible {
    ============================================================ */
 
 .jarvis-input {
-  background: rgba(6, 15, 24, 0.72);
-  border: 1px solid rgba(147, 220, 255, 0.14);
+  background: rgba(0, 12, 28, 0.55);
+  border: 1px solid rgba(0, 212, 255, 0.1);
   border-radius: var(--radius-lg);
   color: var(--jarvis-text);
   padding: 12px 18px;
@@ -446,17 +196,17 @@ input:focus-visible {
 }
 
 .jarvis-input:focus {
-  border-color: rgba(0, 212, 255, 0.46);
+  border-color: rgba(0, 212, 255, 0.35);
   box-shadow:
-    0 0 0 3px rgba(0, 212, 255, 0.10),
-    0 0 20px rgba(0, 212, 255, 0.13),
+    0 0 0 3px rgba(0, 212, 255, 0.06),
+    0 0 20px rgba(0, 212, 255, 0.1),
     inset 0 0 12px rgba(0, 212, 255, 0.03);
-  background: rgba(9, 21, 33, 0.82);
+  background: rgba(0, 14, 32, 0.65);
 }
 
 .jarvis-input::placeholder {
   color: var(--jarvis-text-dim);
-  opacity: 0.72;
+  opacity: 0.5;
 }
 
 .jarvis-input:disabled {
@@ -560,21 +310,6 @@ input:focus-visible {
 
 .animate-scale-fade-in {
   animation: scaleFadeIn 0.3s var(--ease-spring) forwards;
-}
-
-@keyframes panelSlideIn {
-  from {
-    opacity: 0;
-    transform: translateX(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.animate-panel-slide-in {
-  animation: panelSlideIn 0.28s var(--ease-out) forwards;
 }
 
 /* Shimmer loading effect */
@@ -697,20 +432,20 @@ input:focus-visible {
    ============================================================ */
 
 .message-bubble {
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: 12px 16px;
   transition: background var(--duration-base) ease;
   position: relative;
 }
 
 .message-bubble-user {
-  background: rgba(0, 212, 255, 0.095);
-  border: 1px solid rgba(0, 212, 255, 0.16);
+  background: rgba(0, 212, 255, 0.06);
+  border: 1px solid rgba(0, 212, 255, 0.08);
 }
 
 .message-bubble-assistant {
-  background: rgba(255, 255, 255, 0.045);
-  border: 1px solid rgba(255, 255, 255, 0.075);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .message-bubble-user:hover,
@@ -747,28 +482,28 @@ input:focus-visible {
    ============================================================ */
 
 .jarvis-card {
-  background: linear-gradient(145deg, rgba(14, 26, 38, 0.70), rgba(5, 12, 20, 0.56));
-  border: 1px solid rgba(145, 220, 255, 0.11);
+  background: rgba(0, 15, 35, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.06);
   border-radius: var(--radius-lg);
-  padding: 18px;
-  backdrop-filter: blur(16px) saturate(1.12);
-  -webkit-backdrop-filter: blur(16px) saturate(1.12);
+  padding: 20px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   transition:
     border-color var(--duration-base) var(--ease-out),
     box-shadow var(--duration-smooth) var(--ease-out);
 }
 
 .jarvis-card:hover {
-  border-color: rgba(0, 212, 255, 0.18);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.26);
+  border-color: rgba(0, 212, 255, 0.12);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
 .jarvis-card-header {
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.10em;
-  color: rgba(187, 215, 230, 0.72);
+  letter-spacing: 0.15em;
+  color: rgba(85, 136, 170, 0.55);
   margin-bottom: 16px;
 }
 
@@ -829,14 +564,6 @@ body {
   .jarvis-input {
     padding: 10px 14px;
     font-size: 16px; /* Prevents iOS auto-zoom on focus */
-  }
-
-  .jarvis-workbench-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .jarvis-workbench-tab {
-    min-height: 44px;
   }
 }
 
