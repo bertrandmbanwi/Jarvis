@@ -28,11 +28,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let screenFrame = screen.visibleFrame
 
         // Transparent floating surface for the orb, status, and response text.
-        let windowSize = CGSize(width: 360, height: 400)
-        let padding: CGFloat = 32
+        let windowSize = CGSize(width: 280, height: 280)
+        let horizontalPadding: CGFloat = 44
+        let verticalPadding: CGFloat = 132
         let windowFrame = CGRect(
-            x: screenFrame.maxX - windowSize.width - padding,
-            y: screenFrame.minY + padding,
+            x: screenFrame.maxX - windowSize.width - horizontalPadding,
+            y: screenFrame.minY + verticalPadding,
             width: windowSize.width,
             height: windowSize.height
         )
@@ -105,39 +106,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     display: flex;
                     flex-direction: column;
                     align-items: center;
-                    justify-content: flex-start;
-                    padding: 18px 10px 8px;
+                    justify-content: center;
+                    padding: 0;
                     position: relative;
                 }
 
                 #panel {
                     position: absolute;
                     z-index: 1;
-                    inset: 12px 18px 12px;
-                    border-radius: 32px;
+                    inset: 8px;
+                    border-radius: 50%;
                     background:
-                        radial-gradient(circle at 50% 38%,
-                            rgba(0, 212, 255, 0.18) 0%,
-                            rgba(4, 18, 30, 0.72) 36%,
-                            rgba(2, 8, 15, 0.62) 70%,
-                            rgba(1, 4, 9, 0.42) 100%);
+                        radial-gradient(circle at 50% 48%,
+                            rgba(0, 212, 255, 0.16) 0%,
+                            rgba(4, 18, 30, 0.74) 38%,
+                            rgba(2, 8, 15, 0.66) 67%,
+                            rgba(1, 4, 9, 0.16) 82%,
+                            transparent 100%);
                     border: 1px solid rgba(0, 212, 255, 0.18);
                     box-shadow:
-                        inset 0 0 30px rgba(0, 212, 255, 0.09),
-                        0 18px 52px rgba(0, 0, 0, 0.44);
+                        inset 0 0 30px rgba(0, 212, 255, 0.10),
+                        0 0 46px rgba(0, 212, 255, 0.11),
+                        0 18px 48px rgba(0, 0, 0, 0.36);
                     pointer-events: none;
                 }
 
                 /* Status indicator row */
                 #status-row {
-                    position: relative;
+                    position: absolute;
+                    top: 24px;
+                    left: 0;
+                    right: 0;
                     z-index: 10;
                     display: flex;
                     align-items: center;
+                    justify-content: center;
                     gap: 8px;
-                    margin-top: 2px;
-                    margin-bottom: 0;
                     text-shadow: 0 0 10px rgba(0, 0, 0, 0.78);
+                    pointer-events: none;
                 }
 
                 #status-dot {
@@ -200,8 +206,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 #orb-container {
                     position: relative;
                     z-index: 5;
-                    width: 260px;
-                    height: 260px;
+                    width: 248px;
+                    height: 248px;
                     flex-shrink: 0;
                     border-radius: 50%;
                     overflow: hidden;
@@ -233,16 +239,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 /* Text display area below orb */
                 #text-area {
-                    position: relative;
+                    position: absolute;
+                    bottom: 22px;
+                    left: 50%;
+                    transform: translateX(-50%);
                     z-index: 10;
-                    width: 320px;
-                    padding: 0 18px;
+                    width: 190px;
+                    padding: 0 10px;
                     text-align: center;
-                    max-height: 100px;
+                    max-height: 62px;
                     overflow: hidden;
                     text-shadow:
                         0 0 12px rgba(0, 0, 0, 0.95),
                         0 1px 2px rgba(0, 0, 0, 0.95);
+                    pointer-events: none;
                 }
 
                 #user-text {
@@ -265,14 +275,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 #response-text {
-                    font-size: 11px;
+                    font-size: 10px;
                     color: rgba(255, 255, 255, 0.68);
-                    line-height: 1.5;
+                    line-height: 1.4;
                     opacity: 0;
                     transform: translateY(6px);
                     transition: opacity 0.8s ease, transform 0.8s ease;
                     display: -webkit-box;
-                    -webkit-line-clamp: 4;
+                    -webkit-line-clamp: 2;
                     -webkit-box-orient: vertical;
                     overflow: hidden;
                 }
@@ -319,7 +329,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 const scene = new THREE.Scene();
                 const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
                 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-                renderer.setSize(260, 260);
+                renderer.setSize(248, 248);
                 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
                 renderer.setClearColor(0x000000, 0);
                 orbContainer.appendChild(renderer.domElement);
