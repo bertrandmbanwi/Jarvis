@@ -46,6 +46,7 @@ PROXY_PID=""
 OLLAMA_PID=""
 TUNNEL_PID=""
 OVERLAY_PID=""
+OVERLAY_READY_TO_LAUNCH=""
 RUNTIME_DIR="${SCRIPT_DIR}/data/runtime"
 LIFECYCLE_FILE="${RUNTIME_DIR}/lifecycle.json"
 
@@ -304,13 +305,7 @@ if [[ "${MODE}" == "full" ]] && [[ -f "${OVERLAY_DIR}/JarvisOverlay.swift" ]]; t
             fi
         fi
         if [[ -x "${OVERLAY_BIN}" ]]; then
-            # Kill any orphaned overlay instances from previous runs
-            pkill -f "JarvisOverlay" 2>/dev/null || true
-            sleep 0.5
-            echo "Launching Desktop Overlay..."
-            # Launch the binary directly (not via 'open') so we get the real PID
-            "${OVERLAY_BIN}" &
-            OVERLAY_PID=$!
+            OVERLAY_READY_TO_LAUNCH="true"
         fi
     else
         echo "Note: swiftc not found. Skipping desktop overlay build."
@@ -369,6 +364,18 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
     else
         echo "Warning: UI directory not found at ${UI_DIR}. Skipping UI."
     fi
+fi
+
+if [[ "${MODE}" == "full" ]] && [[ "${OVERLAY_READY_TO_LAUNCH}" == "true" ]] && [[ -x "${OVERLAY_BIN}" ]]; then
+    # Kill any orphaned overlay instances from previous runs.
+    pkill -f "JarvisOverlay" 2>/dev/null || true
+    sleep 0.5
+    echo "Launching Desktop Overlay..."
+    JARVIS_OVERLAY_URL="http://127.0.0.1:${UI_PORT}/overlay" \
+    JARVIS_UI_PORT="${UI_PORT}" \
+    JARVIS_API_PORT="${API_PORT}" \
+    "${OVERLAY_BIN}" &
+    OVERLAY_PID=$!
 fi
 
 # Start Cloudflare Tunnel for mobile/remote access when explicitly enabled.

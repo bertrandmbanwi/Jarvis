@@ -101,6 +101,24 @@ else
     exit 1
 fi
 
+OVERLAY_HTML="${SCRIPT_DIR}/overlay.html"
+if [ -f "$OVERLAY_HTML" ]; then
+    cp "$OVERLAY_HTML" "${RESOURCES_DIR}/overlay.html"
+    echo -e "${GREEN}Bundled overlay shell${NC}"
+else
+    echo -e "${RED}Missing overlay shell at ${OVERLAY_HTML}.${NC}"
+    exit 1
+fi
+
+ORB_RENDERER="${SCRIPT_DIR}/../jarvis/ui/jarvis-ui/src/lib/jarvisOrbRenderer.js"
+if [ -f "$ORB_RENDERER" ]; then
+    cp "$ORB_RENDERER" "${RESOURCES_DIR}/jarvisOrbRenderer.js"
+    echo -e "${GREEN}Bundled shared orb renderer${NC}"
+else
+    echo -e "${RED}Missing shared orb renderer at ${ORB_RENDERER}.${NC}"
+    exit 1
+fi
+
 # Make executable
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 

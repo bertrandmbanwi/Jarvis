@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS Overlay</title>
+  <style>
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 18px 10px 8px;
+    }
+
+    #status-row {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 2px;
+      text-shadow: 0 0 10px rgba(0, 0, 0, 0.78);
+    }
+
+    #status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(0, 212, 255, 0.3);
+      transition: background 0.5s ease, box-shadow 0.5s ease;
+    }
+
+    #status-dot.listening {
+      background: rgba(0, 212, 255, 0.7);
+      box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+      animation: dotPulse 1.2s ease-in-out infinite;
+    }
+
+    #status-dot.thinking {
+      background: rgba(255, 225, 140, 0.6);
+      box-shadow: 0 0 8px rgba(255, 225, 140, 0.3);
+      animation: dotPulse 0.8s ease-in-out infinite;
+    }
+
+    #status-dot.speaking {
+      background: rgba(255, 225, 140, 0.7);
+      box-shadow: 0 0 10px rgba(255, 225, 140, 0.4);
+    }
+
+    #status-dot.error {
+      background: rgba(255, 80, 40, 0.72);
+      box-shadow: 0 0 10px rgba(255, 80, 40, 0.42);
+    }
+
+    @keyframes dotPulse {
+      0%, 100% {
+        opacity: 0.5;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.3);
+      }
+    }
+
+    #status-label {
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: rgba(0, 212, 255, 0.35);
+      transition: color 0.5s ease;
+      text-shadow: 0 0 12px rgba(0, 0, 0, 0.85);
+    }
+
+    #status-label.listening { color: rgba(0, 212, 255, 0.65); }
+    #status-label.thinking { color: rgba(255, 225, 140, 0.55); }
+    #status-label.speaking { color: rgba(255, 225, 140, 0.65); }
+    #status-label.error { color: rgba(255, 120, 90, 0.72); }
+
+    #orb-container {
+      position: relative;
+      z-index: 5;
+      width: 260px;
+      height: 260px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      overflow: hidden;
+      -webkit-mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
+      mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
+      background:
+        radial-gradient(
+          circle,
+          rgba(0, 5, 12, 0.86) 0%,
+          rgba(0, 9, 18, 0.68) 45%,
+          rgba(0, 8, 18, 0.28) 70%,
+          transparent 88%
+        );
+      filter: saturate(1.04) brightness(1.08) drop-shadow(0 0 20px rgba(0, 212, 255, 0.2));
+    }
+
+    #orb-container::before {
+      content: "";
+      position: absolute;
+      inset: 6%;
+      border-radius: 50%;
+      background:
+        radial-gradient(
+          circle,
+          rgba(1, 7, 15, 0.56) 0%,
+          rgba(1, 10, 20, 0.48) 42%,
+          rgba(1, 10, 20, 0.22) 64%,
+          transparent 82%
+        );
+      filter: blur(8px);
+      pointer-events: none;
+    }
+
+    #orb-container canvas {
+      position: relative;
+      z-index: 1;
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #text-area {
+      position: relative;
+      z-index: 10;
+      width: 320px;
+      max-height: 100px;
+      padding: 0 18px;
+      overflow: hidden;
+      text-align: center;
+      text-shadow:
+        0 0 12px rgba(0, 0, 0, 0.95),
+        0 1px 2px rgba(0, 0, 0, 0.95);
+    }
+
+    #user-text {
+      max-height: 28px;
+      margin-bottom: 6px;
+      overflow: hidden;
+      color: rgba(0, 212, 255, 0.58);
+      font-size: 10px;
+      font-style: italic;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+
+    #user-text.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    #response-text {
+      display: -webkit-box;
+      overflow: hidden;
+      color: rgba(255, 255, 255, 0.68);
+      font-size: 11px;
+      line-height: 1.5;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 4;
+    }
+
+    #response-text.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="status-row">
+      <div id="status-dot"></div>
+      <div id="status-label">STANDING BY</div>
+    </div>
+    <div id="orb-container"></div>
+    <div id="text-area">
+      <div id="user-text"></div>
+      <div id="response-text"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from "./three.module.min.js";
+    import { createJarvisOrbRenderer } from "./jarvisOrbRenderer.js";
+
+    const statusDot = document.getElementById("status-dot");
+    const statusLabel = document.getElementById("status-label");
+    const userTextEl = document.getElementById("user-text");
+    const responseTextEl = document.getElementById("response-text");
+    const orbContainer = document.getElementById("orb-container");
+
+    const stateLabels = {
+      idle: "STANDING BY",
+      listening: "LISTENING",
+      thinking: "PROCESSING",
+      speaking: "SPEAKING",
+      error: "ATTENTION",
+    };
+
+    const orb = createJarvisOrbRenderer(THREE, orbContainer, {
+      state: "idle",
+      transitionIn: 1,
+      audioAmplitude: 0,
+      width: 260,
+      height: 260,
+    });
+
+    let state = "idle";
+    let voiceSpeaking = false;
+    let currentAudioAmp = 0;
+    let amplitudeEnvelope = [];
+    let amplitudeDuration = 0;
+    let amplitudeStartMs = 0;
+    let ws = null;
+    let reconnectAttempts = 0;
+
+    const maxReconnectAttempts = 50;
+    const reconnectDelay = 3000;
+
+    function connectWebSocket() {
+      try {
+        ws = new WebSocket("ws://localhost:8741/ws/overlay");
+
+        ws.onopen = () => {
+          reconnectAttempts = 0;
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.activationAccepted === false) setState("idle");
+            if (data.state) setState(data.state);
+            if (data.text !== undefined) setResponseText(data.text);
+            if (data.userText !== undefined) setUserText(data.userText);
+            if (data.voiceSpeaking !== undefined || data.voice_speaking !== undefined) {
+              setVoiceSpeaking(Boolean(data.voiceSpeaking ?? data.voice_speaking));
+            }
+            const envelope = data.amplitudeEnvelope || data.amplitude_envelope;
+            const duration = data.audioDuration || data.audio_duration;
+            if (Array.isArray(envelope) && duration > 0) {
+              startAmplitudeEnvelope(envelope, duration);
+            }
+          } catch (error) {
+            console.error("Overlay WS parse error:", error);
+          }
+        };
+
+        ws.onclose = () => {
+          if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts += 1;
+            setTimeout(connectWebSocket, reconnectDelay);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error("Overlay WS error:", error);
+        };
+      } catch (error) {
+        console.error("Overlay WS connection failed:", error);
+        setTimeout(connectWebSocket, reconnectDelay);
+      }
+    }
+
+    function sendOverlayCommand(command) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+      ws.send(JSON.stringify({ command }));
+      return true;
+    }
+
+    window.jarvisActivateVoice = function jarvisActivateVoice() {
+      setState("listening");
+      setUserText("");
+      setResponseText("");
+      sendOverlayCommand("activate_voice");
+    };
+
+    function setState(newState) {
+      const nextState = stateLabels[newState] ? newState : "idle";
+      if (state === nextState) return;
+      state = nextState;
+      statusDot.className = nextState;
+      statusLabel.className = nextState;
+      statusLabel.textContent = stateLabels[nextState];
+      orb.setState(nextState);
+    }
+
+    function setResponseText(text) {
+      if (!text) {
+        responseTextEl.classList.remove("visible");
+        return;
+      }
+      const display = text.length > 180 ? `${text.slice(0, 180)}...` : text;
+      responseTextEl.textContent = display;
+      responseTextEl.classList.add("visible");
+    }
+
+    function setUserText(text) {
+      if (!text) {
+        userTextEl.classList.remove("visible");
+        return;
+      }
+      userTextEl.textContent = `"${text}"`;
+      userTextEl.classList.add("visible");
+    }
+
+    function setVoiceSpeaking(speaking) {
+      voiceSpeaking = speaking;
+      if (speaking) {
+        if (state !== "speaking") setState("speaking");
+        return;
+      }
+
+      amplitudeEnvelope = [];
+      amplitudeDuration = 0;
+      currentAudioAmp = 0;
+      orb.setAudioAmplitude(0);
+      setResponseText("");
+      setUserText("");
+      if (state === "speaking") setState("idle");
+    }
+
+    function startAmplitudeEnvelope(envelope, duration) {
+      amplitudeEnvelope = envelope;
+      amplitudeDuration = duration;
+      amplitudeStartMs = performance.now();
+      currentAudioAmp = 0;
+      setVoiceSpeaking(true);
+    }
+
+    function nextAudioAmplitude() {
+      if (amplitudeEnvelope.length > 0 && amplitudeDuration > 0) {
+        const elapsed = (performance.now() - amplitudeStartMs) / 1000;
+        if (elapsed < amplitudeDuration) {
+          const progress = elapsed / amplitudeDuration;
+          const envelopeIndex = Math.min(
+            Math.floor(progress * amplitudeEnvelope.length),
+            amplitudeEnvelope.length - 1,
+          );
+          const targetAmp = Number(amplitudeEnvelope[envelopeIndex]) || 0;
+          currentAudioAmp += (targetAmp - currentAudioAmp) * 0.35;
+          return currentAudioAmp;
+        }
+
+        amplitudeEnvelope = [];
+        amplitudeDuration = 0;
+      }
+
+      if (voiceSpeaking || state === "speaking") {
+        const elapsed = performance.now() / 1000;
+        const syllable = Math.pow((Math.sin(elapsed * 10.0) + 1) * 0.5, 2.2);
+        const carrier = Math.pow((Math.sin(elapsed * 17.0 + 0.8) + 1) * 0.5, 1.8);
+        const targetAmp = 0.18 + syllable * 0.34 + carrier * 0.18;
+        currentAudioAmp += (targetAmp - currentAudioAmp) * 0.22;
+        return currentAudioAmp;
+      }
+
+      currentAudioAmp *= 0.86;
+      return currentAudioAmp;
+    }
+
+    function animateAudioEnvelope() {
+      orb.setAudioAmplitude(nextAudioAmplitude());
+      requestAnimationFrame(animateAudioEnvelope);
+    }
+
+    window.addEventListener("resize", () => orb.resize());
+    window.addEventListener("beforeunload", () => orb.dispose());
+
+    setState("idle");
+    connectWebSocket();
+    animateAudioEnvelope();
+  </script>
+</body>
+</html>
