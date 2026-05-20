@@ -18,6 +18,11 @@ fi
 "$PYTHON_BIN" -m bandit -q -r jarvis
 
 if [[ -d "$ROOT/jarvis/ui/jarvis-ui/node_modules" ]]; then
+  # Next.js can cache absolute paths in .next. On macOS, using the same checkout
+  # through different casing (Jarvis vs jarvis) can poison that cache and create
+  # duplicate module warnings or prerender failures. Validation should always be
+  # path-clean and reproducible.
+  rm -rf "$ROOT/jarvis/ui/jarvis-ui/.next"
   npm --prefix "$ROOT/jarvis/ui/jarvis-ui" run lint
   npm --prefix "$ROOT/jarvis/ui/jarvis-ui" run build
   npm --prefix "$ROOT/jarvis/ui/jarvis-ui" audit --audit-level=high
