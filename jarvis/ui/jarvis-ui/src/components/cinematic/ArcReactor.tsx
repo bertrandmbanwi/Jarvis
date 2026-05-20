@@ -37,8 +37,27 @@ const GOLD: [number, number, number] = [255, 180, 50];
 const GOLD_BRIGHT: [number, number, number] = [255, 225, 140];
 const GOLD_WARM: [number, number, number] = [255, 150, 30];
 const AMBER: [number, number, number] = [255, 130, 20];
+const STEEL: [number, number, number] = [92, 116, 130];
 
 const CONFIGS: Record<OrbState, StateConfig> = {
+  offline: {
+    color: STEEL,
+    coreColor: [125, 145, 156],
+    accentColor: [45, 62, 72],
+    sphereRadius: 0.24,
+    displacement: 0.01,
+    noiseScale: 0.22,
+    noiseSpeed: 0.12,
+    rotationSpeed: 0.03,
+    coreIntensity: 0.26,
+    particleBrightness: 0.25,
+    trailLength: 0.0,
+    heartbeatStrength: 0.05,
+    heartbeatSpeed: 0.25,
+    ringOpacity: 0.08,
+    connectionOpacity: 0.0,
+    breathingMix: 0.95,
+  },
   idle: {
     color: CYAN,
     coreColor: CYAN_BRIGHT,
@@ -56,6 +75,24 @@ const CONFIGS: Record<OrbState, StateConfig> = {
     ringOpacity: 0.25,
     connectionOpacity: 0.08,
     breathingMix: 0.2,
+  },
+  ready: {
+    color: CYAN,
+    coreColor: CYAN_BRIGHT,
+    accentColor: CYAN_DEEP,
+    sphereRadius: 0.26,
+    displacement: 0.014,
+    noiseScale: 0.26,
+    noiseSpeed: 0.22,
+    rotationSpeed: 0.06,
+    coreIntensity: 0.48,
+    particleBrightness: 0.42,
+    trailLength: 0.0,
+    heartbeatStrength: 0.16,
+    heartbeatSpeed: 0.45,
+    ringOpacity: 0.16,
+    connectionOpacity: 0.04,
+    breathingMix: 0.86,
   },
   listening: {
     color: [80, 200, 255],

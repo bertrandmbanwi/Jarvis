@@ -80,8 +80,8 @@ export default function ChatInput({
   const hasMessage = message.trim().length > 0;
 
   return (
-    <div className="w-full border-t border-white/[0.04] bg-jarvis-surface/80 backdrop-blur-xl px-4 sm:px-6 py-3 flex-shrink-0">
-      <div className="flex items-center gap-2.5 sm:gap-3 max-w-3xl mx-auto">
+    <div className="w-full border-t border-white/[0.08] bg-black/32 backdrop-blur-2xl px-4 sm:px-6 py-3.5 flex-shrink-0">
+      <div className="flex items-center gap-2.5 sm:gap-3 max-w-4xl mx-auto">
         {micSupported && (
           <button
             onClick={handleMicToggle}
@@ -94,13 +94,13 @@ export default function ChatInput({
                   : "Tap to speak"
             }
             className={`
-              relative flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center
+              relative flex-shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center
               transition-all duration-200 ease-out border
               ${isRecording
-                ? "bg-red-500/15 border-red-400/30 text-red-400 mic-ring-pulse"
+                ? "bg-red-500/16 border-red-300/45 text-red-300 mic-ring-pulse"
                 : isTranscribing
-                  ? "bg-jarvis-cyan/8 border-jarvis-cyan/15 text-jarvis-cyan/50"
-                  : "bg-white/[0.03] border-white/[0.06] text-jarvis-text-dim/45 hover:text-jarvis-cyan hover:border-jarvis-cyan/25 hover:bg-jarvis-cyan/5"
+                  ? "bg-jarvis-cyan/12 border-jarvis-cyan/25 text-jarvis-cyan/75"
+                  : "bg-white/[0.06] border-white/[0.10] text-jarvis-text-dim/75 hover:text-jarvis-cyan hover:border-jarvis-cyan/35 hover:bg-jarvis-cyan/8"
               }
               disabled:opacity-25 disabled:cursor-not-allowed
               active:scale-95
@@ -115,8 +115,8 @@ export default function ChatInput({
               </div>
             ) : (
               <svg
-                width="17"
-                height="17"
+                width="18"
+                height="18"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -155,11 +155,11 @@ export default function ChatInput({
           onClick={handleSubmit}
           disabled={isBusy || !hasMessage}
           className={`
-            flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center
+            flex-shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center
             transition-all duration-200 ease-out border
             ${hasMessage && !isBusy
-              ? "bg-jarvis-cyan/12 border-jarvis-cyan/25 text-jarvis-cyan hover:bg-jarvis-cyan/18 hover:border-jarvis-cyan/40 hover:shadow-[0_0_12px_rgba(0,212,255,0.15)]"
-              : "bg-white/[0.02] border-white/[0.05] text-jarvis-text-dim/25"
+              ? "bg-jarvis-cyan/14 border-jarvis-cyan/30 text-jarvis-cyan hover:bg-jarvis-cyan/20 hover:border-jarvis-cyan/45 hover:shadow-[0_0_16px_rgba(0,212,255,0.18)]"
+              : "bg-white/[0.04] border-white/[0.08] text-jarvis-text-dim/45"
             }
             disabled:opacity-25 disabled:cursor-not-allowed
             active:scale-95
@@ -174,8 +174,8 @@ export default function ChatInput({
             </div>
           ) : (
             <svg
-              width="17"
-              height="17"
+              width="18"
+              height="18"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -192,8 +192,8 @@ export default function ChatInput({
       </div>
 
       {micError && (
-        <div className="max-w-3xl mx-auto mt-2">
-          <p className="text-3xs text-jarvis-error/60 flex items-center gap-1.5">
+        <div className="max-w-4xl mx-auto mt-2">
+          <p className="text-2xs text-jarvis-error/80 flex items-center gap-1.5">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />

@@ -10,15 +10,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKeyHandler: EventHandlerRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let screen = NSScreen.main ?? NSScreen.screens[0]
-        let screenFrame = screen.frame
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
+            ?? NSScreen.main
+            ?? NSScreen.screens[0]
+        let screenFrame = screen.visibleFrame
 
         // Transparent floating surface for the orb, status, and response text.
         let windowSize = CGSize(width: 360, height: 400)
-        let padding: CGFloat = 50
+        let padding: CGFloat = 32
         let windowFrame = CGRect(
-            x: screenFrame.width - windowSize.width - padding,
-            y: padding,
+            x: screenFrame.maxX - windowSize.width - padding,
+            y: screenFrame.minY + padding,
             width: windowSize.width,
             height: windowSize.height
         )
@@ -40,6 +43,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
 
         let webViewConfig = WKWebViewConfiguration()
+        webViewConfig.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
 
         webView = WKWebView(frame: window.contentView?.bounds ?? .zero, configuration: webViewConfig)
         guard let webView = webView else { return }
@@ -53,6 +57,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webView.setValue(false, forKey: "drawsBackground")
 
         window.contentView = webView
+
+        let sourceBaseURL = URL(fileURLWithPath: #file).deletingLastPathComponent()
+        let resourceBaseURL = Bundle.main.resourceURL
+        let bundledThreeURL = resourceBaseURL?.appendingPathComponent("vendor/three.module.min.js")
+        let overlayBaseURL: URL = {
+            if let bundledThreeURL = bundledThreeURL,
+               FileManager.default.fileExists(atPath: bundledThreeURL.path),
+               let resourceBaseURL = resourceBaseURL {
+                return resourceBaseURL
+            }
+            return sourceBaseURL
+        }()
 
         let htmlContent = """
         <!DOCTYPE html>
@@ -106,6 +122,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     background: rgba(0, 212, 255, 0.3);
                     transition: background 0.5s ease, box-shadow 0.5s ease;
                 }
+                #status-dot.offline {
+                    background: rgba(108, 131, 148, 0.5);
+                    box-shadow: 0 0 8px rgba(108, 131, 148, 0.18);
+                }
+                #status-dot.ready {
+                    background: rgba(0, 212, 255, 0.5);
+                    box-shadow: 0 0 8px rgba(0, 212, 255, 0.22);
+                }
                 #status-dot.listening {
                     background: rgba(0, 212, 255, 0.7);
                     box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
@@ -119,6 +143,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 #status-dot.speaking {
                     background: rgba(255, 225, 140, 0.7);
                     box-shadow: 0 0 10px rgba(255, 225, 140, 0.4);
+                }
+                #status-dot.error {
+                    background: rgba(255, 80, 40, 0.7);
+                    box-shadow: 0 0 10px rgba(255, 80, 40, 0.35);
+                    animation: dotPulse 1.0s ease-in-out infinite;
                 }
 
                 @keyframes dotPulse {
@@ -135,9 +164,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     transition: color 0.5s ease;
                     text-shadow: 0 0 12px rgba(0, 0, 0, 0.85);
                 }
+                #status-label.offline { color: rgba(155, 182, 200, 0.42); }
+                #status-label.ready { color: rgba(0, 212, 255, 0.55); }
                 #status-label.listening { color: rgba(0, 212, 255, 0.65); }
                 #status-label.thinking  { color: rgba(255, 225, 140, 0.55); }
                 #status-label.speaking  { color: rgba(255, 225, 140, 0.65); }
+                #status-label.error { color: rgba(255, 160, 140, 0.68); }
 
                 /* Canvas container for the orb */
                 #orb-container {
@@ -230,7 +262,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 <div id="panel"></div>
                 <div id="status-row">
                     <div id="status-dot"></div>
-                    <div id="status-label">STANDING BY</div>
+                    <div id="status-label">WAKING UP</div>
                 </div>
                 <div id="orb-container"></div>
                 <div id="text-area">
@@ -238,8 +270,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     <div id="response-text"></div>
                 </div>
             </div>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-            <script>
+            <script type="module">
+                import * as THREE from './vendor/three.module.min.js';
+
                 // --- DOM refs ---
                 const statusDot = document.getElementById('status-dot');
                 const statusLabel = document.getElementById('status-label');
@@ -248,10 +281,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 const orbContainer = document.getElementById('orb-container');
 
                 const stateLabels = {
-                    idle: 'STANDING BY',
+                    offline: 'OFFLINE',
+                    idle: 'WAKING UP',
+                    ready: 'READY',
                     listening: 'LISTENING',
                     thinking: 'PROCESSING',
-                    speaking: 'SPEAKING'
+                    speaking: 'SPEAKING',
+                    error: 'ERROR'
                 };
 
                 // --- Three.js scene ---
@@ -424,6 +460,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let amplitudeEnvelope = [];
                 let amplitudeDuration = 0;
                 let amplitudeStartMs = 0;
+                let responseTextTimer = null;
+                let userTextTimer = null;
 
                 // Color targets for state transitions
                 const cyanColor = [0.0, 0.832, 1.0];
@@ -445,13 +483,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         ws.onopen = () => {
                             console.log('Overlay WS connected');
                             reconnectAttempts = 0;
+                            setState('ready');
                         };
 
                         ws.onmessage = (event) => {
                             try {
                                 const data = JSON.parse(event.data);
-                                if (data.activationAccepted === false) setState('idle');
-                                if (data.state) setState(data.state);
+                                if (data.activationAccepted === false) setState('ready');
+                                if (data.state) setState(data.state === 'idle' ? 'ready' : data.state);
                                 if (data.text !== undefined) setResponseText(data.text);
                                 if (data.userText !== undefined) setUserText(data.userText);
                                 if (data.voiceSpeaking !== undefined || data.voice_speaking !== undefined) {
@@ -468,6 +507,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         };
 
                         ws.onclose = () => {
+                            setState('offline');
                             if (reconnectAttempts < maxReconnectAttempts) {
                                 reconnectAttempts++;
                                 setTimeout(connectWebSocket, reconnectDelay);
@@ -476,9 +516,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                         ws.onerror = (error) => {
                             console.error('WS error:', error);
+                            setState('error');
                         };
                     } catch (error) {
                         console.error('WS connection failed:', error);
+                        setState('offline');
                         setTimeout(connectWebSocket, reconnectDelay);
                     }
                 }
@@ -512,13 +554,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                     // Update visual targets
                     switch (newState) {
+                        case 'offline':
+                            targetCompactness = 0.74;
+                            targetSpeed = 0.002;
+                            targetBrightness = 0.34;
+                            showConnections = false;
+                            targetColor = [0.42, 0.52, 0.60];
+                            targetGlowIntensity = 0.20;
+                            break;
                         case 'idle':
-                            targetCompactness = 0.85;
-                            targetSpeed = 0.005;
-                            targetBrightness = 0.76;
+                            targetCompactness = 0.78;
+                            targetSpeed = 0.003;
+                            targetBrightness = 0.48;
                             showConnections = false;
                             targetColor = cyanColor;
-                            targetGlowIntensity = 0.42;
+                            targetGlowIntensity = 0.28;
+                            break;
+                        case 'ready':
+                            targetCompactness = 0.85;
+                            targetSpeed = 0.005;
+                            targetBrightness = 0.68;
+                            showConnections = false;
+                            targetColor = cyanColor;
+                            targetGlowIntensity = 0.36;
                             break;
                         case 'listening':
                             targetCompactness = 0.92;
@@ -544,26 +602,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             targetColor = goldColor;
                             targetGlowIntensity = 0.62;
                             break;
+                        case 'error':
+                            targetCompactness = 0.74;
+                            targetSpeed = 0.004;
+                            targetBrightness = 0.50;
+                            showConnections = false;
+                            targetColor = [1.0, 0.32, 0.16];
+                            targetGlowIntensity = 0.30;
+                            break;
                     }
                 }
 
                 function setResponseText(text) {
+                    if (responseTextTimer) {
+                        clearTimeout(responseTextTimer);
+                        responseTextTimer = null;
+                    }
                     if (!text) {
                         responseTextEl.classList.remove('visible');
+                        responseTextEl.textContent = '';
                         return;
                     }
                     const display = text.length > 180 ? text.slice(0, 180) + '...' : text;
                     responseTextEl.textContent = display;
                     responseTextEl.classList.add('visible');
+                    responseTextTimer = setTimeout(() => {
+                        responseTextEl.classList.remove('visible');
+                        responseTextEl.textContent = '';
+                        responseTextTimer = null;
+                    }, 12000);
                 }
 
                 function setUserText(text) {
+                    if (userTextTimer) {
+                        clearTimeout(userTextTimer);
+                        userTextTimer = null;
+                    }
                     if (!text) {
                         userTextEl.classList.remove('visible');
+                        userTextEl.textContent = '';
                         return;
                     }
                     userTextEl.textContent = '"' + text + '"';
                     userTextEl.classList.add('visible');
+                    userTextTimer = setTimeout(() => {
+                        userTextEl.classList.remove('visible');
+                        userTextEl.textContent = '';
+                        userTextTimer = null;
+                    }, 8000);
                 }
 
                 function setVoiceSpeaking(speaking) {
@@ -578,7 +664,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     currentAudioAmp = 0;
                     setResponseText('');
                     setUserText('');
-                    if (state === 'speaking') setState('idle');
+                    if (state === 'speaking') setState('ready');
                 }
 
                 function startAmplitudeEnvelope(envelope, duration) {
@@ -787,7 +873,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         </html>
         """
 
-        webView.loadHTMLString(htmlContent, baseURL: nil)
+        webView.loadHTMLString(htmlContent, baseURL: overlayBaseURL)
         window.makeKeyAndOrderFront(nil)
         registerGlobalHotKey()
     }

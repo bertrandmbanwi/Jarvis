@@ -7,6 +7,9 @@ interface StatusBarProps {
   onModeChange: (mode: ViewMode) => void;
   connectionStatus: ConnectionStatus;
   sessionCost?: number;
+  version?: string;
+  settingsOpen?: boolean;
+  onSettingsClick?: () => void;
 }
 
 const statusLabels: Record<ConnectionStatus, string> = {
@@ -16,42 +19,11 @@ const statusLabels: Record<ConnectionStatus, string> = {
   error: "Error",
 };
 
-const tabs: { mode: ViewMode; label: string; iconPaths: string[] }[] = [
-  {
-    mode: "cinematic",
-    label: "Voice",
-    iconPaths: [
-      "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z",
-      "M12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z",
-    ],
-  },
-  {
-    mode: "chat",
-    label: "Chat",
-    iconPaths: [
-      "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-    ],
-  },
-  {
-    mode: "dashboard",
-    label: "System",
-    iconPaths: [
-      "M3 3h7v7H3z",
-      "M14 3h7v7h-7z",
-      "M3 14h7v7H3z",
-      "M14 14h7v7h-7z",
-    ],
-  },
-  {
-    mode: "product",
-    label: "Flows",
-    iconPaths: [
-      "M4 6h16",
-      "M4 12h10",
-      "M4 18h7",
-      "M17 15l3 3 3-5",
-    ],
-  },
+const tabs: { mode: ViewMode; label: string; icon: "orb" | "chat" | "system" | "flows" }[] = [
+  { mode: "cinematic", label: "Voice", icon: "orb" },
+  { mode: "chat", label: "Chat", icon: "chat" },
+  { mode: "dashboard", label: "Command", icon: "system" },
+  { mode: "product", label: "Automations", icon: "flows" },
 ];
 
 export default function StatusBar({
@@ -59,87 +31,164 @@ export default function StatusBar({
   onModeChange,
   connectionStatus,
   sessionCost = 0.0,
+  version = "0.3.0",
+  settingsOpen = false,
+  onSettingsClick,
 }: StatusBarProps) {
   return (
-    <div className="w-full bg-jarvis-surface/80 backdrop-blur-xl border-b border-white/[0.04] px-3 sm:px-6 py-2 sm:py-2.5 flex-shrink-0">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="w-1.5 h-1.5 rounded-full bg-jarvis-cyan/60 hidden sm:block"
-               style={{ boxShadow: '0 0 6px rgba(0,212,255,0.4)' }} />
-          <span className="text-sm sm:text-base font-semibold jarvis-glow-subtle tracking-[0.18em] sm:tracking-[0.25em]">
-            J.A.R.V.I.S.
-          </span>
-          <span className="text-3xs text-jarvis-text-dim/30 font-mono hidden sm:inline">
-            v0.2.0
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2 sm:gap-4">
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <div className={`status-dot ${connectionStatus}`} />
-            <span className="text-3xs sm:text-2xs text-jarvis-text-dim/60 font-mono hidden sm:inline">
-              {statusLabels[connectionStatus]}
-            </span>
+    <div className="w-full jarvis-command-bar px-3 sm:px-5 py-2.5 flex-shrink-0">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div
+            className="hidden sm:flex w-8 h-8 rounded-xl items-center justify-center border border-jarvis-cyan/20 bg-jarvis-cyan/10 text-jarvis-cyan/80"
+            style={{ boxShadow: "0 0 22px rgba(0, 212, 255, 0.13)" }}
+          >
+            <Icon name="orb" />
           </div>
-
-          <div className="flex items-center jarvis-glass-subtle p-0.5 gap-0.5">
-            {tabs.map(({ mode, label, iconPaths }) => {
-              const isActive = viewMode === mode;
-              return (
-                <button
-                  key={mode}
-                  onClick={() => onModeChange(mode)}
-                  className={`
-                    relative flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-lg
-                    transition-all duration-200 ease-out
-                    text-2xs font-medium uppercase tracking-[0.08em]
-                    ${isActive
-                      ? "bg-jarvis-cyan/10 text-jarvis-cyan border border-jarvis-cyan/15"
-                      : "text-jarvis-text-dim/40 hover:text-jarvis-text-dim/70 hover:bg-white/[0.03] border border-transparent"
-                    }
-                  `}
-                  aria-label={label}
-                  >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={`transition-opacity duration-200 ${isActive ? 'opacity-100' : 'opacity-60'}`}
-                  >
-                    {iconPaths.map((d, i) => (
-                      <path key={i} d={d} />
-                    ))}
-                  </svg>
-                  <span className="hidden sm:inline">{label}</span>
-                  {isActive && (
-                    <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-3 h-[2px] rounded-full bg-jarvis-cyan/50" />
-                  )}
-                </button>
-              );
-            })}
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm sm:text-base font-semibold jarvis-glow-subtle tracking-[0.18em]">
+                Jarvis
+              </span>
+              <span className="text-3xs text-jarvis-text-dim/55 font-mono hidden sm:inline">
+                v{version}
+              </span>
+            </div>
+            <div className="hidden sm:flex items-center gap-2 mt-0.5">
+              <span className={`status-dot ${connectionStatus}`} />
+              <span className="text-[10px] text-jarvis-text-dim/75 font-medium">
+                {statusLabels[connectionStatus]}
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="text-right hidden sm:flex flex-col items-end">
-          <div className="text-3xs text-jarvis-text-dim/35 uppercase tracking-[0.12em]">
-            Session
-          </div>
-          <div className="text-sm font-mono text-jarvis-cyan/70 tabular-nums">
-            ${sessionCost.toFixed(4)}
-          </div>
+        <div className="jarvis-nav-shell flex items-center p-1 gap-1 justify-self-center">
+          {tabs.map(({ mode, label, icon }) => {
+            const isActive = viewMode === mode;
+            return (
+              <button
+                key={mode}
+                onClick={() => onModeChange(mode)}
+                className={`
+                  jarvis-nav-tab relative flex items-center gap-2 px-2.5 sm:px-4
+                  transition-all duration-200 ease-out border text-2xs font-semibold
+                  ${isActive
+                    ? "jarvis-nav-tab-active text-jarvis-cyan"
+                    : "text-jarvis-text-dim/70 border-transparent hover:text-jarvis-text hover:bg-white/[0.04]"
+                  }
+                `}
+                aria-label={label}
+              >
+                <Icon name={icon} />
+                <span className="hidden md:inline">{label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        <div className="sm:hidden">
-          <div className="text-2xs font-mono text-jarvis-cyan/50 tabular-nums">
+        <div className="justify-self-end hidden sm:flex items-center gap-3">
+          <div className="text-right">
+            <div className="text-[10px] text-jarvis-text-dim/65 font-medium">
+              Session cost
+            </div>
+            <div className="text-sm font-mono text-jarvis-cyan/85 tabular-nums">
+              ${sessionCost.toFixed(4)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onSettingsClick}
+            className={`quiet-icon-button ${settingsOpen ? "quiet-icon-button-active" : ""}`}
+            aria-label={settingsOpen ? "Close settings" : "Open settings"}
+            title={settingsOpen ? "Close settings" : "Settings"}
+          >
+            <Icon name="settings" />
+          </button>
+        </div>
+
+        <div className="sm:hidden justify-self-end flex items-center gap-2">
+          <span className={`status-dot ${connectionStatus}`} />
+          <div className="text-2xs font-mono text-jarvis-cyan/80 tabular-nums">
             ${sessionCost.toFixed(2)}
           </div>
+          <button
+            type="button"
+            onClick={onSettingsClick}
+            className={`quiet-icon-button w-8 h-8 ${settingsOpen ? "quiet-icon-button-active" : ""}`}
+            aria-label={settingsOpen ? "Close settings" : "Open settings"}
+          >
+            <Icon name="settings" />
+          </button>
         </div>
       </div>
     </div>
+  );
+}
+
+function Icon({ name }: { name: "orb" | "chat" | "system" | "flows" | "settings" }) {
+  const common = {
+    width: 15,
+    height: 15,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.7,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  if (name === "chat") {
+    return (
+      <svg {...common}>
+        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+      </svg>
+    );
+  }
+
+  if (name === "system") {
+    return (
+      <svg {...common}>
+        <path d="M4 7h16" />
+        <path d="M4 12h16" />
+        <path d="M4 17h10" />
+        <circle cx="18" cy="17" r="2" />
+      </svg>
+    );
+  }
+
+  if (name === "flows") {
+    return (
+      <svg {...common}>
+        <path d="M6 4v6a2 2 0 0 0 2 2h8" />
+        <path d="M18 8l4 4-4 4" />
+        <path d="M6 20v-4" />
+        <circle cx="6" cy="4" r="2" />
+        <circle cx="6" cy="20" r="2" />
+      </svg>
+    );
+  }
+
+  if (name === "settings") {
+    return (
+      <svg {...common}>
+        <path d="M4 7h16" />
+        <path d="M7 12h10" />
+        <path d="M10 17h4" />
+        <circle cx="17" cy="7" r="1.8" />
+        <circle cx="9" cy="12" r="1.8" />
+        <circle cx="13" cy="17" r="1.8" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M4 12h3" />
+      <path d="M17 12h3" />
+    </svg>
   );
 }

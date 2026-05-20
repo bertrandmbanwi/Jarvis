@@ -40,27 +40,63 @@ const C = {
   white:     [1.000, 1.000, 1.000] as [number, number, number],
   errRed:    [1.000, 0.314, 0.157] as [number, number, number],
   errPale:   [1.000, 0.627, 0.549] as [number, number, number],
+  offline:   [0.420, 0.520, 0.600] as [number, number, number],
+  offlineDim:[0.120, 0.180, 0.220] as [number, number, number],
   thinkA:    [0.350, 0.720, 0.950] as [number, number, number],
   thinkB:    [0.200, 0.580, 0.880] as [number, number, number],
 };
 
 const STATES: Record<OrbState, StateConfig> = {
+  offline: {
+    coreColor:     C.offline,
+    particleColor: C.offline,
+    glowColor:     C.offlineDim,
+    coreIntensity: 0.28,
+    particleAlpha: 0.30,
+    orbitalSpeed:  0.015,
+    turbulence:    0.006,
+    pulseRate:     0.18,
+    pulseDepth:    0.05,
+    trailStrength: 0.0,
+    arcFrequency:  0.0,
+    breathBlend:   0.95,
+    scaleTarget:   0.86,
+    dustAlpha:     0.08,
+    ringAlpha:     0.07,
+  },
   idle: {
+    coreColor:     C.cyanPale,
+    particleColor: C.cyanDeep,
+    glowColor:     C.cyanDeep,
+    coreIntensity: 0.38,
+    particleAlpha: 0.42,
+    orbitalSpeed:  0.018,
+    turbulence:    0.006,
+    pulseRate:     0.24,
+    pulseDepth:    0.08,
+    trailStrength: 0.0,
+    arcFrequency:  0.0,
+    breathBlend:   0.90,
+    scaleTarget:   0.92,
+    dustAlpha:     0.14,
+    ringAlpha:     0.10,
+  },
+  ready: {
     coreColor:     C.cyanBrite,
     particleColor: C.cyan,
     glowColor:     C.cyanDeep,
-    coreIntensity: 0.72,
-    particleAlpha: 0.78,
-    orbitalSpeed:  0.04,
-    turbulence:    0.012,
-    pulseRate:     0.45,
-    pulseDepth:    0.18,
+    coreIntensity: 0.58,
+    particleAlpha: 0.62,
+    orbitalSpeed:  0.028,
+    turbulence:    0.008,
+    pulseRate:     0.30,
+    pulseDepth:    0.10,
     trailStrength: 0.0,
     arcFrequency:  0.0,
-    breathBlend:   0.70,
-    scaleTarget:   1.0,
-    dustAlpha:     0.32,
-    ringAlpha:     0.22,
+    breathBlend:   0.86,
+    scaleTarget:   0.96,
+    dustAlpha:     0.22,
+    ringAlpha:     0.16,
   },
   listening: {
     coreColor:     C.cyanBrite,
@@ -439,7 +475,6 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<number>(0);
-  const clockRef = useRef(new THREE.Clock());
 
   // Live config (smoothly interpolated each frame)
   const curRef = useRef<StateConfig>({ ...STATES[state] });
@@ -469,6 +504,13 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
     camera.position.set(0, 0, 3.5);
     camera.lookAt(0, 0, 0);
+    let viewportScale = 1;
+    let prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onReducedMotionChange = (event: MediaQueryListEvent) => {
+      prefersReducedMotion = event.matches;
+    };
+    reducedMotionQuery.addEventListener("change", onReducedMotionChange);
 
     //  1. PARTICLE POINT CLOUD
     const pos = new Float32Array(PARTICLE_COUNT * 3);
@@ -706,18 +748,29 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       const w = mount.clientWidth;
       const h = mount.clientHeight;
       camera.aspect = w / h;
+      const narrowScreen = w < 640 || w / Math.max(h, 1) < 0.72;
+      viewportScale = narrowScreen
+        ? w < 430
+          ? 0.64
+          : 0.74
+        : 1;
+      camera.position.z = narrowScreen ? 4.05 : 3.5;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
     onResize();
     window.addEventListener("resize", onResize);
 
-    clockRef.current.start();
+    let lastFrameTime = performance.now();
+    let elapsedTime = 0;
 
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
-      const dt = Math.min(clockRef.current.getDelta(), 0.05); // cap dt
-      const t = clockRef.current.elapsedTime;
+      const now = performance.now();
+      const dt = Math.min((now - lastFrameTime) / 1000, 0.05); // cap dt
+      lastFrameTime = now;
+      elapsedTime += dt;
+      const t = prefersReducedMotion ? 0.001 : elapsedTime;
 
       // ---- Smooth state interpolation ----
       const c = curRef.current;
@@ -743,17 +796,19 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       // ---- Compute pulse waveform ----
       const hb = heartbeat(t, c.pulseRate);
       const br = breathe(t, c.pulseRate);
-      let pulse = hb * (1 - c.breathBlend) + br * c.breathBlend;
+      let pulse = prefersReducedMotion ? 0 : hb * (1 - c.breathBlend) + br * c.breathBlend;
 
-      const amp = ampRef.current;
+      const amp = prefersReducedMotion ? 0 : ampRef.current;
       if (amp > 0.01) pulse = pulse * 0.15 + amp * 0.85;
 
       const masterAlpha = Math.min(1, transitionRef.current);
 
       // ---- Subtle camera breathing for parallax depth ----
-      camera.position.x = Math.sin(t * 0.13) * 0.04;
-      camera.position.y = Math.cos(t * 0.09) * 0.03;
+      camera.position.x = prefersReducedMotion ? 0 : Math.sin(t * 0.13) * 0.04;
+      camera.position.y = prefersReducedMotion ? 0 : Math.cos(t * 0.09) * 0.03;
       camera.lookAt(0, 0, 0);
+
+      const objectScale = c.scaleTarget * viewportScale;
 
       // ---- Update particles ----
       pMat.uniforms.uTime.value = t * c.orbitalSpeed;
@@ -761,7 +816,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       pMat.uniforms.uCoreCol.value.setRGB(...c.coreColor);
       pMat.uniforms.uAlpha.value = c.particleAlpha * masterAlpha;
       pMat.uniforms.uPulse.value = pulse * c.pulseDepth;
-      pMat.uniforms.uScale.value = c.scaleTarget;
+      pMat.uniforms.uScale.value = objectScale;
       pMat.uniforms.uAudio.value = amp;
       pMat.uniforms.uTrail.value = c.trailStrength;
 
@@ -780,20 +835,25 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       // Billboard glow planes
       glow1.quaternion.copy(camera.quaternion);
       glow2.quaternion.copy(camera.quaternion);
+      glow1.scale.setScalar(viewportScale);
+      glow2.scale.setScalar(viewportScale);
 
       // ---- Update dust ----
       dMat.uniforms.uTime.value = t;
       dMat.uniforms.uColor.value.setRGB(...c.particleColor);
       dMat.uniforms.uAlpha.value = c.dustAlpha * masterAlpha;
-      dMat.uniforms.uScale.value = c.scaleTarget;
+      dMat.uniforms.uScale.value = objectScale;
 
       // ---- Update rings ----
       for (const rd of rings) {
-        rd.mesh.rotation.y += rd.speed * dt * c.orbitalSpeed * 4;
-        rd.mesh.rotation.x += rd.speed * dt * c.orbitalSpeed * 0.8;
+        if (!prefersReducedMotion) {
+          rd.mesh.rotation.y += rd.speed * dt * c.orbitalSpeed * 4;
+          rd.mesh.rotation.x += rd.speed * dt * c.orbitalSpeed * 0.8;
+        }
         const mat = rd.mesh.material as THREE.LineBasicMaterial;
         mat.color.setRGB(...c.particleColor);
         mat.opacity = c.ringAlpha * masterAlpha * (0.6 + pulse * 0.4);
+        rd.mesh.scale.setScalar(viewportScale);
       }
 
       // ---- Update arcs ----
@@ -810,7 +870,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
           const fadeOut = 1 - Math.max(0, (prog - 0.6) / 0.4);
           arc.mat.uniforms.uAlpha.value = fadeIn * fadeOut * c.trailStrength * masterAlpha * 0.7;
           arc.mat.uniforms.uColor.value.setRGB(...c.particleColor);
-          arc.mat.uniforms.uScale.value = c.scaleTarget;
+          arc.mat.uniforms.uScale.value = objectScale;
           arc.mat.uniforms.uHead.value = prog;
 
           // Update arc geometry (great-circle path with outward bulge)
@@ -827,7 +887,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
         }
 
         // Spawn logic
-        if (!arc.active && c.arcFrequency > 0 && Math.random() < c.arcFrequency * dt) {
+        if (!prefersReducedMotion && !arc.active && c.arcFrequency > 0 && Math.random() < c.arcFrequency * dt) {
           arc.active = true;
           arc.life = 0;
           arc.maxLife = 1.2 + Math.random() * 1.6;
@@ -846,6 +906,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
     return () => {
       cancelAnimationFrame(frameRef.current);
       window.removeEventListener("resize", onResize);
+      reducedMotionQuery.removeEventListener("change", onReducedMotionChange);
       renderer.dispose();
       if (mount.contains(renderer.domElement)) {
         mount.removeChild(renderer.domElement);
