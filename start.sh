@@ -277,10 +277,24 @@ write_lifecycle_state "starting"
 OVERLAY_DIR="${SCRIPT_DIR}/desktop-overlay"
 OVERLAY_APP="${OVERLAY_DIR}/build/JarvisOverlay.app"
 OVERLAY_BIN="${OVERLAY_APP}/Contents/MacOS/JarvisOverlay"
+OVERLAY_VENDOR_SRC="${OVERLAY_DIR}/vendor/three.module.min.js"
+OVERLAY_VENDOR_BUNDLE="${OVERLAY_APP}/Contents/Resources/vendor/three.module.min.js"
 if [[ "${MODE}" == "full" ]] && [[ -f "${OVERLAY_DIR}/JarvisOverlay.swift" ]]; then
     if command -v swiftc &>/dev/null; then
-        # Build if executable is missing (not just .app directory)
+        OVERLAY_NEEDS_BUILD=false
         if [[ ! -x "${OVERLAY_BIN}" ]]; then
+            OVERLAY_NEEDS_BUILD=true
+        elif [[ "${OVERLAY_DIR}/JarvisOverlay.swift" -nt "${OVERLAY_BIN}" ]]; then
+            OVERLAY_NEEDS_BUILD=true
+        elif [[ "${OVERLAY_DIR}/build-overlay.sh" -nt "${OVERLAY_BIN}" ]]; then
+            OVERLAY_NEEDS_BUILD=true
+        elif [[ ! -f "${OVERLAY_VENDOR_BUNDLE}" ]]; then
+            OVERLAY_NEEDS_BUILD=true
+        elif [[ -f "${OVERLAY_VENDOR_SRC}" && "${OVERLAY_VENDOR_SRC}" -nt "${OVERLAY_VENDOR_BUNDLE}" ]]; then
+            OVERLAY_NEEDS_BUILD=true
+        fi
+
+        if [[ "${OVERLAY_NEEDS_BUILD}" == "true" ]]; then
             # Clean stale/broken builds
             rm -rf "${OVERLAY_DIR}/build" 2>/dev/null || true
             echo "Building JARVIS Desktop Overlay..."

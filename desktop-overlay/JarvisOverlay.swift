@@ -11,9 +11,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let mouseLocation = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
-            ?? NSScreen.main
-            ?? NSScreen.screens[0]
+        let screens = NSScreen.screens
+        let mouseScreen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
+        let screenMode = ProcessInfo.processInfo.environment["JARVIS_OVERLAY_SCREEN"]?.lowercased() ?? "rightmost"
+        let screen: NSScreen
+        switch screenMode {
+        case "main":
+            screen = NSScreen.main ?? mouseScreen ?? screens[0]
+        case "mouse":
+            screen = mouseScreen ?? NSScreen.main ?? screens[0]
+        case "leftmost":
+            screen = screens.min { $0.visibleFrame.minX < $1.visibleFrame.minX } ?? NSScreen.main ?? screens[0]
+        default:
+            screen = screens.max { $0.visibleFrame.maxX < $1.visibleFrame.maxX } ?? NSScreen.main ?? screens[0]
+        }
         let screenFrame = screen.visibleFrame
 
         // Transparent floating surface for the orb, status, and response text.
@@ -40,7 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let floatingLevel = Int(CGWindowLevelForKey(.floatingWindow))
         window.level = NSWindow.Level(rawValue: floatingLevel)
         window.ignoresMouseEvents = true
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
 
         let webViewConfig = WKWebViewConfiguration()
         webViewConfig.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
@@ -100,7 +111,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 #panel {
-                    display: none;
+                    position: absolute;
+                    z-index: 1;
+                    inset: 12px 18px 12px;
+                    border-radius: 32px;
+                    background:
+                        radial-gradient(circle at 50% 38%,
+                            rgba(0, 212, 255, 0.18) 0%,
+                            rgba(4, 18, 30, 0.72) 36%,
+                            rgba(2, 8, 15, 0.62) 70%,
+                            rgba(1, 4, 9, 0.42) 100%);
+                    border: 1px solid rgba(0, 212, 255, 0.18);
+                    box-shadow:
+                        inset 0 0 30px rgba(0, 212, 255, 0.09),
+                        0 18px 52px rgba(0, 0, 0, 0.44);
+                    pointer-events: none;
                 }
 
                 /* Status indicator row */
@@ -119,7 +144,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     width: 6px;
                     height: 6px;
                     border-radius: 50%;
-                    background: rgba(0, 212, 255, 0.3);
+                    background: rgba(0, 212, 255, 0.62);
                     transition: background 0.5s ease, box-shadow 0.5s ease;
                 }
                 #status-dot.offline {
@@ -160,15 +185,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     font-weight: 500;
                     letter-spacing: 0.2em;
                     text-transform: uppercase;
-                    color: rgba(0, 212, 255, 0.35);
+                    color: rgba(0, 212, 255, 0.68);
                     transition: color 0.5s ease;
                     text-shadow: 0 0 12px rgba(0, 0, 0, 0.85);
                 }
-                #status-label.offline { color: rgba(155, 182, 200, 0.42); }
-                #status-label.ready { color: rgba(0, 212, 255, 0.55); }
-                #status-label.listening { color: rgba(0, 212, 255, 0.65); }
-                #status-label.thinking  { color: rgba(255, 225, 140, 0.55); }
-                #status-label.speaking  { color: rgba(255, 225, 140, 0.65); }
+                #status-label.offline { color: rgba(176, 204, 222, 0.72); }
+                #status-label.ready { color: rgba(0, 212, 255, 0.78); }
+                #status-label.listening { color: rgba(0, 212, 255, 0.88); }
+                #status-label.thinking  { color: rgba(255, 225, 140, 0.82); }
+                #status-label.speaking  { color: rgba(255, 225, 140, 0.88); }
                 #status-label.error { color: rgba(255, 160, 140, 0.68); }
 
                 /* Canvas container for the orb */
@@ -182,7 +207,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     overflow: hidden;
                     -webkit-mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
                     mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
-                    filter: brightness(1.1) saturate(1.08) drop-shadow(0 0 18px rgba(0, 212, 255, 0.22));
+                    filter: brightness(1.22) saturate(1.16) drop-shadow(0 0 22px rgba(0, 212, 255, 0.30));
                 }
                 #orb-container::before {
                     content: '';
@@ -191,9 +216,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     border-radius: 50%;
                     background:
                         radial-gradient(circle,
-                            rgba(1, 7, 15, 0.56) 0%,
-                            rgba(1, 10, 20, 0.36) 42%,
-                            rgba(1, 10, 20, 0.14) 64%,
+                            rgba(1, 7, 15, 0.82) 0%,
+                            rgba(1, 10, 20, 0.68) 42%,
+                            rgba(1, 10, 20, 0.34) 64%,
                             transparent 82%);
                     filter: blur(8px);
                     pointer-events: none;
@@ -875,6 +900,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         webView.loadHTMLString(htmlContent, baseURL: overlayBaseURL)
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         registerGlobalHotKey()
     }
 
