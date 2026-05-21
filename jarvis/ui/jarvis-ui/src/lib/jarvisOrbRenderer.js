@@ -122,6 +122,7 @@ const VERT_PARTICLES = /* glsl */ `
   uniform float uPulse;
   uniform float uScale;
   uniform float uAudio;
+  uniform float uPointScale;
 
   varying float vAlpha;
   varying float vShell;
@@ -193,7 +194,7 @@ const VERT_PARTICLES = /* glsl */ `
 
     float depth = -mvPos.z;
     float baseSize = aSize * (40.0 / max(depth, 0.5));
-    gl_PointSize = max(1.5, baseSize * (0.85 + uPulse * 0.15) * audioMix);
+    gl_PointSize = max(1.2, baseSize * (0.85 + uPulse * 0.15) * audioMix * uPointScale);
 
     float depthFade = smoothstep(6.0, 2.5, depth);
     vAlpha = aBright * (0.82 + depthFade * 0.18) * (0.85 + uPulse * 0.15);
@@ -228,6 +229,7 @@ const VERT_DUST = /* glsl */ `
   attribute float aPhase;
   uniform float uTime;
   uniform float uScale;
+  uniform float uPointScale;
   varying float vFade;
 
   void main() {
@@ -240,7 +242,7 @@ const VERT_DUST = /* glsl */ `
     vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mvPos;
     float depth = -mvPos.z;
-    gl_PointSize = aSize * (200.0 / max(depth, 0.5));
+    gl_PointSize = aSize * (200.0 / max(depth, 0.5)) * uPointScale;
     vFade = smoothstep(4.5, 2.0, depth);
   }
 `;
@@ -424,13 +426,25 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
   let targetConfig = cloneConfig(options.state);
   let audioAmplitude = clamp01(options.audioAmplitude ?? 0);
   let transitionIn = clamp01(options.transitionIn ?? 1);
+  const compactPixelRatioCap = options.compactPixelRatioCap ?? 1.35;
+  const pixelRatioCap = options.pixelRatioCap ?? 2;
+  const particleAlphaScale = options.particleAlphaScale ?? 1;
+  const particleSizeScale = options.particleSizeScale ?? 1;
+  const glowIntensityScale = options.glowIntensityScale ?? 1;
+  const dustAlphaScale = options.dustAlphaScale ?? 1;
+  const ringAlphaScale = options.ringAlphaScale ?? 1;
+
+  const effectivePixelRatio = (compact) => {
+    if (prefersReducedMotion) return Math.min(browserWindow.devicePixelRatio || 1, compactPixelRatioCap);
+    return Math.min(browserWindow.devicePixelRatio || 1, compact ? compactPixelRatioCap : pixelRatioCap);
+  };
 
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: true,
     powerPreference: prefersReducedMotion ? "low-power" : "high-performance",
   });
-  renderer.setPixelRatio(Math.min(browserWindow.devicePixelRatio || 1, initialCompact || prefersReducedMotion ? 1.35 : 2));
+  renderer.setPixelRatio(effectivePixelRatio(initialCompact));
   renderer.setClearColor(0x000000, 0);
   renderer.domElement.style.display = "block";
   renderer.domElement.style.width = "100%";
@@ -520,6 +534,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
       uPulse: { value: 0 },
       uScale: { value: 1.0 },
       uAudio: { value: 0 },
+      uPointScale: { value: particleSizeScale },
     },
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -579,6 +594,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
       uColor: { value: new THREE.Color() },
       uAlpha: { value: 0.18 },
       uScale: { value: 1.0 },
+      uPointScale: { value: particleSizeScale },
     },
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -666,7 +682,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
     camera.position.z = compact ? 3.05 : 3.5;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(browserWindow.devicePixelRatio || 1, compact || prefersReducedMotion ? 1.35 : 2));
+    renderer.setPixelRatio(effectivePixelRatio(compact));
     renderer.setSize(w, h);
   };
 
@@ -725,7 +741,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
     pMat.uniforms.uTime.value = t * c.orbitalSpeed;
     pMat.uniforms.uColor.value.setRGB(c.particleColor[0], c.particleColor[1], c.particleColor[2]);
     pMat.uniforms.uCoreCol.value.setRGB(c.coreColor[0], c.coreColor[1], c.coreColor[2]);
-    pMat.uniforms.uAlpha.value = c.particleAlpha * masterAlpha;
+    pMat.uniforms.uAlpha.value = c.particleAlpha * masterAlpha * particleAlphaScale;
     pMat.uniforms.uPulse.value = pulse * c.pulseDepth;
     pMat.uniforms.uScale.value = c.scaleTarget;
     pMat.uniforms.uAudio.value = amp;
@@ -734,7 +750,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
       mat.uniforms.uCore.value.setRGB(c.coreColor[0], c.coreColor[1], c.coreColor[2]);
       mat.uniforms.uMid.value.setRGB(c.particleColor[0], c.particleColor[1], c.particleColor[2]);
       mat.uniforms.uOuter.value.setRGB(c.glowColor[0], c.glowColor[1], c.glowColor[2]);
-      mat.uniforms.uIntensity.value = c.coreIntensity * masterAlpha * intensityMul * (1 + pulse * 0.2);
+      mat.uniforms.uIntensity.value = c.coreIntensity * masterAlpha * intensityMul * glowIntensityScale * (1 + pulse * 0.2);
       mat.uniforms.uPulse.value = pulse;
     };
     glowUpdater(glowMat, 0.76);
@@ -745,7 +761,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
 
     dMat.uniforms.uTime.value = t;
     dMat.uniforms.uColor.value.setRGB(c.particleColor[0], c.particleColor[1], c.particleColor[2]);
-    dMat.uniforms.uAlpha.value = c.dustAlpha * masterAlpha;
+    dMat.uniforms.uAlpha.value = c.dustAlpha * masterAlpha * dustAlphaScale;
     dMat.uniforms.uScale.value = c.scaleTarget;
 
     for (const rd of rings) {
@@ -753,7 +769,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
       rd.mesh.rotation.x += rd.speed * dt * c.orbitalSpeed * 0.8;
       const mat = rd.mesh.material;
       mat.color.setRGB(c.particleColor[0], c.particleColor[1], c.particleColor[2]);
-      mat.opacity = c.ringAlpha * masterAlpha * (0.6 + pulse * 0.4);
+      mat.opacity = c.ringAlpha * masterAlpha * ringAlphaScale * (0.6 + pulse * 0.4);
     }
 
     for (const arc of arcs) {

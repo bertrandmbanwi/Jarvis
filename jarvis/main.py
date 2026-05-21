@@ -427,8 +427,8 @@ def _display_auth_info():
         print("  (Local connections bypass authentication)")
         print()
     else:
-        print("  PIN authentication: loaded from previous session")
-        print("  (Set JARVIS_REGEN_PIN=true to generate a new PIN)")
+        print("  PIN authentication: using saved PIN")
+        print("  (Unset JARVIS_REGEN_PIN or set it to true to generate a new PIN)")
         print()
 
 

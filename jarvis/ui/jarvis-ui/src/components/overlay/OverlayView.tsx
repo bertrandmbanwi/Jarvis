@@ -225,7 +225,19 @@ export function OverlayView() {
         <div className={`overlay-status-label ${orbState}`}>{STATE_LABELS[orbState]}</div>
       </div>
       <div className="overlay-orb">
-        <ArcReactorGL state={orbState} transitionIn={1} audioAmplitude={audioAmplitude} />
+        <ArcReactorGL
+          state={orbState}
+          transitionIn={1}
+          audioAmplitude={audioAmplitude}
+          compactPixelRatioCap={3}
+          pixelRatioCap={3}
+          particleAlphaScale={1.08}
+          particleSizeScale={0.68}
+          glowIntensityScale={0.52}
+          dustAlphaScale={0.42}
+          ringAlphaScale={1.25}
+          visualFilter="saturate(1.08)"
+        />
       </div>
       <div className="overlay-text-area">
         <div className={`overlay-user-text ${userText ? "visible" : ""}`}>{userText ? `"${userText}"` : ""}</div>
@@ -233,6 +245,8 @@ export function OverlayView() {
       </div>
 
       <style>{`
+        html,
+        body,
         html.jarvis-overlay-document,
         html.jarvis-overlay-document body {
           background: transparent !important;
@@ -246,11 +260,18 @@ export function OverlayView() {
           flex-direction: column;
           align-items: center;
           justify-content: flex-start;
-          padding: 18px 10px 8px;
+          padding: 16px 8px 8px;
           overflow: hidden;
           background: transparent;
+          cursor: grab;
+          user-select: none;
           font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
           -webkit-font-smoothing: antialiased;
+        }
+
+        .overlay-root:active,
+        html.jarvis-overlay-dragging .overlay-root {
+          cursor: grabbing;
         }
 
         .overlay-status-row {
@@ -323,39 +344,12 @@ export function OverlayView() {
         .overlay-orb {
           position: relative;
           z-index: 5;
-          width: 260px;
-          height: 260px;
+          width: 330px;
+          height: 330px;
           flex-shrink: 0;
-          overflow: hidden;
-          border-radius: 50%;
-          background:
-            radial-gradient(
-              circle,
-              rgba(0, 5, 12, 0.86) 0%,
-              rgba(0, 9, 18, 0.68) 45%,
-              rgba(0, 8, 18, 0.28) 70%,
-              transparent 88%
-            );
-          -webkit-mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
-          mask-image: radial-gradient(circle, #000 0%, #000 66%, rgba(0, 0, 0, 0.72) 76%, transparent 88%);
-          filter: saturate(1.04) brightness(1.08) drop-shadow(0 0 20px rgba(0, 212, 255, 0.2));
-        }
-
-        .overlay-orb::before {
-          content: "";
-          position: absolute;
-          inset: 6%;
-          border-radius: 50%;
-          background:
-            radial-gradient(
-              circle,
-              rgba(1, 7, 15, 0.56) 0%,
-              rgba(1, 10, 20, 0.48) 42%,
-              rgba(1, 10, 20, 0.22) 64%,
-              transparent 82%
-            );
-          filter: blur(8px);
-          pointer-events: none;
+          overflow: visible;
+          background: transparent;
+          filter: saturate(1.08) brightness(1.04);
         }
 
         .overlay-text-area {

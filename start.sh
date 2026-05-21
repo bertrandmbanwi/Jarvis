@@ -33,11 +33,14 @@ JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-$(read_env_value JARVIS_OPEN_DAS
 JARVIS_OPEN_DASHBOARD="${JARVIS_OPEN_DASHBOARD:-true}"
 JARVIS_PIN_AUTH_ENABLED="${JARVIS_PIN_AUTH_ENABLED:-$(read_env_value JARVIS_PIN_AUTH_ENABLED)}"
 JARVIS_PIN_AUTH_ENABLED="${JARVIS_PIN_AUTH_ENABLED:-true}"
+JARVIS_REGEN_PIN="${JARVIS_REGEN_PIN:-$(read_env_value JARVIS_REGEN_PIN)}"
+JARVIS_REGEN_PIN="${JARVIS_REGEN_PIN:-true}"
 JARVIS_ENABLE_TUNNEL="${JARVIS_ENABLE_TUNNEL:-$(read_env_value JARVIS_ENABLE_TUNNEL)}"
 JARVIS_ENABLE_TUNNEL="${JARVIS_ENABLE_TUNNEL:-false}"
 JARVIS_UI_MODE="${JARVIS_UI_MODE:-$(read_env_value JARVIS_UI_MODE)}"
 JARVIS_UI_MODE="${JARVIS_UI_MODE:-production}"
 export JARVIS_PIN_AUTH_ENABLED
+export JARVIS_REGEN_PIN
 
 # Track child PIDs for cleanup
 UI_PID=""
@@ -287,8 +290,18 @@ OVERLAY_APP="${OVERLAY_DIR}/build/JarvisOverlay.app"
 OVERLAY_BIN="${OVERLAY_APP}/Contents/MacOS/JarvisOverlay"
 if [[ "${MODE}" == "full" ]] && [[ -f "${OVERLAY_DIR}/JarvisOverlay.swift" ]]; then
     if command -v swiftc &>/dev/null; then
-        # Build if executable is missing (not just .app directory)
+        OVERLAY_REBUILD_REQUIRED="false"
         if [[ ! -x "${OVERLAY_BIN}" ]]; then
+            OVERLAY_REBUILD_REQUIRED="true"
+        elif [[ "${OVERLAY_DIR}/JarvisOverlay.swift" -nt "${OVERLAY_BIN}" ]] || \
+             [[ "${OVERLAY_DIR}/overlay.html" -nt "${OVERLAY_BIN}" ]] || \
+             [[ "${OVERLAY_DIR}/build-overlay.sh" -nt "${OVERLAY_BIN}" ]] || \
+             [[ "${UI_DIR}/src/lib/jarvisOrbRenderer.js" -nt "${OVERLAY_BIN}" ]]; then
+            OVERLAY_REBUILD_REQUIRED="true"
+        fi
+
+        # Build if executable is missing or source/resources are newer.
+        if [[ "${OVERLAY_REBUILD_REQUIRED}" == "true" ]]; then
             # Clean stale/broken builds
             rm -rf "${OVERLAY_DIR}/build" 2>/dev/null || true
             echo "Building JARVIS Desktop Overlay..."
@@ -332,7 +345,25 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
         if [[ "${JARVIS_UI_MODE}" == "dev" ]]; then
             UI_COMMAND=(npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}")
         else
-            if [[ ! -d "${UI_DIR}/.next" ]]; then
+            UI_BUILD_MARKER="${UI_DIR}/.next/BUILD_ID"
+            UI_REBUILD_REQUIRED="false"
+            if [[ ! -f "${UI_BUILD_MARKER}" ]]; then
+                UI_REBUILD_REQUIRED="true"
+            elif find \
+                "${UI_DIR}/src" \
+                "${UI_DIR}/public" \
+                "${UI_DIR}/next.config.js" \
+                "${UI_DIR}/package.json" \
+                "${UI_DIR}/package-lock.json" \
+                "${UI_DIR}/postcss.config.js" \
+                "${UI_DIR}/tailwind.config.js" \
+                "${UI_DIR}/tsconfig.json" \
+                -newer "${UI_BUILD_MARKER}" \
+                -print -quit | grep -q .; then
+                UI_REBUILD_REQUIRED="true"
+            fi
+
+            if [[ "${UI_REBUILD_REQUIRED}" == "true" ]]; then
                 echo "Building JARVIS UI for production..."
                 (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run build)
             fi

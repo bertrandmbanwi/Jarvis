@@ -1,7 +1,12 @@
+import os
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+
+# server.py initializes auth at import time; keep that import from rotating the
+# developer's real data/auth PIN file during tests.
+os.environ["JARVIS_REGEN_PIN"] = "false"
 
 from jarvis.core import auth, server
 
@@ -25,6 +30,48 @@ def test_initialize_pin_is_noop_when_pin_auth_disabled(monkeypatch: pytest.Monke
 
     assert auth.initialize_pin() == ""
     assert auth.get_current_pin() is None
+
+
+def test_initialize_pin_regenerates_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    monkeypatch.setattr(auth.settings, "PIN_AUTH_ENABLED", True)
+    monkeypatch.setattr(auth, "PIN_HASH_FILE", tmp_path / "pin.hash")
+    monkeypatch.setattr(auth, "PIN_SALT_FILE", tmp_path / "pin.salt")
+    monkeypatch.delenv("JARVIS_PIN", raising=False)
+    monkeypatch.delenv("JARVIS_REGEN_PIN", raising=False)
+    auth._active_sessions.clear()
+    auth._failed_attempts.clear()
+
+    assert auth.set_pin("123456") is True
+
+    pin = auth.initialize_pin()
+
+    assert pin.isdigit()
+    assert len(pin) == auth.PIN_LENGTH
+    assert auth.get_current_pin() == pin
+    assert auth.verify_pin("123456") is None
+    assert auth.verify_pin(pin)
+
+
+def test_initialize_pin_can_reuse_saved_pin_when_regen_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    monkeypatch.setattr(auth.settings, "PIN_AUTH_ENABLED", True)
+    monkeypatch.setattr(auth, "PIN_HASH_FILE", tmp_path / "pin.hash")
+    monkeypatch.setattr(auth, "PIN_SALT_FILE", tmp_path / "pin.salt")
+    monkeypatch.delenv("JARVIS_PIN", raising=False)
+    monkeypatch.setenv("JARVIS_REGEN_PIN", "false")
+    auth._active_sessions.clear()
+    auth._failed_attempts.clear()
+
+    assert auth.set_pin("123456") is True
+
+    assert auth.initialize_pin() == ""
+    assert auth.get_current_pin() is None
+    assert auth.verify_pin("123456")
 
 
 async def test_require_auth_rejects_remote_request_when_pin_auth_disabled(monkeypatch: pytest.MonkeyPatch):
