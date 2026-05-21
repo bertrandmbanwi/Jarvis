@@ -20,6 +20,7 @@ PIN_LENGTH = 6
 SESSION_TOKEN_EXPIRY = 24 * 60 * 60
 MAX_FAILED_ATTEMPTS = 5
 RATE_LIMIT_WINDOW = 60
+PIN_REGEN_FALSE_VALUES = {"false", "0", "no", "off"}
 
 _active_sessions: dict[str, float] = {}  # Maps token -> expiry timestamp
 _failed_attempts: dict[str, list[float]] = {}  # Maps IP -> list of failed attempt timestamps
@@ -44,8 +45,14 @@ def _hash_pin(pin: str, salt: bytes) -> str:
     return _hash_pin_with_iterations(pin, salt, _PBKDF2_ITERATIONS)
 
 
+def _regenerate_pin_on_startup() -> bool:
+    """Return whether launch should create a fresh remote-access PIN."""
+    value = os.getenv("JARVIS_REGEN_PIN", "true").strip().lower()
+    return value not in PIN_REGEN_FALSE_VALUES
+
+
 def initialize_pin() -> str:
-    """Initialize or load PIN from env vars, disk, or generate new."""
+    """Initialize a launch PIN from env vars, disk, or a fresh random value."""
     global _current_pin
 
     if not pin_auth_enabled():
@@ -58,7 +65,7 @@ def initialize_pin() -> str:
         if not custom_pin.isdigit() or not (4 <= len(custom_pin) <= 8):
             logger.error(
                 "JARVIS_PIN must be 4-8 digits. Got: '%s' (%d chars). "
-                "Falling back to stored or random PIN.",
+                "Falling back to generated or stored PIN.",
                 "*" * len(custom_pin), len(custom_pin),
             )
         else:
@@ -70,7 +77,7 @@ def initialize_pin() -> str:
             logger.info("PIN set from JARVIS_PIN environment variable.")
             return custom_pin
 
-    regen = os.getenv("JARVIS_REGEN_PIN", "").lower() in ("true", "1", "yes")
+    regen = _regenerate_pin_on_startup()
 
     if PIN_HASH_FILE.exists() and PIN_SALT_FILE.exists() and not regen:
         logger.info("PIN authentication loaded from disk.")
@@ -90,7 +97,7 @@ def initialize_pin() -> str:
 
 
 def get_current_pin() -> str | None:
-    """Get the current PIN if just generated; None if loaded from disk."""
+    """Get the current launch PIN; None when using an explicitly saved PIN."""
     return _current_pin
 
 
