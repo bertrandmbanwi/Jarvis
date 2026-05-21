@@ -9,6 +9,14 @@ interface ArcReactorGLProps {
   state: OrbState;
   transitionIn?: number;
   audioAmplitude?: number;
+  compactPixelRatioCap?: number;
+  pixelRatioCap?: number;
+  particleAlphaScale?: number;
+  particleSizeScale?: number;
+  glowIntensityScale?: number;
+  dustAlphaScale?: number;
+  ringAlphaScale?: number;
+  visualFilter?: string;
   className?: string;
 }
 
@@ -24,6 +32,14 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
   state,
   transitionIn = 1,
   audioAmplitude = 0,
+  compactPixelRatioCap,
+  pixelRatioCap,
+  particleAlphaScale,
+  particleSizeScale,
+  glowIntensityScale,
+  dustAlphaScale,
+  ringAlphaScale,
+  visualFilter = "saturate(1.04) drop-shadow(0 0 28px rgba(0, 212, 255, 0.13))",
   className = "",
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -37,6 +53,13 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       state,
       transitionIn,
       audioAmplitude,
+      compactPixelRatioCap,
+      pixelRatioCap,
+      particleAlphaScale,
+      particleSizeScale,
+      glowIntensityScale,
+      dustAlphaScale,
+      ringAlphaScale,
     }) as OrbRendererController;
 
     return () => {
@@ -63,7 +86,7 @@ export const ArcReactorGL: React.FC<ArcReactorGLProps> = ({
       className={`w-full h-full ${className}`}
       style={{
         background: "transparent",
-        filter: "saturate(1.04) drop-shadow(0 0 28px rgba(0, 212, 255, 0.13))",
+        filter: visualFilter,
       }}
     />
   );

@@ -810,7 +810,7 @@ async def auth_set_pin(request: Request, body: SetPinRequest):
 
 
 def get_startup_pin() -> str:
-    """Return the PIN generated at startup, or empty if loaded from previous session."""
+    """Return the launch PIN, or empty if saved-PIN mode is explicitly enabled."""
     return _startup_pin
 
 

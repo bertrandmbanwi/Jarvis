@@ -188,7 +188,7 @@ The console will print a URL like:
 https://random-words-here.trycloudflare.com
 ```
 
-Open that URL on your phone's browser. The JARVIS UI is fully responsive and the microphone works over HTTPS. PIN authentication is disabled by default; set `JARVIS_PIN_AUTH_ENABLED=true` before launch if you want first-connect PIN protection for remote access.
+Open that URL on your phone's browser. The JARVIS UI is fully responsive and the microphone works over HTTPS. PIN authentication is enabled by default for remote access, and localhost still opens directly.
 
 For a persistent URL (instead of random words each time), set up a Named Cloudflare Tunnel:
 ```bash
@@ -424,15 +424,15 @@ JARVIS opens directly by default for browser, keyboard hotkey, and mobile dashbo
 JARVIS_PIN_AUTH_ENABLED=true ./start.sh full
 ```
 
-When enabled, the PIN is displayed in the terminal on first launch and persists across restarts.
+When enabled, a fresh PIN is displayed in the terminal on every launch. Local connections from the same machine bypass PIN authentication automatically.
 
-To regenerate the PIN:
+To intentionally reuse a saved generated PIN across launches:
 
 ```bash
-JARVIS_REGEN_PIN=true ./start.sh full
+JARVIS_REGEN_PIN=false ./start.sh full
 ```
 
-The new PIN will be printed to the console before the server starts. Local connections (from the same machine) bypass PIN authentication automatically when PIN auth is enabled.
+You can also set a fixed 4-8 digit PIN with `JARVIS_PIN=1234 ./start.sh full`.
 
 ## Settings Panel
 
