@@ -149,6 +149,17 @@ def _launch_agent_status(plist_path: Path, probe_launchctl: bool) -> dict[str, A
     }
 
 
+def _launch_agent_points_to(plist_path: Path, start_script: Path) -> bool:
+    if not plist_path.exists():
+        return False
+    try:
+        plist = plistlib.loads(plist_path.read_bytes())
+    except (OSError, plistlib.InvalidFileException):
+        return False
+    args = plist.get("ProgramArguments", [])
+    return isinstance(args, list) and str(start_script) in {str(arg) for arg in args}
+
+
 def render_launch_agent_plist(jarvis_home: str | Path | None = None) -> bytes:
     """Render a launchd plist for the current checkout without hardcoded paths."""
     home = _path(jarvis_home, settings.JARVIS_HOME)
@@ -399,7 +410,9 @@ def restart_app(
     target = _target_process(runtime_file)
     target_pid = int(target["pid"])
     plist_path = DEFAULT_LAUNCH_AGENTS_DIR / LAUNCH_AGENT_FILENAME
-    launch_agent_loaded = bool(_launch_agent_status(plist_path, platform.system() == "Darwin").get("loaded"))
+    launch_agent_loaded = _launch_agent_points_to(plist_path, start_script) and bool(
+        _launch_agent_status(plist_path, platform.system() == "Darwin").get("loaded")
+    )
     restart_cmd = [] if launch_agent_loaded else [str(start_script), mode]
     payload = {
         "mode": "restart",

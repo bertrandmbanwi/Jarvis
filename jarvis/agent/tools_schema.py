@@ -22,6 +22,7 @@ from jarvis.tools import (
     filesystem,
     mac_control,
     notes_access,
+    public_data,
     screen,
     shell,
     weather,
@@ -1006,6 +1007,214 @@ TOOL_SCHEMAS = [
                     "description": "City name (e.g., 'New York', 'San Francisco') or zip code (e.g., '90210')",
                 },
             },
+        },
+    },
+    # ---- Free Public Data APIs ----
+    {
+        "name": "convert_currency",
+        "description": (
+            "Convert an amount between currencies using free no-key exchange-rate APIs. "
+            "Use this instead of web search for exchange-rate conversions like '100 USD to EUR'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number",
+                    "description": "Amount to convert",
+                },
+                "from_currency": {
+                    "type": "string",
+                    "description": "Source currency code or common name, e.g. USD, dollars, EUR",
+                },
+                "to_currency": {
+                    "type": "string",
+                    "description": "Target currency code or common name, e.g. EUR, GBP, yen",
+                },
+            },
+            "required": ["amount", "from_currency", "to_currency"],
+        },
+    },
+    {
+        "name": "get_crypto_price",
+        "description": (
+            "Get a cryptocurrency spot price from CoinGecko's free API. "
+            "Use this for BTC, ETH, SOL, DOGE, XRP, and similar crypto price questions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string",
+                    "description": "Crypto asset name or ticker, e.g. BTC, bitcoin, ETH",
+                },
+                "vs_currency": {
+                    "type": "string",
+                    "description": "Quote currency, default USD",
+                    "default": "usd",
+                },
+            },
+            "required": ["asset"],
+        },
+    },
+    {
+        "name": "get_public_holidays",
+        "description": (
+            "List public holidays for a country and year using Nager.Date. "
+            "Use this for holiday calendars and business-day planning."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "country_code": {
+                    "type": "string",
+                    "description": "ISO 3166-1 alpha-2 country code or common name. Defaults to US.",
+                    "default": "US",
+                },
+                "year": {
+                    "type": "integer",
+                    "description": "Four-digit year. Defaults to the current year.",
+                },
+            },
+        },
+    },
+    {
+        "name": "get_next_public_holiday",
+        "description": "Get the next public holiday for a country using Nager.Date.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "country_code": {
+                    "type": "string",
+                    "description": "ISO 3166-1 alpha-2 country code or common name. Defaults to US.",
+                    "default": "US",
+                },
+            },
+        },
+    },
+    {
+        "name": "is_public_holiday",
+        "description": (
+            "Check whether a specific date is a public holiday in a country. "
+            "Use an empty date for today."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "country_code": {
+                    "type": "string",
+                    "description": "ISO 3166-1 alpha-2 country code or common name. Defaults to US.",
+                    "default": "US",
+                },
+                "check_date": {
+                    "type": "string",
+                    "description": "Date in YYYY-MM-DD format. Defaults to today.",
+                },
+            },
+        },
+    },
+    {
+        "name": "get_country_info",
+        "description": (
+            "Get country facts from REST Countries: capital, population, currency, language, and region. "
+            "Use this instead of web search for stable country facts."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "country": {
+                    "type": "string",
+                    "description": "Country name or code",
+                },
+            },
+            "required": ["country"],
+        },
+    },
+    {
+        "name": "get_sec_company_filings",
+        "description": (
+            "Get recent SEC EDGAR filings for a public company by ticker, company name, or CIK. "
+            "Use this for filings and public-company regulatory facts, not stock prices."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker_or_cik": {
+                    "type": "string",
+                    "description": "Ticker, company name, or CIK, e.g. AAPL, Apple, 320193",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of filings to return, up to 10",
+                    "default": 5,
+                },
+            },
+            "required": ["ticker_or_cik"],
+        },
+    },
+    {
+        "name": "lookup_ip",
+        "description": (
+            "Look up the approximate location and network for an explicit IPv4 or IPv6 address. "
+            "Only use this when the user provides an IP address; do not infer or fetch the user's current IP."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ip_address": {
+                    "type": "string",
+                    "description": "IPv4 or IPv6 address to look up",
+                },
+            },
+            "required": ["ip_address"],
+        },
+    },
+    {
+        "name": "get_spaceflight_news",
+        "description": "Get recent spaceflight news from a free no-key public API.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Optional search term",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of articles, up to 10",
+                    "default": 5,
+                },
+            },
+        },
+    },
+    {
+        "name": "get_citybike_networks",
+        "description": "Find public bike-share networks from CityBikes by city or country.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "Optional city filter",
+                },
+                "country": {
+                    "type": "string",
+                    "description": "Optional country code filter",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum networks to return, up to 20",
+                    "default": 10,
+                },
+            },
+        },
+    },
+    {
+        "name": "check_public_api_status",
+        "description": "Run a lightweight health check against the selected free public data APIs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
         },
     },
     # ---- Web Page Reading ----
@@ -2208,6 +2417,18 @@ TOOL_REGISTRY = {
     "search_and_read": web_search.search_and_read,
     # Weather
     "get_weather": weather.get_weather,
+    # Free public data APIs
+    "convert_currency": public_data.convert_currency,
+    "get_crypto_price": public_data.get_crypto_price,
+    "get_public_holidays": public_data.get_public_holidays,
+    "get_next_public_holiday": public_data.get_next_public_holiday,
+    "is_public_holiday": public_data.is_public_holiday,
+    "get_country_info": public_data.get_country_info,
+    "get_sec_company_filings": public_data.get_sec_company_filings,
+    "lookup_ip": public_data.lookup_ip,
+    "get_spaceflight_news": public_data.get_spaceflight_news,
+    "get_citybike_networks": public_data.get_citybike_networks,
+    "check_public_api_status": public_data.check_public_api_status,
     # Web page reading
     "fetch_page_text": web_browse.fetch_page_text,
     "fetch_page_links": web_browse.fetch_page_links,
