@@ -16,6 +16,15 @@ COMMON_TOOLS = {
 
 TOOL_GROUPS: dict[str, set[str]] = {
     "weather": {"get_weather", "get_user_profile"},
+    "currency_data": {"convert_currency"},
+    "crypto_data": {"get_crypto_price"},
+    "holiday_data": {"get_public_holidays", "get_next_public_holiday", "is_public_holiday"},
+    "country_data": {"get_country_info"},
+    "sec_data": {"get_sec_company_filings"},
+    "ip_lookup": {"lookup_ip"},
+    "spaceflight_data": {"get_spaceflight_news"},
+    "citybike_data": {"get_citybike_networks"},
+    "public_api_status": {"check_public_api_status"},
     "time_status": {"get_battery_status", "get_system_info", "get_running_applications", "get_frontmost_application"},
     "mac": {
         "open_application", "close_application", "open_url", "open_url_in_browser",
@@ -62,6 +71,15 @@ TOOL_GROUPS: dict[str, set[str]] = {
 
 KEYWORD_GROUPS: list[tuple[set[str], str]] = [
     ({"weather", "forecast", "temperature", "rain", "humidity"}, "weather"),
+    ({"currency", "exchange rate", "convert", "usd", "eur", "gbp", "cad", "dollar", "euro", "pound", "yen"}, "currency_data"),
+    ({"crypto", "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "dogecoin", "doge"}, "crypto_data"),
+    ({"holiday", "business day"}, "holiday_data"),
+    ({"country", "capital", "population", "language", "currency of"}, "country_data"),
+    ({"sec", "edgar", "filing", "10-k", "10-q", "10k", "10q"}, "sec_data"),
+    ({"ip address", "geolocate ip", "ip lookup"}, "ip_lookup"),
+    ({"spaceflight", "space news", "rocket launch"}, "spaceflight_data"),
+    ({"bike share", "bike-share", "citybike", "city bike"}, "citybike_data"),
+    ({"public api", "free api status", "provider status"}, "public_api_status"),
     ({"battery", "system", "status", "running apps", "frontmost", "current app"}, "time_status"),
     ({"open", "launch", "close app", "volume", "brightness", "notification", "clipboard", "paste"}, "mac"),
     ({"file", "folder", "directory", "read", "write", "move", "copy", "project"}, "files"),
