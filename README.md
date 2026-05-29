@@ -47,7 +47,7 @@ A Manifest V3 Chrome extension that gives JARVIS direct control over your browse
 A full Playwright-driven Chromium browser that JARVIS controls autonomously for complex multi-step workflows. Fill forms, click buttons, log into sites, apply to jobs, download files. Persistent browser profile means sessions and cookies survive restarts. The Chrome extension handles lightweight tab operations; Playwright handles deep page automation.
 
 **macOS System Control**
-93 registered tools across 15 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, read Gmail, manage Apple Notes, and delegate coding tasks via Claude Code CLI.
+104 registered tools across 16 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, query free public-data APIs, read Gmail, manage Apple Notes, and delegate coding tasks via Claude Code CLI.
 
 **Multi-Agent Coordination**
 Complex requests are automatically decomposed into subtasks by the planner agent, then executed in parallel or sequence by specialized executor agents. The QA agent verifies task quality, and the UI shows real-time plan progress with per-subtask status.
@@ -133,9 +133,9 @@ For the full setup guide including environment variables, launch modes, mobile a
                        +--------+--------+
                                 |
                      +----------+----------+
-                     |  Tool Registry (93)   |
+                     |  Tool Registry (104)  |
                      |  macOS, Files, Web,   |
-                     |  Browser, Shell, ...  |
+                     |  Public Data, ...     |
                      +----------+-----------+
                                 |
                      +----------+----------+
@@ -203,6 +203,7 @@ bash scripts/package_macos_app.sh --install-user
 | Memory | SQLite (semantic memory, dispatch, experiments), JSON (facts/prefs) |
 | Browser Automation | Playwright (persistent Chromium profile) |
 | Browser Control | Chrome Extension (tab management, DOM, screenshots) |
+| Public Data | Open-Meteo, Nager.Date, Frankfurter, CoinGecko, REST Countries, SEC EDGAR, CityBikes |
 | Tunnel | Cloudflare Quick Tunnel (free HTTPS for mobile) |
 
 ## Requirements

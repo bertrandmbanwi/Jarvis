@@ -4,10 +4,11 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from jarvis.core import feedback, profile
-from jarvis.tools import mac_control, weather
+from jarvis.core.cache import tool_cache
+from jarvis.tools import mac_control, public_data, weather
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,99 @@ async def _run(action: str, fn: Callable[..., Awaitable[str]], *args) -> LocalRo
     return LocalRouteResult(response=await fn(*args), action=action)
 
 
+async def _run_cached(
+    action: str,
+    tool_name: str,
+    tool_input: dict,
+    fn: Callable[..., Awaitable[str]],
+    *args,
+) -> LocalRouteResult:
+    cached = await tool_cache.get(tool_name, tool_input)
+    if cached is not None:
+        return LocalRouteResult(response=str(cached), action=action)
+    response = await fn(*args)
+    await tool_cache.put(tool_name, tool_input, response)
+    return LocalRouteResult(response=response, action=action)
+
+
+def _extract_country_code(text: str) -> str:
+    lowered = text.lower()
+    direct_aliases = {
+        "uk": "GB",
+        "u.k.": "GB",
+        "united kingdom": "GB",
+        "england": "GB",
+        "us": "US",
+        "u.s.": "US",
+        "usa": "US",
+        "united states": "US",
+        "america": "US",
+    }
+    for alias, code in direct_aliases.items():
+        if re.search(rf"\b{re.escape(alias)}\b", lowered):
+            return code
+
+    match = re.search(r"\b(?:in|for)\s+([a-zA-Z]{2})(?:\b|$)", text)
+    if match:
+        return match.group(1).upper()
+    return "US"
+
+
+def _extract_currency_conversion(text: str) -> tuple[float, str, str] | None:
+    match = re.search(
+        r"\b(?:convert\s+)?(\d+(?:,\d{3})*(?:\.\d+)?)\s*([A-Za-z$]{1,12})\s+(?:to|into|in)\s+([A-Za-z$]{1,12})\b",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    try:
+        amount = float(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    return amount, match.group(2), match.group(3)
+
+
+def _extract_crypto_asset(text: str) -> str:
+    crypto_pattern = r"\b(bitcoin|btc|ethereum|eth|solana|sol|cardano|ada|dogecoin|doge|xrp|ripple|polygon|matic|bnb)\b"
+    if not re.search(r"\b(?:price|worth|value|trading at)\b", text, re.IGNORECASE):
+        return ""
+    match = re.search(crypto_pattern, text, re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _extract_country_fact_target(text: str) -> str:
+    match = re.search(
+        r"\b(?:capital|currency|currencies|language|languages|population)\s+(?:of|in)\s+([A-Za-z][A-Za-z .'-]{1,50})[?!.]?$",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        return _clean(match.group(1).strip(" ?!."))
+    match = re.search(r"\bcountry info(?:rmation)?\s+(?:for|on|about)\s+([A-Za-z][A-Za-z .'-]{1,50})", text, re.IGNORECASE)
+    if match:
+        return _clean(match.group(1).strip(" ?!."))
+    return ""
+
+
+def _extract_sec_target(text: str) -> str:
+    match = re.search(r"\b(?:sec|edgar|filings?|10-k|10-q)\b.*?\b(?:for|of|on)\s+([A-Za-z0-9 .&-]{1,60})[?!.]?$", text, re.IGNORECASE)
+    if match:
+        return _clean(match.group(1).strip(" ?!."))
+    match = re.search(r"\b([A-Z]{1,6})\s+(?:sec\s+)?filings?\b", text)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def _extract_ip_address(text: str) -> str:
+    match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)
+    if match:
+        return match.group(0)
+    match = re.search(r"\b[0-9a-fA-F]{0,4}:[0-9a-fA-F:]{2,}\b", text)
+    return match.group(0) if match else ""
+
+
 async def route_local(text: str, *, privacy_mode: bool = False) -> LocalRouteResult | None:
     """Handle high-confidence local commands without an LLM call."""
     raw = _clean(text)
@@ -95,7 +189,122 @@ async def route_local(text: str, *, privacy_mode: bool = False) -> LocalRouteRes
 
     if re.search(r"\b(weather|forecast|temperature)\b", lowered):
         location = _extract_weather_location(raw)
-        return await _run("weather", weather.get_weather, location)
+        return await _run_cached("weather", "get_weather", {"location": location}, weather.get_weather, location)
+
+    conversion = _extract_currency_conversion(raw)
+    if conversion and re.search(r"\b(?:convert|currency|exchange|rate|usd|eur|gbp|dollar|euro|pound|yen)\b", lowered):
+        amount, base, target = conversion
+        return await _run_cached(
+            "currency_conversion",
+            "convert_currency",
+            {"amount": amount, "from_currency": base, "to_currency": target},
+            public_data.convert_currency,
+            amount,
+            base,
+            target,
+        )
+
+    crypto_asset = _extract_crypto_asset(raw)
+    if crypto_asset:
+        return await _run_cached(
+            "crypto_price",
+            "get_crypto_price",
+            {"asset": crypto_asset, "vs_currency": "usd"},
+            public_data.get_crypto_price,
+            crypto_asset,
+            "usd",
+        )
+
+    if "holiday" in lowered or "business day" in lowered:
+        country_code = _extract_country_code(raw)
+        if re.search(r"\b(?:next|upcoming|nearest)\b", lowered):
+            return await _run_cached(
+                "next_public_holiday",
+                "get_next_public_holiday",
+                {"country_code": country_code},
+                public_data.get_next_public_holiday,
+                country_code,
+            )
+        if re.search(r"\b(?:is|are)\s+(?:today|tomorrow|[0-9]{4}-[0-9]{2}-[0-9]{2})\b", lowered):
+            date_match = re.search(r"\b([0-9]{4}-[0-9]{2}-[0-9]{2})\b", lowered)
+            if date_match:
+                check_date = date_match.group(1)
+            elif "tomorrow" in lowered:
+                check_date = (datetime.now().date() + timedelta(days=1)).isoformat()
+            else:
+                check_date = ""
+            return await _run_cached(
+                "public_holiday_check",
+                "is_public_holiday",
+                {"country_code": country_code, "check_date": check_date},
+                public_data.is_public_holiday,
+                country_code,
+                check_date,
+            )
+        year_match = re.search(r"\b(20\d{2})\b", lowered)
+        year = int(year_match.group(1)) if year_match else None
+        return await _run_cached(
+            "public_holidays",
+            "get_public_holidays",
+            {"country_code": country_code, "year": year},
+            public_data.get_public_holidays,
+            country_code,
+            year,
+        )
+
+    country_target = _extract_country_fact_target(raw)
+    if country_target:
+        return await _run_cached(
+            "country_info",
+            "get_country_info",
+            {"country": country_target},
+            public_data.get_country_info,
+            country_target,
+        )
+
+    sec_target = _extract_sec_target(raw)
+    if sec_target:
+        return await _run_cached(
+            "sec_filings",
+            "get_sec_company_filings",
+            {"ticker_or_cik": sec_target, "limit": 5},
+            public_data.get_sec_company_filings,
+            sec_target,
+            5,
+        )
+
+    ip_address = _extract_ip_address(raw)
+    if ip_address and re.search(r"\b(?:ip|where|locat|geo|network)\b", lowered):
+        return await _run_cached(
+            "ip_lookup",
+            "lookup_ip",
+            {"ip_address": ip_address},
+            public_data.lookup_ip,
+            ip_address,
+        )
+
+    if re.search(r"\b(?:spaceflight|rocket launch|space news)\b", lowered):
+        return await _run_cached(
+            "spaceflight_news",
+            "get_spaceflight_news",
+            {"query": "", "limit": 5},
+            public_data.get_spaceflight_news,
+            "",
+            5,
+        )
+
+    if re.search(r"\b(?:bike share|bike-share|citybike|city bike)\b", lowered):
+        city_match = re.search(r"\b(?:in|for|near)\s+([A-Za-z][A-Za-z .'-]{1,40})[?!.]?$", raw, re.IGNORECASE)
+        city = _clean(city_match.group(1).strip(" ?!.")) if city_match else ""
+        return await _run_cached(
+            "citybike_networks",
+            "get_citybike_networks",
+            {"city": city, "country": "", "limit": 10},
+            public_data.get_citybike_networks,
+            city,
+            "",
+            10,
+        )
 
     if re.search(r"\b(?:what time is it|current time|time right now)\b", lowered):
         return LocalRouteResult(
