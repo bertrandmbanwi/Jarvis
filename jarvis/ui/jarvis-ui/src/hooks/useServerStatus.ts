@@ -6,6 +6,27 @@ import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 const STATUS_URL = `${getApiBaseUrl()}/`;
 const POLL_INTERVAL_MS = 10000;
 
+function mapSavings(data: any) {
+  if (!data) return undefined;
+  return {
+    startedAt: data.started_at || 0,
+    uptimeSeconds: data.uptime_seconds || 0,
+    localRoutes: data.local_routes || 0,
+    paidCallsAvoided: data.paid_calls_avoided || 0,
+    freeApiCalls: data.free_api_calls || 0,
+    cacheHits: data.cache_hits || 0,
+    byAction: data.by_action || {},
+    byProvider: data.by_provider || {},
+    lastEvent: data.last_event ? {
+      action: data.last_event.action || "",
+      toolName: data.last_event.tool_name || "",
+      provider: data.last_event.provider || "Local",
+      cacheHit: Boolean(data.last_event.cache_hit),
+      timestamp: data.last_event.timestamp || 0,
+    } : null,
+  };
+}
+
 export function useServerStatus(authToken?: string | null) {
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,6 +55,7 @@ export function useServerStatus(authToken?: string | null) {
             cacheCreationTokens: data.session_cost?.cache_creation_tokens || 0,
             activeBackend: data.session_cost?.active_backend || "unknown",
           },
+          localSavings: mapSavings(data.local_savings),
         });
       }
     } catch {

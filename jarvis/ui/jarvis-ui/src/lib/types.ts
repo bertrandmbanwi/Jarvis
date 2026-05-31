@@ -31,6 +31,42 @@ export interface CostSummary {
   activeBackend: string;
 }
 
+export interface LocalSavingsSummary {
+  startedAt: number;
+  uptimeSeconds: number;
+  localRoutes: number;
+  paidCallsAvoided: number;
+  freeApiCalls: number;
+  cacheHits: number;
+  byAction: Record<string, number>;
+  byProvider: Record<string, number>;
+  lastEvent?: {
+    action: string;
+    toolName?: string;
+    provider: string;
+    cacheHit: boolean;
+    timestamp: number;
+  } | null;
+}
+
+export interface PublicDataProviderStatus {
+  name: string;
+  category: string;
+  status: "ok" | "unavailable";
+  latencyMs: number;
+  error?: string;
+}
+
+export interface PublicDataStatus {
+  checkedAt: number;
+  cached: boolean;
+  cacheTtlSeconds: number;
+  healthyCount: number;
+  degradedCount: number;
+  providerCount: number;
+  providers: PublicDataProviderStatus[];
+}
+
 export interface CostInsights {
   cacheHitRatio: number;
   cacheReadTokens: number;
@@ -57,6 +93,7 @@ export interface CostInsights {
     totalCostUsd: number;
     projectedMonthlyUsd: number;
   };
+  savings?: LocalSavingsSummary;
 }
 
 export interface ProductFoundationStatus {
@@ -93,6 +130,7 @@ export interface ServerStatus {
   };
   conversationTurns: number;
   sessionCost: CostSummary;
+  localSavings?: LocalSavingsSummary;
 }
 
 export type ProactiveCategory = "calendar" | "email" | "greeting" | "reminder";
@@ -173,6 +211,23 @@ export interface WSMessage {
     cache_read_tokens: number;
     cache_creation_tokens: number;
     active_backend: string;
+  };
+  local_savings?: {
+    started_at: number;
+    uptime_seconds: number;
+    local_routes: number;
+    paid_calls_avoided: number;
+    free_api_calls: number;
+    cache_hits: number;
+    by_action: Record<string, number>;
+    by_provider: Record<string, number>;
+    last_event?: {
+      action: string;
+      tool_name?: string;
+      provider: string;
+      cache_hit: boolean;
+      timestamp: number;
+    } | null;
   };
   client_registered?: boolean;
   connected_devices?: ConnectedDevice[];

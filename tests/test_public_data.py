@@ -134,3 +134,31 @@ async def test_lookup_ip_formats_ipapi_payload(monkeypatch):
 
     assert "Mountain View" in result
     assert "Google LLC" in result
+
+
+@pytest.mark.asyncio
+async def test_public_api_status_returns_structured_provider_health(monkeypatch):
+    monkeypatch.setattr(public_data, "_STATUS_CACHE", {"checked_at": 0.0, "payload": None})
+    monkeypatch.setattr(
+        public_data,
+        "_public_api_checks",
+        lambda: [
+            {"name": "Provider One", "category": "test", "url": "https://example.test/one"},
+            {"name": "Provider Two", "category": "test", "url": "https://example.test/two"},
+        ],
+    )
+
+    async def fake_get_json(url, params=None, *, headers=None):
+        if url.endswith("/two"):
+            raise RuntimeError("provider down")
+        return {"ok": True}
+
+    monkeypatch.setattr(public_data, "_get_json", fake_get_json)
+
+    status = await public_data.get_public_api_status(force=True)
+
+    assert status["provider_count"] == 2
+    assert status["healthy_count"] == 1
+    assert status["degraded_count"] == 1
+    assert status["providers"][0]["status"] == "ok"
+    assert status["providers"][1]["status"] == "unavailable"
