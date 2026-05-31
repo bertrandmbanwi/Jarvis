@@ -7,6 +7,7 @@ from jarvis.config import settings
 from jarvis.core.cache import tool_cache
 from jarvis.core.llm import JarvisLLM
 from jarvis.core.local_router import is_probable_noise, route_local
+from jarvis.core.savings import SavingsTracker
 from jarvis.tools import public_data, weather
 
 
@@ -46,6 +47,22 @@ def test_tool_selector_prunes_public_data_request():
     assert "get_sec_company_filings" not in names
     assert "run_command" not in names
     assert len(selected) < len(TOOL_SCHEMAS)
+
+
+def test_savings_tracker_counts_local_and_free_api_routes():
+    tracker = SavingsTracker()
+
+    tracker.record_local_route("currency_conversion", tool_name="convert_currency", cache_hit=False)
+    tracker.record_local_route("currency_conversion", tool_name="convert_currency", cache_hit=True)
+    tracker.record_local_route("time")
+
+    summary = tracker.get_summary()
+
+    assert summary["local_routes"] == 3
+    assert summary["paid_calls_avoided"] == 3
+    assert summary["free_api_calls"] == 2
+    assert summary["cache_hits"] == 1
+    assert summary["by_provider"]["Frankfurter/Fawaz"] == 2
 
 
 def test_llm_adds_cache_breakpoint_to_last_tool():

@@ -17,6 +17,8 @@ class LocalRouteResult:
     action: str
     tier: str = "local"
     remember: bool = True
+    tool_name: str = ""
+    cache_hit: bool = False
 
 
 def _clean(text: str) -> str:
@@ -70,10 +72,10 @@ async def _run_cached(
 ) -> LocalRouteResult:
     cached = await tool_cache.get(tool_name, tool_input)
     if cached is not None:
-        return LocalRouteResult(response=str(cached), action=action)
+        return LocalRouteResult(response=str(cached), action=action, tool_name=tool_name, cache_hit=True)
     response = await fn(*args)
     await tool_cache.put(tool_name, tool_input, response)
-    return LocalRouteResult(response=response, action=action)
+    return LocalRouteResult(response=response, action=action, tool_name=tool_name, cache_hit=False)
 
 
 def _extract_country_code(text: str) -> str:

@@ -34,9 +34,10 @@ from jarvis.core import (
 from jarvis.core import profile as user_profile
 from jarvis.core.brain import JarvisBrain
 from jarvis.core.permissions import TOOL_PERMISSIONS, list_tool_audit, summarize_permissions
+from jarvis.core.savings import savings_tracker
 from jarvis.core.settings_api import settings_router
 from jarvis.core.tracing import get_trace_id, record_event, reset_trace_id, set_trace_id, trace_span
-from jarvis.tools import chrome_extension
+from jarvis.tools import chrome_extension, public_data
 
 logger = logging.getLogger("jarvis.server")
 EMPTY_CHUNK = ""
@@ -319,6 +320,7 @@ async def broadcast_voice_interaction(user_text: str, response: str):
         "full_response": response,
         "backend": brain.llm.active_backend,
         "session_cost": brain.llm.get_cost_summary(),
+        "local_savings": savings_tracker.get_summary(),
         "source": "voice",
     })
 
@@ -1024,6 +1026,7 @@ class ChatResponse(BaseModel):
     elapsed_ms: float
     tier_used: str
     backend: str
+    local_savings: dict
 
 
 class StatusResponse(BaseModel):
@@ -1035,6 +1038,7 @@ class StatusResponse(BaseModel):
     memory_stats: dict
     conversation_turns: int
     session_cost: dict
+    local_savings: dict
 
 
 def _serialize_job(job: jobs.JobRecord) -> dict:
@@ -1131,6 +1135,7 @@ async def status():
         memory_stats=brain.memory.get_stats(),
         conversation_turns=len(brain.conversation),
         session_cost=brain.llm.get_cost_summary(),
+        local_savings=savings_tracker.get_summary(),
     )
 
 
@@ -1197,6 +1202,7 @@ async def chat(request: ChatRequest):
         elapsed_ms=round(elapsed, 1),
         tier_used=tier_used,
         backend=brain.llm.active_backend,
+        local_savings=savings_tracker.get_summary(),
     )
 
 
@@ -1870,6 +1876,7 @@ async def health():
         "perf_summary": perf_tracker.get_summary_line(),
         "cache": tool_cache.get_stats(),
         "jobs": {"recent": len(jobs.list_jobs(limit=10))},
+        "local_savings": savings_tracker.get_summary(),
     }
 
 
@@ -1885,6 +1892,12 @@ async def cache_stats():
     """Get tool result cache statistics."""
     from jarvis.core.cache import tool_cache
     return tool_cache.get_stats()
+
+
+@app.get("/public-data/status", dependencies=[Depends(require_auth)])
+async def public_data_status(force: bool = False):
+    """Get health for selected no-key public data providers."""
+    return await public_data.get_public_api_status(force=force)
 
 
 @app.post("/cache/clear", dependencies=[Depends(require_auth)])
@@ -1926,6 +1939,7 @@ async def costs():
         "insights": cost_tracker.get_cost_insights(),
         "hard_limits": cost_tracker.hard_limit_status(),
         "privacy_mode": brain._privacy_mode,
+        "savings": savings_tracker.get_summary(),
     }
 
 
@@ -2584,6 +2598,7 @@ async def websocket_chat(websocket: WebSocket):
                 "full_response": complete,
                 "backend": brain.llm.active_backend,
                 "session_cost": brain.llm.get_cost_summary(),
+                "local_savings": savings_tracker.get_summary(),
             })
 
             if _speaker and complete.strip():

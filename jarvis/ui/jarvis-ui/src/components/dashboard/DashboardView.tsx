@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ChatMessage, CostInsights, CostSummary, ProductFoundationStatus, ServerStatus } from "@/lib/types";
+import {
+  ChatMessage,
+  CostInsights,
+  CostSummary,
+  LocalSavingsSummary,
+  ProductFoundationStatus,
+  PublicDataStatus,
+  ServerStatus,
+} from "@/lib/types";
 import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 import AgentBadge from "@/components/shared/AgentBadge";
 
@@ -25,6 +33,28 @@ export default function DashboardView({
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [costInsights, setCostInsights] = useState<CostInsights | null>(null);
   const [productStatus, setProductStatus] = useState<ProductFoundationStatus | null>(null);
+  const [publicDataStatus, setPublicDataStatus] = useState<PublicDataStatus | null>(null);
+
+  const mapSavings = useCallback((raw: any): LocalSavingsSummary | undefined => {
+    if (!raw) return undefined;
+    return {
+      startedAt: raw.started_at || 0,
+      uptimeSeconds: raw.uptime_seconds || 0,
+      localRoutes: raw.local_routes || 0,
+      paidCallsAvoided: raw.paid_calls_avoided || 0,
+      freeApiCalls: raw.free_api_calls || 0,
+      cacheHits: raw.cache_hits || 0,
+      byAction: raw.by_action || {},
+      byProvider: raw.by_provider || {},
+      lastEvent: raw.last_event ? {
+        action: raw.last_event.action || "",
+        toolName: raw.last_event.tool_name || "",
+        provider: raw.last_event.provider || "Local",
+        cacheHit: Boolean(raw.last_event.cache_hit),
+        timestamp: raw.last_event.timestamp || 0,
+      } : null,
+    };
+  }, []);
 
   const loadCostInsights = useCallback(async () => {
     try {
@@ -59,9 +89,37 @@ export default function DashboardView({
           totalCostUsd: data.month?.total_cost_usd || 0,
           projectedMonthlyUsd: data.month?.projected_monthly_usd || 0,
         },
+        savings: mapSavings(data.savings),
       });
     } catch {
       // Dashboard metrics are optional; keep the activity log usable.
+    }
+  }, [authToken, mapSavings]);
+
+  const loadPublicDataStatus = useCallback(async () => {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/public-data/status`, {
+        headers: jarvisHeaders(authToken),
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setPublicDataStatus({
+        checkedAt: data.checked_at || 0,
+        cached: Boolean(data.cached),
+        cacheTtlSeconds: data.cache_ttl_seconds || 0,
+        healthyCount: data.healthy_count || 0,
+        degradedCount: data.degraded_count || 0,
+        providerCount: data.provider_count || 0,
+        providers: Array.isArray(data.providers) ? data.providers.map((provider: any) => ({
+          name: provider.name || "Unknown",
+          category: provider.category || "",
+          status: provider.status === "ok" ? "ok" : "unavailable",
+          latencyMs: provider.latency_ms || 0,
+          error: provider.error,
+        })) : [],
+      });
+    } catch {
+      // Public API health is additive; the dashboard should stay responsive.
     }
   }, [authToken]);
 
@@ -127,12 +185,19 @@ export default function DashboardView({
     return () => clearInterval(interval);
   }, [loadProductStatus]);
 
+  useEffect(() => {
+    loadPublicDataStatus();
+    const interval = setInterval(loadPublicDataStatus, 60000);
+    return () => clearInterval(interval);
+  }, [loadPublicDataStatus]);
+
   const visibleMessages = messages.filter(
     (msg) => msg.content || (msg.role === "assistant" && msg.isStreaming)
   );
   const memoryCount = serverStatus?.memoryStats?.count
     ?? serverStatus?.memoryStats?.vector_store?.count
     ?? 0;
+  const savings = costInsights?.savings || serverStatus?.localSavings;
 
   return (
     <div className="flex-1 flex flex-col sm:flex-row overflow-hidden">
@@ -314,6 +379,39 @@ export default function DashboardView({
           <div className="jarvis-card">
             <div className="jarvis-card-header flex items-center gap-2">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-jarvis-cyan/40">
+                <path d="M4 12h16" />
+                <path d="m12 4-8 8 8 8" />
+                <path d="M20 4v16" />
+              </svg>
+              Local Savings
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <MetricTile label="Avoided" value={formatNumber(savings?.paidCallsAvoided || 0)} highlight />
+              <MetricTile label="Free API" value={formatNumber(savings?.freeApiCalls || 0)} />
+              <MetricTile label="Cache" value={formatNumber(savings?.cacheHits || 0)} />
+            </div>
+            <div className="space-y-2.5">
+              <InfoRow
+                label="Local routes"
+                value={formatNumber(savings?.localRoutes || 0)}
+                highlight={(savings?.localRoutes || 0) > 0}
+              />
+              <InfoRow
+                label="Top provider"
+                value={topEntryLabel(savings?.byProvider) || "..."}
+                highlight={Boolean(topEntryLabel(savings?.byProvider))}
+              />
+              <InfoRow
+                label="Last route"
+                value={savings?.lastEvent?.provider || "..."}
+                highlight={Boolean(savings?.lastEvent)}
+              />
+            </div>
+          </div>
+
+          <div className="jarvis-card">
+            <div className="jarvis-card-header flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-jarvis-cyan/40">
                 <path d="M3 12h18" />
                 <path d="M12 3v18" />
                 <path d="m5 5 14 14" />
@@ -355,6 +453,41 @@ export default function DashboardView({
                 ))}
               </div>
             ) : null}
+          </div>
+
+          <div className="jarvis-card">
+            <div className="jarvis-card-header flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-jarvis-cyan/40">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18" />
+                <path d="M12 3a14 14 0 0 1 0 18" />
+                <path d="M12 3a14 14 0 0 0 0 18" />
+              </svg>
+              Free Providers
+            </div>
+            <div className="mb-3 flex items-end justify-between">
+              <div className="text-2xl font-mono text-jarvis-cyan/75 tabular-nums tracking-tight">
+                {publicDataStatus ? `${publicDataStatus.healthyCount}/${publicDataStatus.providerCount}` : "..."}
+              </div>
+              <span className={`text-3xs uppercase tracking-wider ${
+                publicDataStatus?.degradedCount ? "text-yellow-200/70" : "text-jarvis-text-dim/35"
+              }`}>
+                {publicDataStatus?.degradedCount ? "degraded" : publicDataStatus ? "healthy" : "checking"}
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {(publicDataStatus?.providers || []).slice(0, 5).map((provider) => (
+                <ProviderRow
+                  key={provider.name}
+                  name={provider.name}
+                  status={provider.status}
+                  latencyMs={provider.latencyMs}
+                />
+              ))}
+              {!publicDataStatus?.providers?.length && (
+                <InfoRow label="Providers" value="..." />
+              )}
+            </div>
           </div>
 
           <div className="jarvis-card">
@@ -469,6 +602,62 @@ function InfoRow({
       </span>
     </div>
   );
+}
+
+function MetricTile({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className="rounded-md border border-white/[0.04] bg-white/[0.025] px-2 py-2 min-w-0">
+      <div className={`text-sm font-mono tabular-nums truncate ${
+        highlight ? "text-jarvis-cyan/70" : "text-jarvis-text/60"
+      }`}>
+        {value}
+      </div>
+      <div className="text-3xs text-jarvis-text-dim/35 uppercase tracking-wider truncate">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function ProviderRow({
+  name,
+  status,
+  latencyMs,
+}: {
+  name: string;
+  status: "ok" | "unavailable";
+  latencyMs: number;
+}) {
+  const ok = status === "ok";
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+          ok ? "bg-jarvis-cyan/60" : "bg-yellow-300/70"
+        }`} />
+        <span className="text-2xs text-jarvis-text-dim/55 truncate">{name}</span>
+      </div>
+      <span className={`text-2xs font-mono tabular-nums flex-shrink-0 ${
+        ok ? "text-jarvis-text/55" : "text-yellow-200/70"
+      }`}>
+        {ok ? `${latencyMs}ms` : "down"}
+      </span>
+    </div>
+  );
+}
+
+function topEntryLabel(entries?: Record<string, number>): string {
+  if (!entries) return "";
+  const [name, count] = Object.entries(entries).sort((a, b) => b[1] - a[1])[0] || [];
+  return name ? `${name} ${count}` : "";
 }
 
 function formatUptime(seconds: number): string {
