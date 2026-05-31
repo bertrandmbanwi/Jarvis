@@ -28,6 +28,7 @@ from jarvis.core.local_router import route_local
 from jarvis.core.monitor import ConversationMonitor
 from jarvis.core.perf import estimate_request_cost, estimate_tokens, perf_tracker
 from jarvis.core.proactive import ProactiveEngine
+from jarvis.core.savings import savings_tracker
 from jarvis.core.tracing import get_trace_id, record_event, trace_span
 from jarvis.memory.conversation_store import (
     ConversationTurn,
@@ -322,6 +323,11 @@ class JarvisBrain:
                     self._privacy_mode = False
 
                 response = local_result.response
+                savings_tracker.record_local_route(
+                    local_result.action,
+                    tool_name=local_result.tool_name,
+                    cache_hit=local_result.cache_hit,
+                )
                 if local_result.remember and not self._privacy_mode and settings.MEMORY_ENABLED:
                     user_turn = ConversationTurn(
                         role="user", content=user_input,
@@ -519,6 +525,11 @@ class JarvisBrain:
                 elif local_result.action == "privacy_off":
                     self._privacy_mode = False
                 response = local_result.response
+                savings_tracker.record_local_route(
+                    local_result.action,
+                    tool_name=local_result.tool_name,
+                    cache_hit=local_result.cache_hit,
+                )
                 if local_result.remember and not self._privacy_mode and settings.MEMORY_ENABLED:
                     user_turn = ConversationTurn(role="user", content=user_input)
                     assistant_turn = ConversationTurn(role="assistant", content=response, tier_used=local_result.tier)
