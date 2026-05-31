@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
@@ -17,8 +18,10 @@ import httpx
 logger = logging.getLogger("jarvis.tools.public_data")
 
 HTTP_TIMEOUT_S = 10.0
+PUBLIC_API_STATUS_TTL_S = 900.0
 USER_AGENT = "JarvisAssistant/0.3 (local personal assistant; https://github.com/public-apis/public-apis)"
 SEC_USER_AGENT = os.getenv("JARVIS_SEC_USER_AGENT", "JarvisAssistant/0.3 local-user@example.com")
+_STATUS_CACHE: dict[str, Any] = {"checked_at": 0.0, "payload": None}
 
 COUNTRY_ALIASES = {
     "america": "US",
@@ -132,6 +135,105 @@ def _sec_headers() -> dict[str, str]:
         "User-Agent": SEC_USER_AGENT,
         "Accept": "application/json",
     }
+
+
+def _public_api_checks() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "Open-Meteo",
+            "category": "weather",
+            "url": "https://api.open-meteo.com/v1/forecast",
+            "params": {"latitude": 30.2672, "longitude": -97.7431, "current": "temperature_2m"},
+        },
+        {
+            "name": "Nager.Date",
+            "category": "holidays",
+            "url": "https://date.nager.at/api/v3/PublicHolidays/2026/US",
+        },
+        {
+            "name": "Frankfurter",
+            "category": "currency",
+            "url": "https://api.frankfurter.dev/v1/latest",
+            "params": {"amount": 1, "from": "USD", "to": "EUR"},
+        },
+        {
+            "name": "CoinGecko",
+            "category": "crypto",
+            "url": "https://api.coingecko.com/api/v3/simple/price",
+            "params": {"ids": "bitcoin", "vs_currencies": "usd"},
+        },
+        {
+            "name": "REST Countries",
+            "category": "country facts",
+            "url": "https://restcountries.com/v3.1/name/cameroon",
+            "params": {"fullText": "true"},
+        },
+        {
+            "name": "SEC EDGAR",
+            "category": "filings",
+            "url": "https://data.sec.gov/submissions/CIK0000320193.json",
+            "headers": _sec_headers(),
+        },
+        {
+            "name": "Spaceflight News",
+            "category": "space news",
+            "url": "https://api.spaceflightnewsapi.net/v4/articles/",
+            "params": {"limit": 1},
+        },
+        {
+            "name": "CityBikes",
+            "category": "mobility",
+            "url": "https://api.citybik.es/v2/networks",
+        },
+    ]
+
+
+async def get_public_api_status(force: bool = False) -> dict[str, Any]:
+    """Return structured health for selected no-key public-data providers."""
+    cached_payload = _STATUS_CACHE.get("payload")
+    checked_at = float(_STATUS_CACHE.get("checked_at", 0.0) or 0.0)
+    if not force and isinstance(cached_payload, dict) and (time.time() - checked_at) < PUBLIC_API_STATUS_TTL_S:
+        return {**cached_payload, "cached": True, "cache_age_seconds": round(time.time() - checked_at, 1)}
+
+    providers = []
+    for check in _public_api_checks():
+        started = time.perf_counter()
+        try:
+            await _get_json(
+                check["url"],
+                check.get("params"),
+                headers=check.get("headers"),
+            )
+            latency_ms = round((time.perf_counter() - started) * 1000)
+            providers.append({
+                "name": check["name"],
+                "category": check["category"],
+                "status": "ok",
+                "latency_ms": latency_ms,
+            })
+        except Exception as exc:
+            latency_ms = round((time.perf_counter() - started) * 1000)
+            providers.append({
+                "name": check["name"],
+                "category": check["category"],
+                "status": "unavailable",
+                "latency_ms": latency_ms,
+                "error": str(exc)[:160],
+            })
+
+    ok_count = sum(1 for provider in providers if provider["status"] == "ok")
+    payload = {
+        "checked_at": time.time(),
+        "cached": False,
+        "cache_ttl_seconds": PUBLIC_API_STATUS_TTL_S,
+        "healthy_count": ok_count,
+        "degraded_count": len(providers) - ok_count,
+        "provider_count": len(providers),
+        "providers": providers,
+    }
+    _STATUS_CACHE["checked_at"] = payload["checked_at"]
+    _STATUS_CACHE["payload"] = payload
+    return payload
 
 
 async def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
@@ -461,21 +563,11 @@ async def get_citybike_networks(city: str = "", country: str = "", limit: int = 
 
 async def check_public_api_status() -> str:
     """Run a lightweight health check against the selected no-key public APIs."""
-    checks = [
-        ("Nager.Date", "https://date.nager.at/api/v3/PublicHolidays/2026/US", None),
-        ("Frankfurter", "https://api.frankfurter.dev/v1/latest", {"amount": 1, "from": "USD", "to": "EUR"}),
-        ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price", {"ids": "bitcoin", "vs_currencies": "usd"}),
-        ("REST Countries", "https://restcountries.com/v3.1/name/cameroon", {"fullText": "true"}),
-        ("SEC EDGAR", "https://www.sec.gov/files/company_tickers.json", None),
-        ("Spaceflight News", "https://api.spaceflightnewsapi.net/v4/articles/", {"limit": 1}),
-        ("CityBikes", "https://api.citybik.es/v2/networks", None),
-    ]
-
+    status = await get_public_api_status()
     lines = ["Public API status:"]
-    for name, url, params in checks:
-        try:
-            await _get_json(url, params, headers=_sec_headers() if name == "SEC EDGAR" else None)
-            lines.append(f"- {name}: OK")
-        except Exception as exc:
-            lines.append(f"- {name}: unavailable ({str(exc)[:80]})")
+    for provider in status["providers"]:
+        if provider["status"] == "ok":
+            lines.append(f"- {provider['name']}: OK ({provider['latency_ms']} ms)")
+        else:
+            lines.append(f"- {provider['name']}: unavailable ({provider.get('error', 'unknown error')})")
     return "\n".join(lines)
