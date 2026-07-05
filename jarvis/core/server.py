@@ -542,13 +542,13 @@ async def lifespan(app: FastAPI):
     brain._on_plan_progress = broadcast_plan_progress
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
     # Let the executor ask connected clients to approve high-risk tool calls.
-    pending_actions.set_notifier(ws_manager.broadcast_json)
+    pending_actions.add_notifier(ws_manager.broadcast_json)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
 
     yield
 
-    pending_actions.set_notifier(None)
+    pending_actions.remove_notifier(ws_manager.broadcast_json)
     cleanup_task.cancel()
     scheduler_task.cancel()
     with suppress(asyncio.CancelledError):

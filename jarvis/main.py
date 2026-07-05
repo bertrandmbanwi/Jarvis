@@ -364,6 +364,18 @@ async def run_full():
         listener.on_wake(on_wake)
         listener.on_speech(on_speech)
 
+        from jarvis.core import pending_actions
+        from jarvis.voice.confirm import run_voice_confirmation
+
+        async def _voice_confirmation_notifier(payload):
+            conf = payload.get("confirmation")
+            if conf:
+                _spawn_background(
+                    run_voice_confirmation(speaker, listener, conf["id"], conf["summary"])
+                )
+
+        pending_actions.add_notifier(_voice_confirmation_notifier)
+
         try:
             if listener_ok:
                 if listener._wake_model is not None:
@@ -380,6 +392,7 @@ async def run_full():
             listener.stop()
             raise
         finally:
+            pending_actions.remove_notifier(_voice_confirmation_notifier)
             listener.cleanup()
             speaker.stop_speaking()
 

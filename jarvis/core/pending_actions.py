@@ -26,7 +26,9 @@ DEFAULT_TIMEOUT_S = 120.0
 
 Notifier = Callable[[dict[str, Any]], Awaitable[Any]]
 
-_notifier: Notifier | None = None
+# Multiple channels can prompt for the same confirmation (the web modal and,
+# in voice mode, a spoken question); whichever answers first wins via resolve().
+_notifiers: list[Notifier] = []
 _pending: dict[str, PendingAction] = {}
 _futures: dict[str, asyncio.Future[bool]] = {}
 
@@ -51,15 +53,20 @@ class PendingAction:
         }
 
 
-def set_notifier(notifier: Notifier | None) -> None:
-    """Install (or clear) the async callback used to push confirmation prompts."""
-    global _notifier
-    _notifier = notifier
+def add_notifier(notifier: Notifier) -> None:
+    """Register an async channel that pushes confirmation prompts (web, voice, ...)."""
+    if notifier not in _notifiers:
+        _notifiers.append(notifier)
+
+
+def remove_notifier(notifier: Notifier) -> None:
+    """Unregister a previously added confirmation channel."""
+    _notifiers[:] = [n for n in _notifiers if n != notifier]
 
 
 def confirmation_available() -> bool:
     """Whether there is a channel to ask a human for confirmation."""
-    return _notifier is not None
+    return bool(_notifiers)
 
 
 def list_pending() -> list[dict[str, Any]]:
@@ -85,10 +92,10 @@ async def request_confirmation(
 ) -> bool:
     """Ask a human to approve a high-risk tool call; return True only if approved.
 
-    Returns False (deny) when there is no notifier installed or the request times
-    out, so an unattended server never runs an unconfirmed high-risk tool.
+    Returns False (deny) when no channel is available or the request times out,
+    so an unattended server never runs an unconfirmed high-risk tool.
     """
-    if _notifier is None:
+    if not _notifiers:
         return False
 
     loop = asyncio.get_running_loop()
@@ -103,10 +110,15 @@ async def request_confirmation(
     _pending[action.id] = action
     _futures[action.id] = future
 
-    try:
-        await _notifier({"type": "confirmation_required", "confirmation": action.public()})
-    except Exception as exc:  # notifier failure must not hang the tool call
-        logger.warning("Confirmation notifier failed for %s: %s", tool_name, exc)
+    payload = {"type": "confirmation_required", "confirmation": action.public()}
+    delivered = False
+    for notifier in list(_notifiers):
+        try:
+            await notifier(payload)
+            delivered = True
+        except Exception as exc:  # one bad channel must not hang the tool call
+            logger.warning("Confirmation notifier failed for %s: %s", tool_name, exc)
+    if not delivered:
         _pending.pop(action.id, None)
         _futures.pop(action.id, None)
         return False

@@ -10,11 +10,11 @@ from jarvis.core.permissions import assess_tool_call, describe_tool_call
 
 @pytest.fixture(autouse=True)
 def _clear_pending():
-    pending_actions.set_notifier(None)
+    pending_actions._notifiers.clear()
     pending_actions._pending.clear()
     pending_actions._futures.clear()
     yield
-    pending_actions.set_notifier(None)
+    pending_actions._notifiers.clear()
     pending_actions._pending.clear()
     pending_actions._futures.clear()
 
@@ -41,7 +41,7 @@ async def test_request_confirmation_approved():
         assert any(a["id"] == conf["id"] for a in pending_actions.list_pending())
         pending_actions.resolve(conf["id"], True)
 
-    pending_actions.set_notifier(approve)
+    pending_actions.add_notifier(approve)
     assert await pending_actions.request_confirmation("send_email", summary="s", risk="high") is True
     assert pending_actions.list_pending() == []  # cleaned up
 
@@ -50,7 +50,7 @@ async def test_request_confirmation_denied():
     async def deny(payload):
         pending_actions.resolve(payload["confirmation"]["id"], False)
 
-    pending_actions.set_notifier(deny)
+    pending_actions.add_notifier(deny)
     assert await pending_actions.request_confirmation("run_command", summary="rm -rf", risk="critical") is False
 
 
@@ -58,7 +58,7 @@ async def test_request_confirmation_times_out():
     async def ignore(_payload):
         return None
 
-    pending_actions.set_notifier(ignore)
+    pending_actions.add_notifier(ignore)
     result = await pending_actions.request_confirmation(
         "send_email", summary="s", risk="high", timeout_s=0.05
     )
@@ -70,13 +70,30 @@ def test_resolve_unknown_action_returns_false():
     assert pending_actions.resolve("does-not-exist", True) is False
 
 
+async def test_all_notifiers_fire_and_first_answer_wins():
+    # A web channel and a voice channel both get prompted; either can answer.
+    fired: list[str] = []
+
+    async def web(payload):
+        fired.append("web")
+
+    async def voice(payload):
+        fired.append("voice")
+        pending_actions.resolve(payload["confirmation"]["id"], True)
+
+    pending_actions.add_notifier(web)
+    pending_actions.add_notifier(voice)
+    assert await pending_actions.request_confirmation("send_email", summary="s", risk="high") is True
+    assert set(fired) == {"web", "voice"}
+
+
 async def test_out_of_band_approval_resolves_in_flight_request():
     seen: dict[str, str] = {}
 
     async def capture(payload):
         seen["id"] = payload["confirmation"]["id"]
 
-    pending_actions.set_notifier(capture)
+    pending_actions.add_notifier(capture)
     task = asyncio.create_task(
         pending_actions.request_confirmation("send_email", summary="s", risk="high", timeout_s=5)
     )
