@@ -45,15 +45,6 @@ class PromptTemplate:
         return min(1.0, matching_keywords / len(self.keywords))
 
 
-@dataclass
-class Improvement:
-    """Represents a suggested improvement to a template section."""
-    section_name: str
-    current_content: str
-    suggested_change: str
-    rationale: str
-
-
 # Template library initialized with common task types
 TEMPLATES: dict[str, PromptTemplate] = {
     "landing_page": PromptTemplate(
@@ -370,11 +361,6 @@ def get_template(task_type: str, request_text: str = "") -> PromptTemplate | Non
     return best_match if best_score > 0.0 else None
 
 
-def get_template_names() -> list[str]:
-    """Get list of all available template names."""
-    return list(TEMPLATES.keys())
-
-
 def fill_template(
     template_str: str,
     safe_defaults: bool = True,
@@ -410,25 +396,3 @@ def fill_template(
         raise
 
 
-def register_template(template: PromptTemplate) -> None:
-    """
-    Register a new custom template.
-
-    Args:
-        template: PromptTemplate instance to register
-    """
-    TEMPLATES[template.task_type] = template
-    logger.info("Registered template: %s", template.task_type)
-
-
-def list_templates() -> dict[str, str]:
-    """
-    List all available templates with descriptions.
-
-    Returns:
-        Dict mapping template names to descriptions
-    """
-    return {
-        name: template.description
-        for name, template in TEMPLATES.items()
-    }
