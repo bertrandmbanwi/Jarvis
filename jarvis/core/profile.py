@@ -1,10 +1,10 @@
 """User profile management with persistent JSON storage."""
 
-import json
 import logging
 from typing import Any
 
 from jarvis.config import settings
+from jarvis.core.jsonio import read_json, write_json
 
 logger = logging.getLogger("jarvis.profile")
 
@@ -31,14 +31,10 @@ _profile: dict[str, Any] = {}
 
 def _load_profile() -> dict[str, Any]:
     """Load profile from disk or create default."""
-    if PROFILE_FILE.exists():
-        try:
-            data = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
-            merged = {**_DEFAULT_PROFILE, **data}
-            logger.info("User profile loaded from %s", PROFILE_FILE)
-            return merged
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error("Failed to load profile: %s. Using defaults.", e)
+    data = read_json(PROFILE_FILE)
+    if isinstance(data, dict):
+        logger.info("User profile loaded from %s", PROFILE_FILE)
+        return {**_DEFAULT_PROFILE, **data}
 
     _save_profile(_DEFAULT_PROFILE)
     logger.info("Default user profile created at %s", PROFILE_FILE)
@@ -48,11 +44,7 @@ def _load_profile() -> dict[str, Any]:
 def _save_profile(data: dict[str, Any]) -> None:
     """Write profile to disk."""
     try:
-        PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        PROFILE_FILE.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        write_json(PROFILE_FILE, data)
     except OSError as e:
         logger.error("Failed to save profile: %s", e)
 
