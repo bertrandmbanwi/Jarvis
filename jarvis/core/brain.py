@@ -43,7 +43,6 @@ from jarvis.memory.conversation_store import (
     initialize as init_conversation_store,
 )
 from jarvis.memory.store import MemoryStore
-from jarvis.tools.work_session import WorkSession
 
 MAX_CONVERSATION_TURNS = 100
 
@@ -211,7 +210,6 @@ class JarvisBrain:
         self.monitor: ConversationMonitor = ConversationMonitor()
         self.success_tracker: SuccessTracker = SuccessTracker()
         self.evolution: EvolutionPipeline = EvolutionPipeline()
-        self.work_session: WorkSession | None = None
         self.conversation: list[ConversationTurn] = []
         self._privacy_mode = settings.PRIVACY_MODE_DEFAULT
         self._initialized = False
@@ -265,15 +263,6 @@ class JarvisBrain:
             "Evolution pipeline ready (history: %d cycles).",
             len(self.evolution._evolution_history),
         )
-
-        # Restore persistent work session if one exists
-        try:
-            restored = WorkSession.restore()
-            if restored:
-                self.work_session = restored
-                logger.info("Work session restored: %s", restored.session_id)
-        except Exception as e:
-            logger.debug("No prior work session to restore: %s", e)
 
         # Initialize SQLite conversation store (migrates legacy JSON automatically)
         init_conversation_store()
@@ -835,8 +824,9 @@ class JarvisBrain:
             agent_type = AgentType(agent_type_str)
         except ValueError:
             agent_type = AgentType.GENERALIST
-            profile = self.coordinator.get_profile(agent_type)
-            tools = self.coordinator.get_tools_for_agent(agent_type, TOOL_SCHEMAS)
+
+        profile = self.coordinator.get_profile(agent_type)
+        tools = self.coordinator.get_tools_for_agent(agent_type, TOOL_SCHEMAS)
 
         prior_context = plan.context_for_subtask(subtask.id)
 

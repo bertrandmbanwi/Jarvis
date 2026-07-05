@@ -75,12 +75,17 @@ async def run_claude_code(
         cmd.extend(["--resume", session_name.strip()])
 
     if allowed_tools.strip():
-        for tool in allowed_tools.split(","):
-            tool = tool.strip()
-            if tool:
-                cmd.extend(["--allowedTools", tool])
+        # --allowedTools is a single variadic flag: pass all tools after one flag.
+        tools = [t.strip() for t in allowed_tools.split(",") if t.strip()]
+        if tools:
+            cmd.append("--allowedTools")
+            cmd.extend(tools)
 
-    cmd.extend(["--prompt", task])
+    # Claude Code CLI takes the prompt as a positional argument, not a flag.
+    # "--" ends option parsing so the task is never consumed by the variadic
+    # --allowedTools above and a task starting with "-" isn't read as a flag.
+    cmd.append("--")
+    cmd.append(task)
 
     logger.info(
         "Claude Code: running task in %s (timeout: %ds)",

@@ -23,6 +23,7 @@ Architecture:
 """
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -47,6 +48,26 @@ from jarvis.core.permissions import assess_tool_call, record_tool_audit
 from jarvis.core.tracing import record_event, trace_span
 
 logger = logging.getLogger("jarvis.agent")
+
+
+def _accepted_kwargs(fn: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Return only the kwargs the function actually accepts by name.
+
+    Used to recover from a TypeError caused by the model passing extra/unknown
+    keys, WITHOUT the old positional remapping (which could silently bind the
+    wrong value to the wrong parameter, e.g. swapping an email subject and body).
+    """
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (ValueError, TypeError):
+        return dict(kwargs)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params):
+        return dict(kwargs)
+    accepted = {
+        p.name for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return {k: v for k, v in kwargs.items() if k in accepted}
 
 
 class AgentExecutor:
@@ -291,21 +312,26 @@ class AgentExecutor:
             )
             return result_str
         except TypeError as e:
-            logger.warning(
-                "Tool %s argument mismatch: %s. Input was: %s. Trying positional args.",
-                tool_name, e, tool_input,
-            )
+            filtered = _accepted_kwargs(tool_fn, tool_input)
             try:
-                args = list(tool_input.values())
-                with trace_span("tool.execute_positional_fallback", tool_name=tool_name, timeout_s=timeout_s):
+                if filtered == tool_input:
+                    # Nothing to drop — the TypeError came from inside the tool,
+                    # not from arg binding. Surface it as a tool failure below
+                    # instead of retrying (which would just fail identically).
+                    raise e
+                logger.warning(
+                    "Tool %s argument mismatch: %s. Retrying without unrecognized keys: %s",
+                    tool_name, e, sorted(set(tool_input) - set(filtered)),
+                )
+                with trace_span("tool.execute_filtered_kwargs", tool_name=tool_name, timeout_s=timeout_s):
                     if asyncio.iscoroutinefunction(tool_fn):
                         result = await execute_with_timeout(
-                            tool_fn(*args),
+                            tool_fn(**filtered),
                             timeout_s=timeout_s,
                             tool_name=tool_name,
                         )
                     else:
-                        result = tool_fn(*args)
+                        result = tool_fn(**filtered)
 
                 duration = time.time() - start_time
                 self._notify_tool_executed(tool_name, True, duration)
