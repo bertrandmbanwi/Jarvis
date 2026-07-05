@@ -33,6 +33,7 @@ from jarvis.agent.qa_agent import QAAgent
 from jarvis.agent.tool_selector import select_tools_for_request
 from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS
 from jarvis.core.cache import invalidate_on_mutation, tool_cache
+from jarvis.core.confirmation import confirmed_scope
 from jarvis.core.hardening import (
     check_dangerous_command,
     classify_error,
@@ -43,8 +44,14 @@ from jarvis.core.hardening import (
     validate_tool_args,
 )
 from jarvis.core.llm import JarvisLLM
+from jarvis.core.pending_actions import confirmation_available, request_confirmation
 from jarvis.core.perf import perf_tracker
-from jarvis.core.permissions import assess_tool_call, call_is_confirmed, record_tool_audit
+from jarvis.core.permissions import (
+    assess_tool_call,
+    call_is_confirmed,
+    describe_tool_call,
+    record_tool_audit,
+)
 from jarvis.core.tracing import record_event, trace_span
 
 logger = logging.getLogger("jarvis.agent")
@@ -228,16 +235,31 @@ class AgentExecutor:
         tool_input = validate_tool_args(tool_name, tool_input)
         decision = assess_tool_call(tool_name, tool_input)
         if not decision.allowed:
-            record_tool_audit(
-                tool_name,
-                tool_input,
-                allowed=False,
-                success=False,
-                error=decision.reason,
-            )
-            logger.warning("Tool %s blocked by permission policy: %s", tool_name, decision.reason)
-            return f"Tool '{tool_name}' is blocked by policy: {decision.reason}"
+            approved = False
+            if decision.permission.requires_confirmation and confirmation_available():
+                approved = await request_confirmation(
+                    tool_name,
+                    summary=describe_tool_call(tool_name, tool_input),
+                    risk=decision.permission.risk.value,
+                )
+            if not approved:
+                record_tool_audit(
+                    tool_name,
+                    tool_input,
+                    allowed=False,
+                    success=False,
+                    error=decision.reason,
+                )
+                logger.warning("Tool %s blocked by permission policy: %s", tool_name, decision.reason)
+                return f"Tool '{tool_name}' is blocked by policy: {decision.reason}"
+            # A human approved via the app; run under a server-granted confirmation.
+            with confirmed_scope():
+                return await self._run_allowed_tool(tool_name, tool_input, circuit)
 
+        return await self._run_allowed_tool(tool_name, tool_input, circuit)
+
+    async def _run_allowed_tool(self, tool_name: str, tool_input: dict, circuit):
+        """Execute a tool that has passed (or been granted) the permission gate."""
         # Replace any model-supplied confirmation flag with the server-verified
         # value, so a tool that acts on it (e.g. send_email sending vs drafting)
         # cannot be driven by a prompt-injected confirmed=true.

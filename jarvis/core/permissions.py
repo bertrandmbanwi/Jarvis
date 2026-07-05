@@ -283,6 +283,21 @@ def assess_tool_call(tool_name: str, tool_input: dict[str, Any]) -> PermissionDe
     return PermissionDecision(allowed=True, permission=permission)
 
 
+def describe_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:
+    """Short, redacted, human-readable description of a tool call for a confirmation UI."""
+    redacted = _redact(tool_input)
+    parts = []
+    for key, value in redacted.items():
+        if key == "confirmed":
+            continue
+        text = str(value)
+        if len(text) > 80:
+            text = text[:80] + "…"
+        parts.append(f"{key}={text}")
+    args = ", ".join(parts)
+    return f"{tool_name}({args})" if args else tool_name
+
+
 def _redact(value: Any, key_hint: str = "") -> Any:
     if isinstance(value, dict):
         return {str(k): _redact(v, str(k)) for k, v in value.items()}
