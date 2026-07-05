@@ -325,11 +325,12 @@ class BrowserAgent:
         """Core loop: screenshot, send to Claude, execute action, repeat; handles rate limits."""
         import anthropic
 
-        api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return "Error: ANTHROPIC_API_KEY not set. Cannot use Computer Use."
+        from jarvis.core.hardening import claude_circuit
+        from jarvis.core.llm import _get_anthropic_client
 
-        client = anthropic.AsyncAnthropic(api_key=api_key, timeout=120.0)
+        client = _get_anthropic_client()
+        if client is None:
+            return "Error: ANTHROPIC_API_KEY not set. Cannot use Computer Use."
 
         max_retries = 3
         base_backoff_seconds = 5.0
@@ -422,6 +423,12 @@ class BrowserAgent:
                 summary += "I can try again if you reopen the browser."
                 return summary
 
+            if not claude_circuit.allow_request():
+                return (
+                    f"Browser task paused at step {step}: the Claude API is "
+                    "temporarily unavailable (circuit breaker open). Try again shortly."
+                )
+
             response = None
             for attempt in range(max_retries + 1):
                 try:
@@ -433,6 +440,7 @@ class BrowserAgent:
                         messages=messages,
                         betas=[COMPUTER_USE_BETA],
                     )
+                    claude_circuit.record_success()
                     break  # Success
                 except anthropic.RateLimitError as e:
                     if attempt < max_retries:
@@ -444,10 +452,12 @@ class BrowserAgent:
                         )
                         await asyncio.sleep(wait_time)
                     else:
+                        claude_circuit.record_failure()
                         error_msg = f"Rate limited after {max_retries + 1} attempts: {str(e)[:200]}"
                         logger.error("Browser agent: %s", error_msg)
                         return f"Browser task paused at step {step} due to rate limiting. {error_msg}"
                 except Exception as e:
+                    claude_circuit.record_failure()
                     error_msg = f"Claude API error: {str(e)[:200]}"
                     logger.error("Browser agent: %s", error_msg)
                     return f"Browser task failed at step {step}: {error_msg}"
@@ -682,7 +692,6 @@ async def browser_switch_tab(tab_number: int) -> list[dict[str, Any]]:
 
 async def browser_upload_file(file_path: str, selector: str = "") -> str:
     """Upload a file to a file input on the current page."""
-    import os
     agent = _get_browser_agent()
     if not agent._initialized or not agent._is_page_alive():
         return "Error: browser is not open."

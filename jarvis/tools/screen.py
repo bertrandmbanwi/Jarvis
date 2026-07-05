@@ -4,7 +4,6 @@ import contextlib
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from jarvis.config import settings
 
@@ -168,34 +167,49 @@ async def analyze_screen(question: str | None = None) -> str:
         if not settings.ANTHROPIC_API_KEY:
             return "Vision analysis unavailable: Claude API not configured."
 
-        import anthropic
-        client: Any = anthropic.AsyncAnthropic(
-            api_key=settings.ANTHROPIC_API_KEY,
-            timeout=120.0,
-        )
-        response = await client.messages.create(
-            model=settings.CLAUDE_FAST_MODEL,
-            max_tokens=300,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": image_b64,
+        from jarvis.core.hardening import API_RETRY_POLICY, claude_circuit, retry_with_backoff
+        from jarvis.core.llm import _get_anthropic_client
+
+        if not claude_circuit.allow_request():
+            return "Vision analysis unavailable: Claude API is temporarily unavailable."
+
+        client = _get_anthropic_client()
+        if client is None:
+            return "Vision analysis unavailable: Claude API not configured."
+
+        async def _make_request():
+            return await client.messages.create(
+                model=settings.CLAUDE_FAST_MODEL,
+                max_tokens=300,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": image_b64,
+                                },
                             },
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        },
-                    ],
-                }
-            ],
-        )
+                            {
+                                "type": "text",
+                                "text": prompt,
+                            },
+                        ],
+                    }
+                ],
+            )
+
+        try:
+            response = await retry_with_backoff(
+                _make_request, policy=API_RETRY_POLICY, context="screen analysis"
+            )
+            claude_circuit.record_success()
+        except Exception:
+            claude_circuit.record_failure()
+            raise
 
         if response.content and len(response.content) > 0:
             return str(getattr(response.content[0], "text", ""))
