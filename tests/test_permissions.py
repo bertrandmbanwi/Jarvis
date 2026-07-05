@@ -2,6 +2,7 @@
 import sqlite3
 
 from jarvis.core import permissions
+from jarvis.core.confirmation import confirmed_scope
 from jarvis.core.permissions import Capability, RiskLevel, assess_tool_call, list_tool_audit, record_tool_audit
 
 
@@ -17,6 +18,29 @@ def test_shell_tool_is_audited_by_default(monkeypatch):
     decision = assess_tool_call("run_command", {"command": "ls"})
     assert decision.allowed is True
     assert Capability.SHELL in decision.permission.capabilities
+
+
+def test_model_supplied_confirmation_is_not_trusted_in_enforce_mode(monkeypatch):
+    monkeypatch.setenv("JARVIS_TOOL_PERMISSION_MODE", "enforce")
+    monkeypatch.delenv("JARVIS_TRUST_MODEL_CONFIRMATION", raising=False)
+    # A prompt-injected model self-asserting confirmed=true must NOT bypass.
+    decision = assess_tool_call("send_email", {"to": "x@y.com", "confirmed": True})
+    assert decision.allowed is False
+
+
+def test_server_granted_confirmation_allows_high_risk_tool(monkeypatch):
+    monkeypatch.setenv("JARVIS_TOOL_PERMISSION_MODE", "enforce")
+    monkeypatch.delenv("JARVIS_TRUST_MODEL_CONFIRMATION", raising=False)
+    with confirmed_scope():
+        decision = assess_tool_call("send_email", {"to": "x@y.com"})
+    assert decision.allowed is True
+
+
+def test_env_opt_in_restores_model_confirmation(monkeypatch):
+    monkeypatch.setenv("JARVIS_TOOL_PERMISSION_MODE", "enforce")
+    monkeypatch.setenv("JARVIS_TRUST_MODEL_CONFIRMATION", "true")
+    assert assess_tool_call("send_email", {"to": "x@y.com", "confirmed": True}).allowed is True
+    assert assess_tool_call("send_email", {"to": "x@y.com"}).allowed is False
 
 
 def test_record_tool_audit_redacts_sensitive_payload(tmp_path, monkeypatch):
