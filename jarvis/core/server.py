@@ -26,6 +26,7 @@ from jarvis.core import (
     cost_tracker,
     feedback,
     jobs,
+    pending_actions,
     routines,
     team,
     workflow_scheduler,
@@ -540,11 +541,14 @@ async def lifespan(app: FastAPI):
         )
     brain._on_plan_progress = broadcast_plan_progress
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
+    # Let the executor ask connected clients to approve high-risk tool calls.
+    pending_actions.set_notifier(ws_manager.broadcast_json)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
 
     yield
 
+    pending_actions.set_notifier(None)
     cleanup_task.cancel()
     scheduler_task.cancel()
     with suppress(asyncio.CancelledError):
@@ -879,6 +883,11 @@ class ChatRequest(BaseModel):
 class JobRequest(BaseModel):
     message: str
     kind: str = "chat"
+
+
+class ConfirmActionRequest(BaseModel):
+    action_id: str
+    approved: bool
 
 
 class CostEstimateRequest(BaseModel):
@@ -1262,6 +1271,23 @@ async def list_background_jobs(limit: int = 50, status: str = ""):
     """List durable background jobs."""
     records = jobs.list_jobs(limit=limit, status=status)
     return {"jobs": [_serialize_job(job) for job in records], "count": len(records)}
+
+
+@app.get("/tools/pending", dependencies=[Depends(require_auth)])
+async def list_pending_confirmations():
+    """List high-risk tool calls awaiting the user's approval."""
+    return {"pending": pending_actions.list_pending()}
+
+
+@app.post("/tools/confirm", dependencies=[Depends(require_auth)])
+async def confirm_pending_action(request: ConfirmActionRequest):
+    """Approve or deny a pending high-risk tool call.
+
+    This is the trusted, authenticated source of confirmation — the model cannot
+    reach it, so it cannot self-approve its own tool calls.
+    """
+    resolved = pending_actions.resolve(request.action_id, request.approved)
+    return {"resolved": resolved}
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(require_auth)])
