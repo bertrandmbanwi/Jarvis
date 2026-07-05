@@ -9,7 +9,9 @@ Persistent vector-based memory using ChromaDB, enriched with:
 Gives JARVIS the ability to remember conversations, learn user facts,
 and adapt to preferences over time.
 """
+import functools
 import logging
+import threading
 import time
 
 from jarvis.memory import sqlite_store
@@ -26,6 +28,17 @@ except ImportError:
     logger.warning("ChromaDB not installed. Using in-memory storage only.")
 
 
+def _synchronized(method):
+    """Serialize a MemoryStore method under its lock so it is safe to call from a
+    worker thread (brain runs memory I/O off the event loop via asyncio.to_thread).
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class MemoryStore:
     """Long-term memory combining vector store, facts, and preferences."""
 
@@ -36,6 +49,8 @@ class MemoryStore:
         self._counter = 0
         self.facts = FactStore()
         self.preferences = PreferenceTracker()
+        # Reentrant: get_enriched_context calls the also-synchronized search().
+        self._lock = threading.RLock()
 
     def initialize(self):
         """Initialize all memory systems."""
@@ -82,6 +97,7 @@ class MemoryStore:
             self._client = None
             self._collection = None
 
+    @_synchronized
     def add(self, text: str, metadata: dict | None = None):
         """Add a memory entry to both ChromaDB and SQLite."""
         self._counter += 1
@@ -124,6 +140,7 @@ class MemoryStore:
         except Exception as e:
             logger.debug("SQLite memory write failed (non-critical): %s", e)
 
+    @_synchronized
     def search(self, query: str, top_k: int = 5) -> list[str]:
         """Search memories by semantic similarity."""
         if self._collection is not None:
@@ -140,6 +157,7 @@ class MemoryStore:
         recent = self._fallback_memory[-top_k:]
         return [m["text"] for m in recent]
 
+    @_synchronized
     def get_enriched_context(self, query: str, top_k: int = 3) -> str:
         """Get enriched context combining facts, preferences, and memories."""
         parts = []
@@ -167,6 +185,7 @@ class MemoryStore:
 
         return "\n\n".join(parts)
 
+    @_synchronized
     def process_exchange(
         self,
         user_message: str,
@@ -202,18 +221,21 @@ class MemoryStore:
         except Exception as e:
             logger.debug("SQLite exchange store failed (non-critical): %s", e)
 
+    @_synchronized
     def save_all(self):
         """Save all memory systems to disk."""
         self.facts.save()
         self.preferences.save()
         logger.debug("All memory systems saved.")
 
+    @_synchronized
     def consolidate(self):
         """Run maintenance on all memory systems."""
         self.facts.consolidate()
         self.facts.save()
         self.preferences.save()
 
+    @_synchronized
     def get_stats(self) -> dict:
         """Get comprehensive memory statistics."""
         vector_stats = {}

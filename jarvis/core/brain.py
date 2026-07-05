@@ -332,7 +332,9 @@ class JarvisBrain:
                     self.conversation.extend([user_turn, assistant_turn])
                     self._save_turn(user_turn)
                     self._save_turn(assistant_turn)
-                    self.memory.process_exchange(user_input, response, tier=local_result.tier)
+                    await asyncio.to_thread(
+                        self.memory.process_exchange, user_input, response, tier=local_result.tier
+                    )
 
                 elapsed = time.time() - start_time
                 perf_tracker.record_request(elapsed, local_result.tier)
@@ -469,7 +471,8 @@ class JarvisBrain:
         assistant_turn.content = response
 
         if not self._privacy_mode and settings.MEMORY_ENABLED:
-            self.memory.add(
+            await asyncio.to_thread(
+                self.memory.add,
                 text=f"User: {user_input}\nJARVIS: {response}",
                 metadata={
                     "type": "agent" if tier != "fast" else "conversation",
@@ -478,7 +481,8 @@ class JarvisBrain:
                 },
             )
 
-            self.memory.process_exchange(
+            await asyncio.to_thread(
+                self.memory.process_exchange,
                 user_message=user_input,
                 assistant_response=response,
                 tier=tier,
@@ -530,7 +534,9 @@ class JarvisBrain:
                     self.conversation.extend([user_turn, assistant_turn])
                     self._save_turn(user_turn)
                     self._save_turn(assistant_turn)
-                    self.memory.process_exchange(user_input, response, tier=local_result.tier)
+                    await asyncio.to_thread(
+                        self.memory.process_exchange, user_input, response, tier=local_result.tier
+                    )
                 yield response
                 return
 
@@ -566,7 +572,8 @@ class JarvisBrain:
             if not self._privacy_mode:
                 self._save_turn(assistant_turn)
             if not self._privacy_mode and settings.MEMORY_ENABLED:
-                self.memory.add(
+                await asyncio.to_thread(
+                    self.memory.add,
                     text=f"User: {user_input}\nJARVIS: {complete}",
                     metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
                 )
@@ -605,7 +612,8 @@ class JarvisBrain:
             if not self._privacy_mode:
                 self._save_turn(assistant_turn)
             if not self._privacy_mode and settings.MEMORY_ENABLED:
-                self.memory.add(
+                await asyncio.to_thread(
+                    self.memory.add,
                     text=f"User: {user_input}\nJARVIS: {complete}",
                     metadata={"type": "agent", "tier": tier, "timestamp": time.time()},
                 )
