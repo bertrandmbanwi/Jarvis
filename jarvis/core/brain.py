@@ -1,4 +1,5 @@
 """Central orchestration service with agentic executor and task decomposition."""
+import asyncio
 import logging
 import re
 import time
@@ -363,7 +364,11 @@ class JarvisBrain:
 
         if tier == "fast" and _is_chat_only(user_input):
             logger.info("[req:%s] Routing to CHAT mode [tier: fast].", self._current_request_id)
-            enriched_context = self.memory.get_enriched_context(user_input, top_k=3)
+            # Memory lookup is blocking SQLite/Chroma; run it off the event loop
+            # so a concurrent client's request isn't stalled behind it.
+            enriched_context = await asyncio.to_thread(
+                self.memory.get_enriched_context, user_input, 3
+            )
             enriched_input = f"{enriched_context}\n\nUser: {user_input}" if enriched_context else user_input
             with trace_span("brain.chat", request_id=self._current_request_id, tier="fast"):
                 response = await self.llm.chat(enriched_input, history, tier="fast")
