@@ -179,6 +179,14 @@ export interface ConnectedDevice {
   uptime_seconds: number;
 }
 
+export interface PendingConfirmation {
+  id: string;
+  tool: string;
+  summary: string;
+  risk: string;
+  created_at: number;
+}
+
 export interface WSMessage {
   token?: string;
   done?: boolean;
@@ -252,6 +260,8 @@ export interface WSMessage {
     total?: number;
     subtasks?: Array<{ id: string; title: string; agent_type?: string }>;
   };
+  type?: string;
+  confirmation?: PendingConfirmation;
   error?: string;
 }
 

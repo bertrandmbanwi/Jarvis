@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   ConnectionStatus, ChatMessage, CostSummary, WSMessage,
-  ProactiveSuggestion, PlanState, PlanSubtask, ConnectedDevice,
+  ProactiveSuggestion, PlanState, PlanSubtask, ConnectedDevice, PendingConfirmation,
 } from "@/lib/types";
 import { getApiBaseUrl, getWsUrl, jarvisHeaders } from "@/lib/apiBase";
 
@@ -152,6 +152,8 @@ interface UseJarvisWebSocketReturn {
   suggestions: ProactiveSuggestion[];
   dismissSuggestion: (id: string) => void;
   activePlan: PlanState | null;
+  pendingConfirmations: PendingConfirmation[];
+  respondToConfirmation: (id: string, approved: boolean) => void;
 }
 function detectDeviceType(): { device_type: string; device_name: string } {
   if (typeof navigator === "undefined") {
@@ -184,6 +186,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
   const [suggestions, setSuggestions] = useState<ProactiveSuggestion[]>([]);
   const [activePlan, setActivePlan] = useState<PlanState | null>(null);
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDevice[]>([]);
+  const [pendingConfirmations, setPendingConfirmations] = useState<PendingConfirmation[]>([]);
 
   // Envelope playback and audio chunking state
   const envelopeRef = useRef<number[]>([]);
@@ -515,6 +518,15 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
             return; // Ignore; it's historical data
           }
 
+          // ---- High-risk tool call awaiting the user's approval ----
+          if (data.type === "confirmation_required" && data.confirmation) {
+            const confirmation = data.confirmation;
+            setPendingConfirmations((prev) =>
+              prev.some((c) => c.id === confirmation.id) ? prev : [...prev, confirmation]
+            );
+            return;
+          }
+
           // ---- Proactive suggestion from background engine ----
           if (data.proactive_suggestion) {
             const ps = data.proactive_suggestion;
@@ -806,6 +818,18 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     setSuggestions((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
+  const respondToConfirmation = useCallback((id: string, approved: boolean) => {
+    // Remove the prompt optimistically; the server is the source of truth.
+    setPendingConfirmations((prev) => prev.filter((c) => c.id !== id));
+    const url = `${getApiBaseUrl()}/tools/confirm`;
+    const headers = jarvisHeaders(authToken, true);
+    fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ action_id: id, approved }),
+    }).catch((e) => console.warn("[JARVIS WS] Confirmation response failed:", e));
+  }, [authToken]);
+
   return {
     status,
     messages,
@@ -823,5 +847,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     suggestions,
     dismissSuggestion,
     activePlan,
+    pendingConfirmations,
+    respondToConfirmation,
   };
 }
