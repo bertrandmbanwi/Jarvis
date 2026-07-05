@@ -17,6 +17,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jarvis")
 
+# Strong references to fire-and-forget voice tasks so asyncio does not
+# garbage-collect (and silently cancel) them while they are still running.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro) -> asyncio.Task:
+    """Schedule a background task and retain a reference until it completes."""
+    task = asyncio.ensure_future(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 BANNER = r"""
        ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
@@ -241,7 +253,7 @@ async def run_full():
 
         def on_wake():
             logger.info("* Wake word detected *")
-            asyncio.ensure_future(broadcast_overlay_state("listening"))
+            _spawn_background(broadcast_overlay_state("listening"))
 
         async def _speak_response(response: str):
             """Speak a response and broadcast to all UI clients."""
@@ -336,7 +348,7 @@ async def run_full():
                 listener.set_speaking(False)
                 await broadcast_overlay_state("thinking", user_text=text)
                 # Fire and forget: brain processes in background
-                asyncio.ensure_future(_run_async_task(text))
+                _spawn_background(_run_async_task(text))
             else:
                 # Quick request: process inline (fast enough for real-time voice)
                 await broadcast_overlay_state("thinking", user_text=text)

@@ -173,8 +173,20 @@ def revoke_token(token: str):
     _active_sessions.pop(token, None)
 
 
-def is_local_request(client_host: str) -> bool:
-    """Check if request is from localhost (which bypasses authentication)."""
+def is_local_request(client_host: str, forwarded: bool = False) -> bool:
+    """Check if a request is genuinely from localhost (which bypasses auth).
+
+    ``forwarded`` must be True when the request carried a proxy header
+    (X-Forwarded-For, CF-Connecting-IP, Forwarded, ...). Behind a reverse proxy
+    or tunnel — the ``*.trycloudflare.com`` deployment the CORS config
+    anticipates — every request reaches Uvicorn from a loopback address, so
+    trusting ``client_host`` alone would let any remote client bypass PIN auth.
+    A forwarded request is therefore treated as remote regardless of peer IP.
+    """
+    if forwarded:
+        return False
+    if os.getenv("JARVIS_DISABLE_LOCAL_BYPASS", "").strip().lower() in {"1", "true", "yes"}:
+        return False
     local_hosts = {"127.0.0.1", "localhost", "::1"}
     return client_host in local_hosts
 
