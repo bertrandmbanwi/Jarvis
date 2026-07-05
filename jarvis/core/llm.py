@@ -16,12 +16,73 @@ from jarvis.core.hardening import (
     sanitize_user_input,
     user_friendly_error,
 )
+from jarvis.core.ollama import list_ollama_models
 from jarvis.core.perf import perf_tracker
 
 logger = logging.getLogger("jarvis.llm")
 
 _anthropic_client = None
 _anthropic_available = False
+
+# Anthropic tool_result `content` must be a string or a list of valid content
+# blocks (each a dict with a recognized "type"). Some tools return plain data
+# lists (e.g. note metadata as list[dict], folder names as list[str]); those are
+# NOT content blocks and would make the Messages API reject the follow-up call.
+_VALID_CONTENT_BLOCK_TYPES = {
+    "text", "image", "document", "tool_use", "tool_result",
+    "thinking", "redacted_thinking",
+}
+_MAX_TOOL_RESULT_CHARS = 8000
+
+
+def _is_content_block_list(value: list) -> bool:
+    """True only if every element is a valid Anthropic content block."""
+    return bool(value) and all(
+        isinstance(block, dict) and block.get("type") in _VALID_CONTENT_BLOCK_TYPES
+        for block in value
+    )
+
+
+def _to_tool_result_content(result: Any) -> str | list:
+    """Coerce a tool result into a valid Anthropic tool_result content value."""
+    if isinstance(result, list) and _is_content_block_list(result):
+        return result
+    if isinstance(result, str):
+        text = result
+    else:
+        try:
+            text = json.dumps(result, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(result)
+    if len(text) > _MAX_TOOL_RESULT_CHARS:
+        text = text[:_MAX_TOOL_RESULT_CHARS] + "\n... (truncated)"
+    return text
+
+
+def _tool_result_log_text(content: str | list) -> str:
+    """Human-readable preview of tool_result content for the tool-call log."""
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return content
+
+
+def _ollama_model_matches(installed_name: str) -> bool:
+    """True if an installed Ollama model satisfies the configured OLLAMA_MODEL.
+
+    Avoids the substring false-positive where configured "llama3" matched an
+    unrelated "llama3.1:8b" — the health check passed but the exact-name chat
+    request then 404'd. An untagged config name matches any tag of that exact
+    base (Ollama resolves it to :latest); a tagged config must match exactly.
+    """
+    configured = settings.OLLAMA_MODEL
+    if installed_name == configured:
+        return True
+    if ":" not in configured:
+        return installed_name.split(":")[0] == configured
+    return False
 
 class TierConfig(TypedDict):
     model: str
@@ -214,22 +275,19 @@ class JarvisLLM:
     async def _check_ollama_health(self) -> bool:
         """Check if Ollama is running and has the configured model."""
         try:
-            resp = await self._ollama_client.get(f"{self._ollama_base_url}/api/tags")
-            if resp.status_code != 200:
-                return False
-            models = resp.json().get("models", [])
-            model_names = [m.get("name", "") for m in models]
-            base_model = settings.OLLAMA_MODEL.split(":")[0]
-            available = any(base_model in name for name in model_names)
-            if available:
-                logger.info("Ollama health check passed (model: %s).", settings.OLLAMA_MODEL)
-            return available
+            model_names = await list_ollama_models(
+                self._ollama_base_url, client=self._ollama_client
+            )
         except httpx.ConnectError:
             logger.debug("Ollama not reachable at %s.", self._ollama_base_url)
             return False
         except Exception as e:
             logger.debug("Ollama health check error: %s", e)
             return False
+        available = any(_ollama_model_matches(name) for name in model_names)
+        if available:
+            logger.info("Ollama health check passed (model: %s).", settings.OLLAMA_MODEL)
+        return available
 
     async def chat(
         self,
@@ -286,12 +344,19 @@ class JarvisLLM:
                 return
 
         if self.active_backend == "claude":
+            streamed_any = False
             try:
                 async for token in self._stream_claude(user_message, conversation_history, tier):
+                    streamed_any = True
                     yield token
                 return
             except Exception as e:
                 logger.error("Claude stream failed: %s. Trying Ollama fallback.", e)
+                if streamed_any:
+                    # Tokens were already emitted; replaying on Ollama would
+                    # duplicate the partial answer the user has already seen.
+                    yield "\n\n[Response interrupted — please retry.]"
+                    return
                 if await self._check_ollama_health():
                     self.active_backend = "ollama"
 
@@ -395,16 +460,10 @@ class JarvisLLM:
                             logger.error("Tool execution error (%s): %s", tool_name, e)
                             result = f"Error executing {tool_name}: {e}"
 
-                        if isinstance(result, list):
-                            log_text = " ".join(b.get("text", "") for b in result if b.get("type") == "text")
-                            tool_calls_log.append({"name": tool_name, "input": tool_input, "result": log_text[:2000]})
-                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result})
-                        else:
-                            result_str = str(result)
-                            tool_calls_log.append({"name": tool_name, "input": tool_input, "result": result_str[:2000]})
-                            if len(result_str) > 8000:
-                                result_str = result_str[:8000] + "\n... (truncated)"
-                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result_str})
+                        content = _to_tool_result_content(result)
+                        log_text = _tool_result_log_text(content)
+                        tool_calls_log.append({"name": tool_name, "input": tool_input, "result": log_text[:2000]})
+                        tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": content})
 
                 messages.append({"role": "user", "content": tool_results})
 
@@ -505,13 +564,8 @@ class JarvisLLM:
                             logger.error("Tool execution error (%s): %s", tool_name, e)
                             result = f"Error executing {tool_name}: {e}"
 
-                        if isinstance(result, list):
-                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result})
-                        else:
-                            result_str = str(result)
-                            if len(result_str) > 8000:
-                                result_str = result_str[:8000] + "\n... (truncated)"
-                            tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": result_str})
+                        content = _to_tool_result_content(result)
+                        tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": content})
 
                 messages.append({"role": "user", "content": tool_results})
 
@@ -585,7 +639,12 @@ class JarvisLLM:
             raise
 
         elapsed = time.time() - start
-        content = resp.content[0].text if resp.content else ""
+        # Use the first text block, not content[0]: a leading thinking/tool block
+        # has no .text and would raise AttributeError on an otherwise-valid reply.
+        content = next(
+            (block.text for block in resp.content if getattr(block, "type", None) == "text"),
+            "",
+        )
 
         # Track costs and performance
         self._track_usage(resp.usage, config["model"], tier, elapsed, user_message[:80])
