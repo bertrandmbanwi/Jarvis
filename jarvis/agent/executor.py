@@ -44,7 +44,7 @@ from jarvis.core.hardening import (
 )
 from jarvis.core.llm import JarvisLLM
 from jarvis.core.perf import perf_tracker
-from jarvis.core.permissions import assess_tool_call, record_tool_audit
+from jarvis.core.permissions import assess_tool_call, call_is_confirmed, record_tool_audit
 from jarvis.core.tracing import record_event, trace_span
 
 logger = logging.getLogger("jarvis.agent")
@@ -237,6 +237,12 @@ class AgentExecutor:
             )
             logger.warning("Tool %s blocked by permission policy: %s", tool_name, decision.reason)
             return f"Tool '{tool_name}' is blocked by policy: {decision.reason}"
+
+        # Replace any model-supplied confirmation flag with the server-verified
+        # value, so a tool that acts on it (e.g. send_email sending vs drafting)
+        # cannot be driven by a prompt-injected confirmed=true.
+        if "confirmed" in tool_input:
+            tool_input = {**tool_input, "confirmed": call_is_confirmed(tool_input)}
 
         cached_result = await tool_cache.get(tool_name, tool_input)
         if cached_result is not None:
