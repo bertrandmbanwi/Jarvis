@@ -5,18 +5,27 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from jarvis.core import calendar_accounts, calendar_oauth, sqlite_state, team, workflow_scheduler, workflows
+from jarvis.core import (
+    calendar_accounts,
+    calendar_oauth,
+    sqlite_state,
+    team,
+    workflow_scheduler,
+    workflows,
+    workflows_store,
+)
 from jarvis.tools import calendar_email, mac_control
 
 
 @pytest.fixture
 def product_bet_files(tmp_path, monkeypatch):
-    monkeypatch.setattr(workflows, "WORKFLOWS_FILE", tmp_path / "workflows.json")
-    monkeypatch.setattr(workflows, "WORKFLOW_RUNS_FILE", tmp_path / "workflow_runs.json")
-    monkeypatch.setattr(workflows, "WORKFLOW_APPROVALS_FILE", tmp_path / "workflow_approvals.json")
-    monkeypatch.setattr(workflows, "WORKFLOW_VERSIONS_FILE", tmp_path / "workflow_versions.json")
-    monkeypatch.setattr(workflows, "WORKFLOW_RELEASES_FILE", tmp_path / "workflow_releases.json")
-    monkeypatch.setattr(workflows, "WORKFLOW_EDIT_SESSIONS_FILE", tmp_path / "workflow_edit_sessions.json")
+    # Path constants now live in workflows_store (the persistence module).
+    monkeypatch.setattr(workflows_store, "WORKFLOWS_FILE", tmp_path / "workflows.json")
+    monkeypatch.setattr(workflows_store, "WORKFLOW_RUNS_FILE", tmp_path / "workflow_runs.json")
+    monkeypatch.setattr(workflows_store, "WORKFLOW_APPROVALS_FILE", tmp_path / "workflow_approvals.json")
+    monkeypatch.setattr(workflows_store, "WORKFLOW_VERSIONS_FILE", tmp_path / "workflow_versions.json")
+    monkeypatch.setattr(workflows_store, "WORKFLOW_RELEASES_FILE", tmp_path / "workflow_releases.json")
+    monkeypatch.setattr(workflows_store, "WORKFLOW_EDIT_SESSIONS_FILE", tmp_path / "workflow_edit_sessions.json")
     monkeypatch.setattr(team, "TEAM_FILE", tmp_path / "team.json")
     monkeypatch.setattr(calendar_accounts, "CALENDAR_STATE_FILE", tmp_path / "calendar_state.json")
 
@@ -401,7 +410,7 @@ def test_product_state_imports_legacy_json_to_sqlite(product_bet_files):
         "updated_at": now,
         "last_run_at": None,
     }
-    workflows.WORKFLOWS_FILE.write_text(json.dumps([legacy_workflow]), encoding="utf-8")
+    workflows_store.WORKFLOWS_FILE.write_text(json.dumps([legacy_workflow]), encoding="utf-8")
     team.TEAM_FILE.write_text(json.dumps({
         "id": "legacy-team",
         "name": "Imported Team",
@@ -459,9 +468,9 @@ def test_product_state_imports_legacy_json_to_sqlite(product_bet_files):
     assert team.get_team()["name"] == "Imported Team"
     assert calendar_accounts.list_connections()[0]["provider"] == "google"
 
-    status = sqlite_state.migration_status(sqlite_state.db_path_for(workflows.WORKFLOWS_FILE))
+    status = sqlite_state.migration_status(sqlite_state.db_path_for(workflows_store.WORKFLOWS_FILE))
 
-    assert status["workflows"]["migrated_from"] == str(workflows.WORKFLOWS_FILE)
+    assert status["workflows"]["migrated_from"] == str(workflows_store.WORKFLOWS_FILE)
     assert status["team"]["migrated_from"] == str(team.TEAM_FILE)
     assert status["calendar_state"]["migrated_from"] == str(calendar_accounts.CALENDAR_STATE_FILE)
 
@@ -507,7 +516,7 @@ def test_workflow_run_history_imports_to_indexed_sqlite(product_bet_files):
         "completed_at": 1778940001.0,
         "duration_ms": 1000,
     }
-    workflows.WORKFLOW_RUNS_FILE.write_text(json.dumps([legacy_run]), encoding="utf-8")
+    workflows_store.WORKFLOW_RUNS_FILE.write_text(json.dumps([legacy_run]), encoding="utf-8")
 
     runs = workflows.list_runs(
         workflow_id="legacy-workflow",
