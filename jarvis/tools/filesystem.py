@@ -14,8 +14,10 @@ PROTECTED_DIRS = [
 
 # Temp roots stay usable even though they live under a protected prefix
 # (on macOS /tmp -> /private/tmp, and gettempdir() is /private/var/folders/...).
+# "/tmp" here is a read-allowlist entry for the path guard, not a temp-file
+# write target, so B108 (hardcoded tmp dir) does not apply.
 _TEMP_ROOTS = tuple(sorted({
-    str(Path(p).resolve()) for p in ("/tmp", tempfile.gettempdir())
+    str(Path(p).resolve()) for p in ("/tmp", tempfile.gettempdir())  # nosec B108
 }))
 
 # Directory names that hold credentials/keys. Blocked anywhere in the path so
