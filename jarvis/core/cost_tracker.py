@@ -1,6 +1,9 @@
 """Persistent logging of API usage costs to JSON files."""
+import calendar
 import json
 import logging
+import os
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -8,6 +11,11 @@ from typing import Any, cast
 from jarvis.config import settings
 
 logger = logging.getLogger("jarvis.cost_tracker")
+
+# Serializes the read-modify-write in log_request so a threaded or executor-based
+# caller cannot lose updates. asyncio's single thread is already safe, but this
+# makes the invariant explicit and future-proof.
+_write_lock = threading.Lock()
 
 def _cost_log_dir() -> Path:
     """Get the cost log directory from settings (evaluated at call time for testability)."""
@@ -43,10 +51,15 @@ def _load_day(file_path: Path) -> dict[str, Any]:
 
 
 def _save_day(file_path: Path, data: dict):
-    """Save a day's cost data to disk."""
+    """Save a day's cost data to disk atomically (temp file + rename).
 
+    A direct write_text can leave a truncated/corrupt JSON file if the process
+    is killed mid-write; writing to a temp file and os.replace()-ing it is atomic.
+    """
     try:
-        file_path.write_text(json.dumps(data, indent=2))
+        tmp_path = file_path.with_name(f"{file_path.name}.{os.getpid()}.tmp")
+        tmp_path.write_text(json.dumps(data, indent=2))
+        os.replace(tmp_path, file_path)
     except OSError as e:
         logger.error("Failed to write cost log %s: %s", file_path, e)
 
@@ -63,35 +76,35 @@ def log_request(
     user_input_preview: str = "",
 ):
     """Log a single API request to the daily cost file."""
-    log_file = _today_file()
-    data = _load_day(log_file)
+    with _write_lock:
+        log_file = _today_file()
+        data = _load_day(log_file)
 
-    data["total_cost_usd"] = round(data["total_cost_usd"] + cost_usd, 6)
-    data["total_requests"] += 1
-    data["total_input_tokens"] += input_tokens
-    data["total_output_tokens"] += output_tokens
-    data["total_cache_read_tokens"] += cache_read_tokens
-    data["total_cache_creation_tokens"] += cache_creation_tokens
+        data["total_cost_usd"] = round(data["total_cost_usd"] + cost_usd, 6)
+        data["total_requests"] += 1
+        data["total_input_tokens"] += input_tokens
+        data["total_output_tokens"] += output_tokens
+        data["total_cache_read_tokens"] = data.get("total_cache_read_tokens", 0) + cache_read_tokens
+        data["total_cache_creation_tokens"] = data.get("total_cache_creation_tokens", 0) + cache_creation_tokens
 
-    data["by_tier"][tier] = data["by_tier"].get(tier, 0) + 1
+        data.setdefault("by_tier", {})[tier] = data.get("by_tier", {}).get(tier, 0) + 1
+        data.setdefault("by_model", {})[model] = data.get("by_model", {}).get(model, 0) + 1
 
-    data["by_model"][model] = data["by_model"].get(model, 0) + 1
-
-    data["requests"].append({
-        "time": datetime.now().isoformat(timespec="seconds"),
-        "model": model,
-        "tier": tier,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cache_read": cache_read_tokens,
-        "cache_write": cache_creation_tokens,
-        "cost_usd": round(cost_usd, 6),
-        "elapsed_s": round(elapsed_seconds, 2),
-        "preview": user_input_preview[:80],
-    })
-    if len(data["requests"]) > 500:
-        data["requests"] = data["requests"][-500:]
-    _save_day(log_file, data)
+        data.setdefault("requests", []).append({
+            "time": datetime.now().isoformat(timespec="seconds"),
+            "model": model,
+            "tier": tier,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read": cache_read_tokens,
+            "cache_write": cache_creation_tokens,
+            "cost_usd": round(cost_usd, 6),
+            "elapsed_s": round(elapsed_seconds, 2),
+            "preview": user_input_preview[:80],
+        })
+        if len(data["requests"]) > 500:
+            data["requests"] = data["requests"][-500:]
+        _save_day(log_file, data)
 
 
 def get_today_summary() -> dict:
@@ -127,13 +140,20 @@ def get_month_summary() -> dict:
 
     avg_daily = total_cost / days_active if days_active > 0 else 0.0
 
+    # Project from the actual calendar pace (spend so far / days elapsed x days in
+    # month), NOT avg-over-active-days x 30: the latter wildly over-projects for a
+    # user who only runs Jarvis on some days.
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    days_elapsed = today.day
+    projected_monthly = (total_cost / days_elapsed) * days_in_month if days_elapsed > 0 else 0.0
+
     return {
         "month": month_prefix,
         "total_cost_usd": round(total_cost, 4),
         "total_requests": total_requests,
         "days_active": days_active,
         "avg_daily_cost_usd": round(avg_daily, 4),
-        "projected_monthly_usd": round(avg_daily * 30, 2) if days_active > 0 else 0.0,
+        "projected_monthly_usd": round(projected_monthly, 2),
     }
 
 

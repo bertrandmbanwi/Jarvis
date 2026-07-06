@@ -1,6 +1,8 @@
 """JARVIS File System Tools: safe file operations for managing files and folders."""
+import fnmatch
 import logging
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -10,18 +12,66 @@ PROTECTED_DIRS = [
     "/System", "/usr", "/bin", "/sbin", "/private", "/Library/Apple",
 ]
 
+# Temp roots stay usable even though they live under a protected prefix
+# (on macOS /tmp -> /private/tmp, and gettempdir() is /private/var/folders/...).
+# "/tmp" here is a read-allowlist entry for the path guard, not a temp-file
+# write target, so B108 (hardcoded tmp dir) does not apply.
+_TEMP_ROOTS = tuple(sorted({
+    str(Path(p).resolve()) for p in ("/tmp", tempfile.gettempdir())  # nosec B108
+}))
+
+# Directory names that hold credentials/keys. Blocked anywhere in the path so
+# both reads and writes are refused (e.g. ~/.ssh, ~/.aws, project .git/config).
+SENSITIVE_DIR_NAMES = {
+    ".ssh", ".aws", ".gnupg", ".gpg", ".kube", ".docker",
+    ".config/gcloud", ".azure", ".password-store",
+}
+
+# Filename globs for secret material, matched case-insensitively on any file.
+SENSITIVE_FILE_GLOBS = [
+    ".env", ".env.*", "*.pem", "*.key", "id_rsa*", "id_ed25519*",
+    "id_ecdsa*", "id_dsa*", ".netrc", "credentials", "credentials.*",
+    "*.keychain", "*.keychain-db", ".htpasswd", "*.pfx", "*.p12",
+]
+
 
 def _is_path_safe(path: str) -> tuple[bool, str]:
-    """Verify path is not a protected system directory."""
-    resolved = str(Path(path).resolve())
+    """Verify a path is neither a protected system dir nor a credential file.
+
+    Applied to every read and write entry point so the LLM (or a prompt-injected
+    instruction) cannot use these tools to exfiltrate secrets such as
+    ``~/.ssh/id_rsa`` or a project ``.env``.
+    """
+    resolved = Path(path).expanduser().resolve()
+    resolved_str = str(resolved)
+
+    # Credential checks run first so secrets are refused even inside a temp root.
+    lowered_parts = {part.lower() for part in resolved.parts}
+    for sensitive in SENSITIVE_DIR_NAMES:
+        # Handle both single-segment (".ssh") and nested (".config/gcloud") names.
+        if all(seg in lowered_parts for seg in sensitive.split("/")):
+            return False, f"Sensitive credential path: {sensitive}"
+
+    name = resolved.name.lower()
+    for glob in SENSITIVE_FILE_GLOBS:
+        if fnmatch.fnmatch(name, glob):
+            return False, f"Sensitive credential file: {resolved.name}"
+
+    if resolved_str.startswith(_TEMP_ROOTS):
+        return True, "OK"
+
     for protected in PROTECTED_DIRS:
-        if resolved.startswith(protected):
+        if resolved_str.startswith(protected):
             return False, f"Protected system path: {protected}"
+
     return True, "OK"
 
 
 async def list_directory(path: str = ".", detailed: bool = True) -> str:
     """List contents of a directory."""
+    safe, reason = _is_path_safe(path)
+    if not safe:
+        return f"Cannot list: {reason}"
     try:
         target = Path(path).expanduser().resolve()
         if not target.exists():
@@ -61,6 +111,9 @@ async def list_directory(path: str = ".", detailed: bool = True) -> str:
 
 async def read_file(path: str, max_lines: int = 100) -> str:
     """Read the contents of a text file."""
+    safe, reason = _is_path_safe(path)
+    if not safe:
+        return f"Cannot read: {reason}"
     try:
         target = Path(path).expanduser().resolve()
         if not target.exists():
@@ -177,12 +230,18 @@ async def search_files(
     max_results: int = 20,
 ) -> str:
     """Search for files matching a glob pattern."""
+    safe, reason = _is_path_safe(directory)
+    if not safe:
+        return f"Cannot search: {reason}"
     try:
         target = Path(directory).expanduser().resolve()
         if not target.exists():
             return f"Directory not found: {directory}"
 
-        matches = list(target.rglob(pattern))[:max_results]
+        matches = [
+            m for m in target.rglob(pattern)
+            if _is_path_safe(str(m))[0]
+        ][:max_results]
 
         if not matches:
             return f"No files matching '{pattern}' in {target}"
@@ -200,6 +259,9 @@ async def search_files(
 
 async def get_file_info(path: str) -> str:
     """Get detailed information about a file or directory."""
+    safe, reason = _is_path_safe(path)
+    if not safe:
+        return f"Cannot inspect: {reason}"
     try:
         target = Path(path).expanduser().resolve()
         if not target.exists():

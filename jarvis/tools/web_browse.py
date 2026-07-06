@@ -48,6 +48,43 @@ def _is_url_safe(url: str) -> tuple[bool, str]:
     return True, "OK"
 
 
+class _UnsafeURLError(Exception):
+    """Raised when a URL — or a redirect target — fails SSRF validation."""
+
+
+async def _fetch_html(
+    url: str,
+    *,
+    user_agent: str,
+    timeout: float = 15.0,
+    max_redirects: int = 5,
+) -> tuple[str, str]:
+    """Fetch HTML, re-checking SSRF safety on the initial URL and each redirect hop.
+
+    Redirects are followed manually (follow_redirects=False) so a benign-looking
+    URL that 3xx-redirects to an internal address (e.g. 169.254.169.254 or a
+    private IP) is blocked — httpx's built-in redirect following would not re-run
+    _is_url_safe on the new location. Returns (html, final_url).
+    """
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+        headers={"User-Agent": user_agent},
+    ) as client:
+        current = url
+        for _ in range(max_redirects + 1):
+            safe, reason = _is_url_safe(current)
+            if not safe:
+                raise _UnsafeURLError(reason)
+            resp = await client.get(current)
+            if resp.next_request is not None:
+                current = str(resp.next_request.url)
+                continue
+            resp.raise_for_status()
+            return resp.text, current
+    raise _UnsafeURLError(f"Too many redirects fetching {url}")
+
+
 async def fetch_page_text(url: str, max_chars: int = 5000) -> str:
     """Fetch a web page and extract its readable text content."""
     if not HAS_HTTPX:
@@ -56,26 +93,17 @@ async def fetch_page_text(url: str, max_chars: int = 5000) -> str:
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
-    safe, reason = _is_url_safe(url)
-    if not safe:
-        return reason
-
     logger.info("Fetching page: %s", url)
 
     try:
-        async with httpx.AsyncClient(
-            timeout=15.0,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/120.0.0.0 Safari/537.36"
-            }
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            html = resp.text
-
+        html, final_url = await _fetch_html(
+            url,
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/120.0.0.0 Safari/537.36",
+        )
+    except _UnsafeURLError as e:
+        return str(e)
     except httpx.TimeoutException:
         return f"Timeout fetching {url}"
     except httpx.HTTPStatusError as e:
@@ -84,13 +112,13 @@ async def fetch_page_text(url: str, max_chars: int = 5000) -> str:
         return f"Error fetching {url}: {e}"
 
     if HAS_BS4:
-        return _extract_text_bs4(html, url, max_chars)
+        return _extract_text_bs4(html, final_url, max_chars)
     else:
         text = re.sub(r"<[^>]+>", " ", html)
         text = re.sub(r"\s+", " ", text).strip()
         if len(text) > max_chars:
             text = text[:max_chars] + "..."
-        return f"Content from {url}:\n{text}"
+        return f"Content from {final_url}:\n{text}"
 
 
 def _extract_text_bs4(html: str, url: str, max_chars: int) -> str:
@@ -129,19 +157,10 @@ async def fetch_page_links(url: str, max_links: int = 20) -> str:
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
-    safe, reason = _is_url_safe(url)
-    if not safe:
-        return reason
-
     try:
-        async with httpx.AsyncClient(
-            timeout=15.0,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0"}
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            html = resp.text
+        html, final_url = await _fetch_html(url, user_agent="Mozilla/5.0")
+    except _UnsafeURLError as e:
+        return str(e)
     except Exception as e:
         return f"Error fetching {url}: {e}"
 
@@ -153,7 +172,7 @@ async def fetch_page_links(url: str, max_links: int = 20) -> str:
         text = a_tag.get_text(strip=True)[:80]
 
         if href.startswith("/"):
-            href = urljoin(url, href)
+            href = urljoin(final_url, href)
 
         if href.startswith(("#", "javascript:", "mailto:")):
             continue

@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import StatusBar from "@/components/shared/StatusBar";
 import ProactiveToast from "@/components/shared/ProactiveToast";
 import PlanProgress from "@/components/shared/PlanProgress";
+import ConfirmationModal from "@/components/shared/ConfirmationModal";
 import CinematicView from "@/components/cinematic/CinematicView";
 import ChatView from "@/components/chat/ChatView";
 import DashboardView from "@/components/dashboard/DashboardView";
@@ -38,6 +39,8 @@ export default function Page() {
     suggestions,
     dismissSuggestion,
     activePlan,
+    pendingConfirmations,
+    respondToConfirmation,
   } = useJarvisWebSocket(authState.token);
 
   const { serverStatus } = useServerStatus(authState.token);
@@ -181,6 +184,11 @@ export default function Page() {
       />
 
       <PlanProgress plan={activePlan} />
+
+      <ConfirmationModal
+        confirmations={pendingConfirmations}
+        onRespond={respondToConfirmation}
+      />
 
       <SettingsPanel authToken={authState.token} />
     </div>

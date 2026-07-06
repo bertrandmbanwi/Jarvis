@@ -312,11 +312,13 @@ async def get_public_holidays(country_code: str = "US", year: int | None = None)
         logger.error("Nager.Date holiday lookup failed for %s/%s: %s", country, resolved_year, exc)
         return f"Could not retrieve {country} public holidays for {resolved_year} right now."
 
-    if not data:
+    if not isinstance(data, list) or not data:
         return f"No public holidays were returned for {country} in {resolved_year}."
 
     lines = [f"Public holidays in {country} for {resolved_year}:"]
     for item in data[:20]:
+        if not isinstance(item, dict):
+            continue
         lines.append(f"- {item.get('date')}: {item.get('name') or item.get('localName')}")
     if len(data) > 20:
         lines.append(f"...and {len(data) - 20} more.")
@@ -366,8 +368,10 @@ async def is_public_holiday(country_code: str = "US", check_date: str = "") -> s
         logger.error("Nager.Date holiday check failed for %s/%s: %s", country, target_date, exc)
         return f"Could not check public holidays for {country} right now."
 
+    if not isinstance(data, list):
+        return f"Could not check public holidays for {country} right now."
     for item in data:
-        if item.get("date") == target_date.isoformat():
+        if isinstance(item, dict) and item.get("date") == target_date.isoformat():
             return f"Yes. {target_date.isoformat()} is {item.get('name') or item.get('localName')} in {country}."
     return f"No. {target_date.isoformat()} is not listed as a public holiday in {country}."
 

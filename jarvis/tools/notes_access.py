@@ -19,6 +19,20 @@ DEFAULT_TIMEOUT = 10.0
 READ_TIMEOUT = 15.0
 
 
+def _escape_applescript(value: str) -> str:
+    """Escape a string for safe embedding in AppleScript double-quoted literals.
+
+    Without this, a value containing a double quote can break out of the string
+    context and inject arbitrary AppleScript (including ``do shell script``).
+    """
+    value = value.replace("\\", "\\\\")
+    value = value.replace('"', '\\"')
+    value = value.replace("\n", "\\n")
+    value = value.replace("\r", "\\r")
+    value = value.replace("\t", "\\t")
+    return value
+
+
 async def _run_notes_script(script: str, timeout: float = DEFAULT_TIMEOUT) -> str:
     """
     Run an AppleScript for Notes.app.
@@ -188,7 +202,7 @@ async def read_note(title_match: str) -> dict | None:
     try:
         script = f"""
 tell application "Notes"
-    set searchTerm to "{title_match}"
+    set searchTerm to "{_escape_applescript(title_match)}"
     set foundNote to missing value
 
     repeat with n from 1 to count of notes
@@ -250,7 +264,7 @@ async def search_notes(query: str, count: int = 10) -> list[dict]:
     try:
         script = f"""
 tell application "Notes"
-    set searchTerm to "{query}"
+    set searchTerm to "{_escape_applescript(query)}"
     set resultsList to {{}}
     set matchCount to 0
 
@@ -324,10 +338,10 @@ async def create_note(
         # Convert markdown checklists to HTML if present
         converted_body = _body_to_html(body) if "[" in body and "]" in body else body
 
-        # Escape quotes for AppleScript
-        safe_title = title.replace('"', '\\"')
-        safe_body = converted_body.replace('"', '\\"')
-        safe_folder = folder.replace('"', '\\"')
+        # Escape for AppleScript (backslashes, quotes, and control chars)
+        safe_title = _escape_applescript(title)
+        safe_body = _escape_applescript(converted_body)
+        safe_folder = _escape_applescript(folder)
 
         script = f"""
 tell application "Notes"

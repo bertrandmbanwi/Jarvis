@@ -79,6 +79,10 @@ class VoiceListener:
         self._followup_sustained_frames = 0
         self._followup_max_amplitude = 0.0
         self._activation_requested = False
+        self._capturing = False
+        # Serializes every _record_speech so two recorders (the wake-word loop and
+        # a confirmation capture_reply) never read the shared PyAudio stream at once.
+        self._stream_lock = asyncio.Lock()
 
     def initialize(self) -> bool:
         """Set up audio, wake word model, and whisper."""
@@ -230,6 +234,27 @@ class VoiceListener:
             await self._on_speech_callback(text)
         return True
 
+    async def capture_reply(self, timeout: float = 10.0) -> str:
+        """Capture and transcribe one spoken reply (e.g. a yes/no confirmation).
+
+        Sets _capturing so the wake-word loop pauses its mic reads and this has
+        exclusive stream access. Returns "" on silence, timeout, or error.
+        """
+        if self._stream is None:
+            logger.warning("capture_reply called with no open audio stream.")
+            return ""
+        self._capturing = True
+        try:
+            audio = await asyncio.wait_for(self._record_speech(), timeout=timeout)
+        except Exception as e:
+            logger.debug("capture_reply did not get a usable reply: %s", e)
+            return ""
+        finally:
+            self._capturing = False
+        if audio is None:
+            return ""
+        return self._transcribe(audio).strip()
+
     async def listen_loop(self):
         """Main listening loop: wait for wake word, record until silence, transcribe, callback."""
         if not HAS_PYAUDIO or self._audio is None:
@@ -258,6 +283,12 @@ class VoiceListener:
 
         try:
             while self._is_listening:
+                # A confirmation capture has exclusive access to the mic; yield the
+                # stream so both readers don't steal each other's audio chunks.
+                if self._capturing:
+                    await asyncio.sleep(0.01)
+                    continue
+
                 if self._consume_activation_request():
                     await self._capture_and_dispatch_speech("hotkey")
                     await asyncio.sleep(0.01)
@@ -395,6 +426,11 @@ class VoiceListener:
             return False
 
     async def _record_speech(self) -> np.ndarray | None:
+        """Record one utterance with exclusive access to the shared audio stream."""
+        async with self._stream_lock:
+            return await self._record_speech_locked()
+
+    async def _record_speech_locked(self) -> np.ndarray | None:
         """Record speech until silence detected; return numpy array or None if too short."""
         logger.info("Listening... (speak now, threshold=%d)", settings.SILENCE_THRESHOLD)
         if self._stream is None:

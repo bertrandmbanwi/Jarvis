@@ -1,4 +1,5 @@
 """Central orchestration service with agentic executor and task decomposition."""
+import asyncio
 import logging
 import re
 import time
@@ -43,7 +44,6 @@ from jarvis.memory.conversation_store import (
     initialize as init_conversation_store,
 )
 from jarvis.memory.store import MemoryStore
-from jarvis.tools.work_session import WorkSession
 
 MAX_CONVERSATION_TURNS = 100
 
@@ -211,7 +211,6 @@ class JarvisBrain:
         self.monitor: ConversationMonitor = ConversationMonitor()
         self.success_tracker: SuccessTracker = SuccessTracker()
         self.evolution: EvolutionPipeline = EvolutionPipeline()
-        self.work_session: WorkSession | None = None
         self.conversation: list[ConversationTurn] = []
         self._privacy_mode = settings.PRIVACY_MODE_DEFAULT
         self._initialized = False
@@ -265,15 +264,6 @@ class JarvisBrain:
             "Evolution pipeline ready (history: %d cycles).",
             len(self.evolution._evolution_history),
         )
-
-        # Restore persistent work session if one exists
-        try:
-            restored = WorkSession.restore()
-            if restored:
-                self.work_session = restored
-                logger.info("Work session restored: %s", restored.session_id)
-        except Exception as e:
-            logger.debug("No prior work session to restore: %s", e)
 
         # Initialize SQLite conversation store (migrates legacy JSON automatically)
         init_conversation_store()
@@ -342,7 +332,9 @@ class JarvisBrain:
                     self.conversation.extend([user_turn, assistant_turn])
                     self._save_turn(user_turn)
                     self._save_turn(assistant_turn)
-                    self.memory.process_exchange(user_input, response, tier=local_result.tier)
+                    await asyncio.to_thread(
+                        self.memory.process_exchange, user_input, response, tier=local_result.tier
+                    )
 
                 elapsed = time.time() - start_time
                 perf_tracker.record_request(elapsed, local_result.tier)
@@ -374,7 +366,11 @@ class JarvisBrain:
 
         if tier == "fast" and _is_chat_only(user_input):
             logger.info("[req:%s] Routing to CHAT mode [tier: fast].", self._current_request_id)
-            enriched_context = self.memory.get_enriched_context(user_input, top_k=3)
+            # Memory lookup is blocking SQLite/Chroma; run it off the event loop
+            # so a concurrent client's request isn't stalled behind it.
+            enriched_context = await asyncio.to_thread(
+                self.memory.get_enriched_context, user_input, 3
+            )
             enriched_input = f"{enriched_context}\n\nUser: {user_input}" if enriched_context else user_input
             with trace_span("brain.chat", request_id=self._current_request_id, tier="fast"):
                 response = await self.llm.chat(enriched_input, history, tier="fast")
@@ -475,7 +471,8 @@ class JarvisBrain:
         assistant_turn.content = response
 
         if not self._privacy_mode and settings.MEMORY_ENABLED:
-            self.memory.add(
+            await asyncio.to_thread(
+                self.memory.add,
                 text=f"User: {user_input}\nJARVIS: {response}",
                 metadata={
                     "type": "agent" if tier != "fast" else "conversation",
@@ -484,7 +481,8 @@ class JarvisBrain:
                 },
             )
 
-            self.memory.process_exchange(
+            await asyncio.to_thread(
+                self.memory.process_exchange,
                 user_message=user_input,
                 assistant_response=response,
                 tier=tier,
@@ -536,7 +534,9 @@ class JarvisBrain:
                     self.conversation.extend([user_turn, assistant_turn])
                     self._save_turn(user_turn)
                     self._save_turn(assistant_turn)
-                    self.memory.process_exchange(user_input, response, tier=local_result.tier)
+                    await asyncio.to_thread(
+                        self.memory.process_exchange, user_input, response, tier=local_result.tier
+                    )
                 yield response
                 return
 
@@ -572,7 +572,8 @@ class JarvisBrain:
             if not self._privacy_mode:
                 self._save_turn(assistant_turn)
             if not self._privacy_mode and settings.MEMORY_ENABLED:
-                self.memory.add(
+                await asyncio.to_thread(
+                    self.memory.add,
                     text=f"User: {user_input}\nJARVIS: {complete}",
                     metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
                 )
@@ -611,7 +612,8 @@ class JarvisBrain:
             if not self._privacy_mode:
                 self._save_turn(assistant_turn)
             if not self._privacy_mode and settings.MEMORY_ENABLED:
-                self.memory.add(
+                await asyncio.to_thread(
+                    self.memory.add,
                     text=f"User: {user_input}\nJARVIS: {complete}",
                     metadata={"type": "agent", "tier": tier, "timestamp": time.time()},
                 )
@@ -835,8 +837,9 @@ class JarvisBrain:
             agent_type = AgentType(agent_type_str)
         except ValueError:
             agent_type = AgentType.GENERALIST
-            profile = self.coordinator.get_profile(agent_type)
-            tools = self.coordinator.get_tools_for_agent(agent_type, TOOL_SCHEMAS)
+
+        profile = self.coordinator.get_profile(agent_type)
+        tools = self.coordinator.get_tools_for_agent(agent_type, TOOL_SCHEMAS)
 
         prior_context = plan.context_for_subtask(subtask.id)
 

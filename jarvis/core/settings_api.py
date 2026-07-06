@@ -11,11 +11,11 @@ import os
 import time
 from typing import Annotated, Any
 
-import httpx
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
 
 from jarvis.config import settings
+from jarvis.core.ollama import list_ollama_models
 from jarvis.core.secrets import SecretStoreError, delete_secret, get_secret_backend_status, set_secret
 
 logger = logging.getLogger("jarvis.settings_api")
@@ -272,21 +272,12 @@ async def test_ollama(
     base_url = ((body.base_url if body else None) or settings.OLLAMA_BASE_URL).rstrip("/")
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(
-                f"{base_url}/api/tags",
-            )
-            response.raise_for_status()
-
-            data = response.json()
-            models = [m["name"] for m in data.get("models", [])]
-
-            return {
-                "valid": True,
-                "models": models,
-                "error": None,
-            }
-
+        models = await list_ollama_models(base_url, timeout=5.0)
+        return {
+            "valid": True,
+            "models": models,
+            "error": None,
+        }
     except Exception as e:
         logger.warning("Ollama test failed: %s", str(e))
         return {
@@ -311,11 +302,8 @@ async def get_status() -> dict:
     # Test Ollama
     ollama_valid = False
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            response = await client.get(
-                f"{settings.OLLAMA_BASE_URL}/api/tags",
-            )
-            ollama_valid = response.status_code == 200
+        await list_ollama_models(settings.OLLAMA_BASE_URL, timeout=2.0)
+        ollama_valid = True
     except Exception as e:
         logger.debug("Ollama status check failed: %s", e)
 
