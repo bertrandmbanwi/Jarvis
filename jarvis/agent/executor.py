@@ -23,6 +23,7 @@ Architecture:
 """
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -32,6 +33,7 @@ from jarvis.agent.qa_agent import QAAgent
 from jarvis.agent.tool_selector import select_tools_for_request
 from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS
 from jarvis.core.cache import invalidate_on_mutation, tool_cache
+from jarvis.core.confirmation import confirmed_scope
 from jarvis.core.hardening import (
     check_dangerous_command,
     classify_error,
@@ -42,11 +44,37 @@ from jarvis.core.hardening import (
     validate_tool_args,
 )
 from jarvis.core.llm import JarvisLLM
+from jarvis.core.pending_actions import confirmation_available, request_confirmation
 from jarvis.core.perf import perf_tracker
-from jarvis.core.permissions import assess_tool_call, record_tool_audit
+from jarvis.core.permissions import (
+    assess_tool_call,
+    call_is_confirmed,
+    describe_tool_call,
+    record_tool_audit,
+)
 from jarvis.core.tracing import record_event, trace_span
 
 logger = logging.getLogger("jarvis.agent")
+
+
+def _accepted_kwargs(fn: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Return only the kwargs the function actually accepts by name.
+
+    Used to recover from a TypeError caused by the model passing extra/unknown
+    keys, WITHOUT the old positional remapping (which could silently bind the
+    wrong value to the wrong parameter, e.g. swapping an email subject and body).
+    """
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (ValueError, TypeError):
+        return dict(kwargs)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params):
+        return dict(kwargs)
+    accepted = {
+        p.name for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return {k: v for k, v in kwargs.items() if k in accepted}
 
 
 class AgentExecutor:
@@ -207,15 +235,36 @@ class AgentExecutor:
         tool_input = validate_tool_args(tool_name, tool_input)
         decision = assess_tool_call(tool_name, tool_input)
         if not decision.allowed:
-            record_tool_audit(
-                tool_name,
-                tool_input,
-                allowed=False,
-                success=False,
-                error=decision.reason,
-            )
-            logger.warning("Tool %s blocked by permission policy: %s", tool_name, decision.reason)
-            return f"Tool '{tool_name}' is blocked by policy: {decision.reason}"
+            approved = False
+            if decision.permission.requires_confirmation and confirmation_available():
+                approved = await request_confirmation(
+                    tool_name,
+                    summary=describe_tool_call(tool_name, tool_input),
+                    risk=decision.permission.risk.value,
+                )
+            if not approved:
+                record_tool_audit(
+                    tool_name,
+                    tool_input,
+                    allowed=False,
+                    success=False,
+                    error=decision.reason,
+                )
+                logger.warning("Tool %s blocked by permission policy: %s", tool_name, decision.reason)
+                return f"Tool '{tool_name}' is blocked by policy: {decision.reason}"
+            # A human approved via the app; run under a server-granted confirmation.
+            with confirmed_scope():
+                return await self._run_allowed_tool(tool_name, tool_input, circuit)
+
+        return await self._run_allowed_tool(tool_name, tool_input, circuit)
+
+    async def _run_allowed_tool(self, tool_name: str, tool_input: dict, circuit):
+        """Execute a tool that has passed (or been granted) the permission gate."""
+        # Replace any model-supplied confirmation flag with the server-verified
+        # value, so a tool that acts on it (e.g. send_email sending vs drafting)
+        # cannot be driven by a prompt-injected confirmed=true.
+        if "confirmed" in tool_input:
+            tool_input = {**tool_input, "confirmed": call_is_confirmed(tool_input)}
 
         cached_result = await tool_cache.get(tool_name, tool_input)
         if cached_result is not None:
@@ -291,21 +340,26 @@ class AgentExecutor:
             )
             return result_str
         except TypeError as e:
-            logger.warning(
-                "Tool %s argument mismatch: %s. Input was: %s. Trying positional args.",
-                tool_name, e, tool_input,
-            )
+            filtered = _accepted_kwargs(tool_fn, tool_input)
             try:
-                args = list(tool_input.values())
-                with trace_span("tool.execute_positional_fallback", tool_name=tool_name, timeout_s=timeout_s):
+                if filtered == tool_input:
+                    # Nothing to drop — the TypeError came from inside the tool,
+                    # not from arg binding. Surface it as a tool failure below
+                    # instead of retrying (which would just fail identically).
+                    raise e
+                logger.warning(
+                    "Tool %s argument mismatch: %s. Retrying without unrecognized keys: %s",
+                    tool_name, e, sorted(set(tool_input) - set(filtered)),
+                )
+                with trace_span("tool.execute_filtered_kwargs", tool_name=tool_name, timeout_s=timeout_s):
                     if asyncio.iscoroutinefunction(tool_fn):
                         result = await execute_with_timeout(
-                            tool_fn(*args),
+                            tool_fn(**filtered),
                             timeout_s=timeout_s,
                             tool_name=tool_name,
                         )
                     else:
-                        result = tool_fn(*args)
+                        result = tool_fn(**filtered)
 
                 duration = time.time() - start_time
                 self._notify_tool_executed(tool_name, True, duration)

@@ -9,7 +9,6 @@ Complements ChromaDB vector store with fast, structured lookup for:
 Uses FTS5 virtual tables for full-text search and WAL mode for concurrent reads.
 All functions handle exceptions gracefully with logging.
 """
-import asyncio
 import logging
 import sqlite3
 
@@ -242,29 +241,6 @@ def recall(query: str, limit: int = 10) -> list[dict]:
         return []
 
 
-def get_recent_memories(limit: int = 20) -> list[dict]:
-    """Get the most recently created memories."""
-    try:
-        conn = sqlite3.connect(str(DB_PATH))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-        SELECT id, content, mem_type, source, importance, access_count,
-               created_at, last_accessed
-        FROM memories
-        ORDER BY created_at DESC
-        LIMIT ?
-        """, (limit,))
-
-        results = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return results
-    except Exception as e:
-        logger.error("Failed to get recent memories: %s", e)
-        return []
-
-
 def get_important_memories(limit: int = 10) -> list[dict]:
     """Get the most important memories."""
     try:
@@ -338,103 +314,6 @@ def create_task(
     except Exception as e:
         logger.error("Failed to create task: %s", e)
         return -1
-
-
-def get_open_tasks(project: str | None = None) -> list[dict]:
-    """
-    Get open tasks, optionally filtered by project.
-
-    Args:
-        project: Optional project name to filter by
-
-    Returns:
-        List of open tasks ordered by priority and due date
-    """
-    try:
-        conn = sqlite3.connect(str(DB_PATH))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        if project:
-            cursor.execute("""
-            SELECT id, title, description, priority, due_date, due_time,
-                   project, tags, created_at
-            FROM tasks
-            WHERE status = 'open' AND project = ?
-            ORDER BY priority DESC, due_date ASC
-            """, (project,))
-        else:
-            cursor.execute("""
-            SELECT id, title, description, priority, due_date, due_time,
-                   project, tags, created_at
-            FROM tasks
-            WHERE status = 'open'
-            ORDER BY priority DESC, due_date ASC
-            """)
-
-        results = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return results
-    except Exception as e:
-        logger.error("Failed to get open tasks: %s", e)
-        return []
-
-
-def complete_task(task_id: int) -> bool:
-    """Mark a task as completed."""
-    try:
-        conn = sqlite3.connect(str(DB_PATH))
-        cursor = conn.cursor()
-
-        cursor.execute("""
-        UPDATE tasks
-        SET status = 'completed', completed_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        """, (task_id,))
-
-        conn.commit()
-        conn.close()
-        logger.debug("Task completed: id=%d", task_id)
-        return True
-    except Exception as e:
-        logger.error("Failed to complete task %d: %s", task_id, e)
-        return False
-
-
-def search_tasks(query: str, limit: int = 10) -> list[dict]:
-    """
-    Search tasks using FTS5.
-
-    Args:
-        query: Search query
-        limit: Maximum results to return
-
-    Returns:
-        List of matching tasks
-    """
-    try:
-        query = _sanitize_fts_query(query)
-        conn = sqlite3.connect(str(DB_PATH))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-        SELECT t.id, t.title, t.description, t.priority, t.due_date,
-               t.due_time, t.project, t.tags, t.status, t.created_at,
-               tasks_fts.rank
-        FROM tasks t
-        JOIN tasks_fts ON t.id = tasks_fts.rowid
-        WHERE tasks_fts MATCH ?
-        ORDER BY tasks_fts.rank ASC, t.priority DESC
-        LIMIT ?
-        """, (query, limit))
-
-        results = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return results
-    except Exception as e:
-        logger.error("Failed to search tasks: %s", e)
-        return []
 
 
 def create_note(
@@ -552,61 +431,6 @@ def build_memory_context(user_message: str) -> str:
     except Exception as e:
         logger.error("Failed to build memory context: %s", e)
         return ""
-
-
-async def extract_memories(
-    user_text: str,
-    jarvis_response: str,
-    anthropic_client
-) -> list[str]:
-    """
-    Use Claude Haiku to extract facts from an exchange.
-
-    Args:
-        user_text: User's message
-        jarvis_response: JARVIS's response
-        anthropic_client: Anthropic API client
-
-    Returns:
-        List of extracted fact strings
-    """
-    try:
-        prompt = f"""Extract 1-3 key facts or preferences from this conversation exchange.
-Focus on: user preferences, habits, facts about the user, important dates, project names, etc.
-Return only the facts as a JSON array of strings. If no facts, return [].
-
-User: {user_text}
-
-JARVIS: {jarvis_response}
-
-Return only valid JSON array."""
-
-        message = await asyncio.to_thread(
-            anthropic_client.messages.create,
-            model="claude-haiku-4-5-20251001",
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        response_text = message.content[0].text
-        # Parse JSON from response
-        import json
-        try:
-            facts = json.loads(response_text)
-            if isinstance(facts, list):
-                # Store each fact
-                for fact in facts:
-                    if isinstance(fact, str):
-                        remember(fact, "extracted", "haiku_extraction", importance=6)
-                logger.debug("Extracted %d facts from exchange", len(facts))
-                return [fact for fact in facts if isinstance(fact, str)]
-        except json.JSONDecodeError:
-            logger.debug("Could not parse facts JSON from Haiku response")
-            return []
-        return []
-    except Exception as e:
-        logger.error("Failed to extract memories: %s", e)
-        return []
 
 
 def _sanitize_fts_query(query: str) -> str:

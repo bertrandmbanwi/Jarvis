@@ -16,7 +16,6 @@ focuses on implicit user behavior patterns.
 Preferences are accumulated over sessions and decay slowly, so recent
 behavior is weighted more than old habits. Data persists in a JSON file.
 """
-import json
 import logging
 import math
 import time
@@ -24,6 +23,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from jarvis.config import settings
+from jarvis.core.jsonio import read_json, write_json
 
 logger = logging.getLogger("jarvis.memory.preferences")
 
@@ -130,15 +130,14 @@ class PreferenceTracker:
         """Load preference data from disk."""
         if self._loaded:
             return
-        if PREFS_FILE.exists():
-            try:
-                data = json.loads(PREFS_FILE.read_text(encoding="utf-8"))
-                for item in data:
-                    pattern = InteractionPattern.from_dict(item)
-                    self._patterns[pattern.name] = pattern
+        try:
+            for item in read_json(PREFS_FILE, default=[]):
+                pattern = InteractionPattern.from_dict(item)
+                self._patterns[pattern.name] = pattern
+            if self._patterns:
                 logger.info("Loaded %d preference patterns from disk.", len(self._patterns))
-            except Exception as e:
-                logger.warning("Could not load preferences: %s", e)
+        except Exception as e:
+            logger.warning("Could not load preferences: %s", e)
         self._loaded = True
 
     def save(self):
@@ -146,11 +145,7 @@ class PreferenceTracker:
         if not self._dirty:
             return
         try:
-            data = [p.to_dict() for p in self._patterns.values()]
-            PREFS_FILE.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            write_json(PREFS_FILE, [p.to_dict() for p in self._patterns.values()])
             self._dirty = False
         except Exception as e:
             logger.warning("Could not save preferences: %s", e)

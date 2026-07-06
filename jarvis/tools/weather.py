@@ -183,6 +183,7 @@ def _http_get_urllib(url: str, params: dict) -> dict | None:
     """Fetch using urllib (sync, run in executor)."""
     try:
         import urllib.parse
+        import urllib.request
         query_string = urllib.parse.urlencode(params)
         full_url = f"{url}?{query_string}"
         # URL is built from fixed weather API constants plus encoded query params.

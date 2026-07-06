@@ -21,13 +21,13 @@ Design:
 - Decay: facts that haven't been reinforced lose confidence over time
 - Privacy: facts are stored locally, never sent to external services
 """
-import json
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 
 from jarvis.config import settings
+from jarvis.core.jsonio import read_json, write_json
 
 logger = logging.getLogger("jarvis.memory.facts")
 
@@ -172,15 +172,14 @@ class FactStore:
         """Load facts from disk."""
         if self._loaded:
             return
-        if FACTS_FILE.exists():
-            try:
-                data = json.loads(FACTS_FILE.read_text(encoding="utf-8"))
-                for item in data:
-                    fact = Fact.from_dict(item)
-                    self._facts[fact.key] = fact
+        try:
+            for item in read_json(FACTS_FILE, default=[]):
+                fact = Fact.from_dict(item)
+                self._facts[fact.key] = fact
+            if self._facts:
                 logger.info("Loaded %d user facts from disk.", len(self._facts))
-            except Exception as e:
-                logger.warning("Could not load facts: %s", e)
+        except Exception as e:
+            logger.warning("Could not load facts: %s", e)
         self._loaded = True
 
     def save(self):
@@ -188,11 +187,7 @@ class FactStore:
         if not self._dirty:
             return
         try:
-            data = [f.to_dict() for f in self._facts.values()]
-            FACTS_FILE.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            write_json(FACTS_FILE, [f.to_dict() for f in self._facts.values()])
             self._dirty = False
             logger.debug("Saved %d facts to disk.", len(self._facts))
         except Exception as e:

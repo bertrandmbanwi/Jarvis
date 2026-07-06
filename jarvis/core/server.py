@@ -26,6 +26,7 @@ from jarvis.core import (
     cost_tracker,
     feedback,
     jobs,
+    pending_actions,
     routines,
     team,
     workflow_scheduler,
@@ -540,11 +541,14 @@ async def lifespan(app: FastAPI):
         )
     brain._on_plan_progress = broadcast_plan_progress
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
+    # Let the executor ask connected clients to approve high-risk tool calls.
+    pending_actions.add_notifier(ws_manager.broadcast_json)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
 
     yield
 
+    pending_actions.remove_notifier(ws_manager.broadcast_json)
     cleanup_task.cancel()
     scheduler_task.cancel()
     with suppress(asyncio.CancelledError):
@@ -623,18 +627,51 @@ async def security_headers(request: Request, call_next):
 
 _CSRF_EXEMPT_PATHS = {"/auth/login", "/auth/status", "/auth/logout", "/voice/transcribe"}
 
+# Presence of any of these means a reverse proxy/tunnel relayed the request, so
+# the loopback peer address is the proxy — not the real (remote) client.
+_FORWARDING_HEADERS = (
+    "x-forwarded-for", "x-real-ip", "x-forwarded-host",
+    "forwarded", "cf-connecting-ip", "true-client-ip",
+)
+
+
+def _client_is_local(conn) -> bool:
+    """Return True only for a genuine loopback client with no proxy in front.
+
+    Accepts a Request or WebSocket (both expose ``.client`` and ``.headers``).
+    """
+    client_host = conn.client.host if conn.client else ""
+    forwarded = any(name in conn.headers for name in _FORWARDING_HEADERS)
+    return auth.is_local_request(client_host, forwarded=forwarded)
+
+
+# Strong references to fire-and-forget background tasks. Without this, asyncio
+# only holds a weak reference, so a running job can be garbage-collected mid-flight
+# and silently cancelled (leaving its status stuck at "running").
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro, *, name: str | None = None) -> asyncio.Task:
+    """Schedule a background task and keep a strong reference until it finishes."""
+    task = asyncio.create_task(coro, name=name)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
 @app.middleware("http")
 async def csrf_protection(request: Request, call_next):
     """Require X-JARVIS-Client header on state-changing requests from non-local origins."""
-    if request.method in ("POST", "PUT", "DELETE", "PATCH") and request.url.path not in _CSRF_EXEMPT_PATHS:
-        client_host = request.client.host if request.client else ""
-        if not auth.is_local_request(client_host):
-            jarvis_header = request.headers.get("x-jarvis-client", "")
-            if not jarvis_header:
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": "Missing X-JARVIS-Client header. CSRF protection."},
-                )
+    if (
+        request.method in ("POST", "PUT", "DELETE", "PATCH")
+        and request.url.path not in _CSRF_EXEMPT_PATHS
+        and not _client_is_local(request)
+        and not request.headers.get("x-jarvis-client", "")
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Missing X-JARVIS-Client header. CSRF protection."},
+        )
     return await call_next(request)
 
 
@@ -656,9 +693,7 @@ async def require_auth(request: Request) -> bool:
     Local connections bypass auth. Remote connections always require PIN auth to
     be enabled and a valid session token via header, cookie, or query param.
     """
-    client_host = request.client.host if request.client else ""
-
-    if auth.is_local_request(client_host):
+    if _client_is_local(request):
         return True
 
     from fastapi import HTTPException
@@ -679,10 +714,14 @@ async def require_auth(request: Request) -> bool:
     if token and auth.validate_token(token):
         return True
 
-    token = request.query_params.get("token", "")
-    if token and auth.validate_token(token):
-        logger.warning("Auth via query param token (less secure). Use Authorization header or cookie instead.")
-        return True
+    # Query-string tokens leak via access logs, browser history, and Referer
+    # headers, so they are refused by default. Opt in with JARVIS_ALLOW_QUERY_TOKEN
+    # for clients that cannot set an Authorization header or cookie.
+    if os.getenv("JARVIS_ALLOW_QUERY_TOKEN", "").strip().lower() in {"1", "true", "yes"}:
+        token = request.query_params.get("token", "")
+        if token and auth.validate_token(token):
+            logger.warning("Auth via query param token (less secure; enabled by JARVIS_ALLOW_QUERY_TOKEN).")
+            return True
 
     raise HTTPException(status_code=401, detail="Authentication required. Please log in with your PIN.")
 
@@ -700,7 +739,7 @@ async def auth_login(request: Request, body: PinRequest):
     Rate-limited by client IP.
     """
     client_host = request.client.host if request.client else ""
-    is_local = auth.is_local_request(client_host)
+    is_local = _client_is_local(request)
 
     if not auth.pin_auth_enabled():
         if not is_local:
@@ -734,9 +773,7 @@ async def auth_login(request: Request, body: PinRequest):
 @app.get("/auth/status")
 async def auth_status(request: Request):
     """Check whether the current request is authenticated."""
-    client_host = request.client.host if request.client else ""
-
-    is_local = auth.is_local_request(client_host)
+    is_local = _client_is_local(request)
 
     if not auth.pin_auth_enabled():
         return {
@@ -846,6 +883,11 @@ class ChatRequest(BaseModel):
 class JobRequest(BaseModel):
     message: str
     kind: str = "chat"
+
+
+class ConfirmActionRequest(BaseModel):
+    action_id: str
+    approved: bool
 
 
 class CostEstimateRequest(BaseModel):
@@ -1220,7 +1262,7 @@ async def create_background_job(request: JobRequest):
             content={"error": "Message too long (max 50,000 characters)."},
         )
     job = jobs.create_job(request.kind, {"message": request.message}, trace_id=get_trace_id())
-    asyncio.create_task(_run_chat_job(job.id, request.message))
+    _spawn_background(_run_chat_job(job.id, request.message), name=f"chat-job-{job.id}")
     return _serialize_job(job)
 
 
@@ -1229,6 +1271,23 @@ async def list_background_jobs(limit: int = 50, status: str = ""):
     """List durable background jobs."""
     records = jobs.list_jobs(limit=limit, status=status)
     return {"jobs": [_serialize_job(job) for job in records], "count": len(records)}
+
+
+@app.get("/tools/pending", dependencies=[Depends(require_auth)])
+async def list_pending_confirmations():
+    """List high-risk tool calls awaiting the user's approval."""
+    return {"pending": pending_actions.list_pending()}
+
+
+@app.post("/tools/confirm", dependencies=[Depends(require_auth)])
+async def confirm_pending_action(request: ConfirmActionRequest):
+    """Approve or deny a pending high-risk tool call.
+
+    This is the trusted, authenticated source of confirmation — the model cannot
+    reach it, so it cannot self-approve its own tool calls.
+    """
+    resolved = pending_actions.resolve(request.action_id, request.approved)
+    return {"resolved": resolved}
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(require_auth)])
@@ -1298,7 +1357,7 @@ async def run_routine(routine_id: str, request: RoutineRunRequest):
     prompt = str(routine.get("prompt", ""))
     if request.background:
         job = jobs.create_job("routine", {"message": prompt, "routine_id": routine_id}, trace_id=get_trace_id())
-        asyncio.create_task(_run_chat_job(job.id, prompt))
+        _spawn_background(_run_chat_job(job.id, prompt), name=f"routine-job-{job.id}")
         return {"routine": routines.get_routine(routine_id), "job": _serialize_job(job)}
     start = time.time()
     response = await brain.process(prompt)
@@ -1779,7 +1838,10 @@ async def run_workflow(workflow_id: str, request: WorkflowRunRequest):
             {"workflow_id": workflow_id, "dry_run": request.dry_run, "release_channel": request.release_channel},
             trace_id=get_trace_id(),
         )
-        asyncio.create_task(_run_workflow_job(job.id, workflow_id, request.dry_run, request.release_channel))
+        _spawn_background(
+            _run_workflow_job(job.id, workflow_id, request.dry_run, request.release_channel),
+            name=f"workflow-job-{job.id}",
+        )
         return {"workflow": workflow, "job": _serialize_job(job)}
     run = await workflows.run_workflow(
         workflow_id,
@@ -2503,8 +2565,7 @@ async def transcribe_audio(audio: Annotated[UploadFile, File(...)]):
 @app.websocket("/ws")
 async def websocket_chat(websocket: WebSocket):
     """WebSocket endpoint for real-time chat with token streaming."""
-    client_host = websocket.client.host if websocket.client else ""
-    is_local = auth.is_local_request(client_host)
+    is_local = _client_is_local(websocket)
 
     if not is_local and not auth.pin_auth_enabled():
         await websocket.close(code=4001, reason="Remote access requires PIN authentication")
@@ -2650,7 +2711,7 @@ async def websocket_chat(websocket: WebSocket):
 async def websocket_extension(websocket: WebSocket):
     """WebSocket endpoint for JARVIS Chrome Extension browser automation."""
     client_host = websocket.client.host if websocket.client else ""
-    is_local = auth.is_local_request(client_host)
+    is_local = _client_is_local(websocket)
 
     if not is_local and not auth.pin_auth_enabled():
         await websocket.close(code=4001, reason="Remote access requires PIN authentication")
@@ -2687,8 +2748,7 @@ async def websocket_overlay(websocket: WebSocket):
     Sends JSON messages: {"state": "idle"|"listening"|"thinking"|"speaking"}
     The overlay uses these to animate the particle orb.
     """
-    client_host = websocket.client.host if websocket.client else ""
-    if not auth.is_local_request(client_host):
+    if not _client_is_local(websocket):
         await websocket.close(code=4003, reason="Overlay only available locally")
         return
 

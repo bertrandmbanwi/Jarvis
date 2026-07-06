@@ -10,6 +10,32 @@ from typing import Any
 
 logger = logging.getLogger("jarvis.core.cache")
 
+# Substrings/prefixes that mark a transient tool failure. Such results must not
+# be cached — otherwise a brief upstream outage poisons the cache for the tool's
+# full TTL (up to 30 days for some tools), serving the stale error after recovery.
+_TRANSIENT_ERROR_MARKERS = (
+    "could not",
+    "couldn't",
+    "unable to",
+    "failed to",
+    "please try again",
+    "timed out",
+    "timeout",
+)
+_TRANSIENT_ERROR_PREFIXES = ("error", "sorry", "i couldn't", "i could not")
+
+
+def _looks_transient_error(value: Any) -> bool:
+    """Heuristically detect a transient failure message that should not be cached."""
+    if not isinstance(value, str):
+        return False
+    lowered = value.strip().lower()
+    if not lowered:
+        return False
+    if lowered.startswith(_TRANSIENT_ERROR_PREFIXES):
+        return True
+    return any(marker in lowered for marker in _TRANSIENT_ERROR_MARKERS)
+
 
 @dataclass
 class CacheEntry:
@@ -186,6 +212,10 @@ class ResultCache:
 
         ttl = self.get_ttl(tool_name)
         if ttl <= 0:
+            return
+
+        if _looks_transient_error(value):
+            logger.debug("Skipping cache of transient error for %s.", tool_name)
             return
 
         key = _make_cache_key(tool_name, tool_input)

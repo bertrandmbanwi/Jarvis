@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.config import settings
+from jarvis.core.jsonio import read_json, write_json
 
 LAUNCH_AGENT_LABEL = "com.jarvis.assistant"
 RUNTIME_DIR = settings.DATA_DIR / "runtime"
@@ -31,18 +32,12 @@ def _path(value: str | Path | None, default: Path) -> Path:
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    data = read_json(path, default={})
     return data if isinstance(data, dict) else {}
 
 
 def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    write_json(path, payload, sort_keys=True)
 
 
 def _int_or_none(value: Any) -> int | None:

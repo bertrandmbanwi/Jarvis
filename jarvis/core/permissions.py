@@ -247,13 +247,55 @@ def _permission_mode() -> str:
     return mode if mode in {"audit", "enforce"} else "audit"
 
 
+def _trust_model_confirmation() -> bool:
+    """Whether a model-supplied ``confirmed`` flag is honored as authorization.
+
+    Off by default: a prompt-injected model could set the flag itself, so real
+    confirmation must come from the server (see jarvis.core.confirmation). Set
+    JARVIS_TRUST_MODEL_CONFIRMATION=true to restore conversational confirmation.
+    """
+    return os.getenv("JARVIS_TRUST_MODEL_CONFIRMATION", "").strip().lower() in {"1", "true", "yes"}
+
+
+def call_is_confirmed(tool_input: dict[str, Any]) -> bool:
+    """Return whether a high-risk tool call is confirmed by a trusted source.
+
+    A server-granted confirmation (confirmed_scope) always counts. The
+    model-supplied ``confirmed`` flag counts only when explicitly trusted via
+    JARVIS_TRUST_MODEL_CONFIRMATION or when running in audit mode.
+    """
+    from jarvis.core.confirmation import is_confirmed
+
+    if is_confirmed():
+        return True
+    if _trust_model_confirmation() or _permission_mode() == "audit":
+        return bool(tool_input.get("confirmed", False))
+    return False
+
+
 def assess_tool_call(tool_name: str, tool_input: dict[str, Any]) -> PermissionDecision:
     """Assess whether a tool should be allowed to run in the current policy mode."""
     permission = get_tool_permission(tool_name)
-    if _permission_mode() == "enforce" and permission.requires_confirmation and not tool_input.get("confirmed", False):
+    if _permission_mode() == "enforce" and permission.requires_confirmation and not call_is_confirmed(tool_input):
         reason = permission.reason or "Tool requires explicit confirmation."
+        reason = f"{reason} Confirm via the app; a model-supplied confirmation is not trusted."
         return PermissionDecision(allowed=False, permission=permission, reason=reason)
     return PermissionDecision(allowed=True, permission=permission)
+
+
+def describe_tool_call(tool_name: str, tool_input: dict[str, Any]) -> str:
+    """Short, redacted, human-readable description of a tool call for a confirmation UI."""
+    redacted = _redact(tool_input)
+    parts = []
+    for key, value in redacted.items():
+        if key == "confirmed":
+            continue
+        text = str(value)
+        if len(text) > 80:
+            text = text[:80] + "…"
+        parts.append(f"{key}={text}")
+    args = ", ".join(parts)
+    return f"{tool_name}({args})" if args else tool_name
 
 
 def _redact(value: Any, key_hint: str = "") -> Any:
