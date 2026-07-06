@@ -12,8 +12,7 @@ import uuid
 from collections.abc import Awaitable
 from typing import Any
 
-from jarvis.config import settings
-from jarvis.core import cost_tracker, routines, sqlite_state, team, workflow_run_store
+from jarvis.core import cost_tracker, routines, team, workflow_run_store, workflows_store
 from jarvis.core.workflows_defs import (
     ACTION_TYPES,
     EDIT_CONFLICT_STRATEGIES,
@@ -35,95 +34,19 @@ from jarvis.core.workflows_defs import (
     _now,
     _release_channel,
 )
-
-WORKFLOWS_FILE = settings.DATA_DIR / "workflows.json"
-WORKFLOW_RUNS_FILE = settings.DATA_DIR / "workflow_runs.json"
-WORKFLOW_APPROVALS_FILE = settings.DATA_DIR / "workflow_approvals.json"
-WORKFLOW_VERSIONS_FILE = settings.DATA_DIR / "workflow_versions.json"
-WORKFLOW_RELEASES_FILE = settings.DATA_DIR / "workflow_releases.json"
-WORKFLOW_EDIT_SESSIONS_FILE = settings.DATA_DIR / "workflow_edit_sessions.json"
-
-
-def _state_db_path():
-    return sqlite_state.db_path_for(WORKFLOWS_FILE)
-
-
-def _load_list(namespace: str, legacy_path, default: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    data = sqlite_state.load_document(
-        db_path=_state_db_path(),
-        namespace=namespace,
-        legacy_path=legacy_path,
-        default=default,
-    )
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
-    return default
-
-
-def _save_list(namespace: str, data: list[dict[str, Any]]) -> None:
-    sqlite_state.save_document(
-        db_path=_state_db_path(),
-        namespace=namespace,
-        data=data,
-    )
-
-
-def _load_workflows() -> list[dict[str, Any]]:
-    return _load_list("workflows", WORKFLOWS_FILE, [])
-
-
-def _save_workflows(items: list[dict[str, Any]]) -> None:
-    _save_list("workflows", items)
-
-
-def _load_runs() -> list[dict[str, Any]]:
-    return workflow_run_store.list_runs(
-        db_path=_state_db_path(),
-        legacy_path=WORKFLOW_RUNS_FILE,
-        limit=500,
-    )
-
-
-def _save_runs(items: list[dict[str, Any]]) -> None:
-    for item in items[-500:]:
-        workflow_run_store.save_run(
-            db_path=_state_db_path(),
-            legacy_path=WORKFLOW_RUNS_FILE,
-            run=item,
-            limit=500,
-        )
-
-
-def _load_approvals() -> list[dict[str, Any]]:
-    return _load_list("workflow_approvals", WORKFLOW_APPROVALS_FILE, [])
-
-
-def _save_approvals(items: list[dict[str, Any]]) -> None:
-    _save_list("workflow_approvals", items[-500:])
-
-
-def _load_versions() -> list[dict[str, Any]]:
-    return _load_list("workflow_versions", WORKFLOW_VERSIONS_FILE, [])
-
-
-def _save_versions(items: list[dict[str, Any]]) -> None:
-    _save_list("workflow_versions", items[-1000:])
-
-
-def _load_releases() -> list[dict[str, Any]]:
-    return _load_list("workflow_releases", WORKFLOW_RELEASES_FILE, [])
-
-
-def _save_releases(items: list[dict[str, Any]]) -> None:
-    _save_list("workflow_releases", items[-1000:])
-
-
-def _load_edit_sessions() -> list[dict[str, Any]]:
-    return _load_list("workflow_edit_sessions", WORKFLOW_EDIT_SESSIONS_FILE, [])
-
-
-def _save_edit_sessions(items: list[dict[str, Any]]) -> None:
-    _save_list("workflow_edit_sessions", items[-500:])
+from jarvis.core.workflows_store import (
+    _load_approvals,
+    _load_edit_sessions,
+    _load_releases,
+    _load_versions,
+    _load_workflows,
+    _save_approvals,
+    _save_edit_sessions,
+    _save_releases,
+    _save_versions,
+    _save_workflows,
+    _state_db_path,
+)
 
 
 def _record_workflow_version(
@@ -1541,7 +1464,7 @@ def list_runs(
 ) -> list[dict[str, Any]]:
     return workflow_run_store.list_runs(
         db_path=_state_db_path(),
-        legacy_path=WORKFLOW_RUNS_FILE,
+        legacy_path=workflows_store.WORKFLOW_RUNS_FILE,
         workflow_id=workflow_id,
         status=status,
         dry_run=dry_run,
@@ -1557,7 +1480,7 @@ def list_runs(
 def get_run(run_id: str) -> dict[str, Any] | None:
     return workflow_run_store.get_run(
         db_path=_state_db_path(),
-        legacy_path=WORKFLOW_RUNS_FILE,
+        legacy_path=workflows_store.WORKFLOW_RUNS_FILE,
         run_id=run_id,
     )
 
@@ -1565,7 +1488,7 @@ def get_run(run_id: str) -> dict[str, Any] | None:
 def get_run_storage_status() -> dict[str, int | bool]:
     return workflow_run_store.storage_status(
         db_path=_state_db_path(),
-        legacy_path=WORKFLOW_RUNS_FILE,
+        legacy_path=workflows_store.WORKFLOW_RUNS_FILE,
     )
 
 
@@ -1907,7 +1830,7 @@ def list_approvals(status: str = "pending", limit: int = 50) -> list[dict[str, A
 def _record_run(run: dict[str, Any]) -> dict[str, Any]:
     return workflow_run_store.save_run(
         db_path=_state_db_path(),
-        legacy_path=WORKFLOW_RUNS_FILE,
+        legacy_path=workflows_store.WORKFLOW_RUNS_FILE,
         run=run,
         limit=500,
     )
