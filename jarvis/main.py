@@ -3,6 +3,8 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Coroutine
+from typing import Any
 
 from jarvis.config import settings
 
@@ -22,7 +24,7 @@ logger = logging.getLogger("jarvis")
 _background_tasks: set[asyncio.Task] = set()
 
 
-def _spawn_background(coro) -> asyncio.Task:
+def _spawn_background(coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
     """Schedule a background task and retain a reference until it completes."""
     task = asyncio.ensure_future(coro)
     _background_tasks.add(task)
