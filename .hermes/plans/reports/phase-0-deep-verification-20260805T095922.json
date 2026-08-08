@@ -1,0 +1,109 @@
+{
+  "summary": {
+    "timestamp": "20260805T095922",
+    "repo": "/Users/meuu/Desktop/โปรเจ็ค hermes/Jarvis-bertrandmbanwi",
+    "branch": "main",
+    "git_status": "?? .hermes/",
+    "source_clean_except_hermes": true,
+    "cloudflared_off": true,
+    "scoped_runtime_off": true,
+    "ports": {
+      "3001": false,
+      "8741": false,
+      "8799": false
+    },
+    "ports_closed": true,
+    "active_plan_exists": true,
+    "archive_file_count": "11",
+    "root_generated_leftovers": [],
+    "pytest_returncode": 0,
+    "pytest_tail": "s....................................................................... [ 18%]\n........................................................................ [ 36%]\n........................................................................ [ 55%]\n........................................................................ [ 73%]\n........................................................................ [ 92%]\n...............................                                          [100%]\n390 passed, 1 skipped in 7.16s",
+    "pass": true
+  },
+  "checks": {
+    "git_status": {
+      "cmd": "git status --short",
+      "returncode": 0,
+      "stdout": "?? .hermes/\n",
+      "stderr": ""
+    },
+    "git_branch": {
+      "cmd": "git branch --show-current || true",
+      "returncode": 0,
+      "stdout": "main\n",
+      "stderr": ""
+    },
+    "cloudflared": {
+      "cmd": "pgrep -fl cloudflared || true",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "scoped_runtime": {
+      "cmd": "pgrep -fl 'start.sh full|Jarvis-bertrandmbanwi.*next dev|Jarvis-bertrandmbanwi.*python|http.server 8799' || true",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "all_listeners": {
+      "cmd": "lsof -nP -iTCP -sTCP:LISTEN | awk 'NR==1 || /3001|8741|8799|trycloudflare|cloudflared/' || true",
+      "returncode": 0,
+      "stdout": "COMMAND     PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n",
+      "stderr": ""
+    },
+    "port_3001_lsof": {
+      "cmd": "lsof -nP -iTCP:3001 -sTCP:LISTEN || true",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "port_8741_lsof": {
+      "cmd": "lsof -nP -iTCP:8741 -sTCP:LISTEN || true",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "port_8799_lsof": {
+      "cmd": "lsof -nP -iTCP:8799 -sTCP:LISTEN || true",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "python_version": {
+      "cmd": ".venv/bin/python --version",
+      "returncode": 0,
+      "stdout": "Python 3.11.15\n",
+      "stderr": ""
+    },
+    "pytest_version": {
+      "cmd": ".venv/bin/python -m pytest --version",
+      "returncode": 0,
+      "stdout": "pytest 9.1.1\n",
+      "stderr": ""
+    },
+    "active_plan_exists": {
+      "cmd": "test -f .hermes/plans/2026-08-05_0710-mayass-master-workplan-phase-isolated-v2.md && echo exists || echo missing",
+      "returncode": 0,
+      "stdout": "exists\n",
+      "stderr": ""
+    },
+    "archive_count": {
+      "cmd": "find .hermes/archive -type f 2>/dev/null | wc -l | tr -d ' '",
+      "returncode": 0,
+      "stdout": "11\n",
+      "stderr": ""
+    },
+    "root_generated_leftovers": {
+      "cmd": "python3 - <<'PY2'\nfrom pathlib import Path\nfor p in sorted(list(Path('.').glob('MAYASS*.html'))+list(Path('.').glob('MAYASS*.md'))+list(Path('.').glob('Jarvis*.html'))+list(Path('.').glob('รายงาน*.html'))): print(p)\nPY2",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "full_pytest": {
+      "cmd": ".venv/bin/python -m pytest -q",
+      "returncode": 0,
+      "stdout": "s....................................................................... [ 18%]\n........................................................................ [ 36%]\n........................................................................ [ 55%]\n........................................................................ [ 73%]\n........................................................................ [ 92%]\n...............................                                          [100%]\n390 passed, 1 skipped in 7.16s\n",
+      "stderr": ""
+    }
+  }
+}

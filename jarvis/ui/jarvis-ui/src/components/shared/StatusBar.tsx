@@ -67,7 +67,7 @@ export default function StatusBar({
           <div className="w-1.5 h-1.5 rounded-full bg-jarvis-cyan/60 hidden sm:block"
                style={{ boxShadow: '0 0 6px rgba(0,212,255,0.4)' }} />
           <span className="text-sm sm:text-base font-semibold jarvis-glow-subtle tracking-[0.18em] sm:tracking-[0.25em]">
-            J.A.R.V.I.S.
+            MayAss
           </span>
           <span className="text-3xs text-jarvis-text-dim/30 font-mono hidden sm:inline">
             v0.3.0

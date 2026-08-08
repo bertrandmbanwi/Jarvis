@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>รายงานฉบับเต็ม: แผนพัฒนา Maymint Voice Assistant ก่อน</title>
+<style>
+:root{
+  --bg:#07090d;--bg2:#0d1118;--panel:#111824;--panel2:#151f2d;--ink:#f2f7ff;--muted:#a7b6c7;
+  --line:#2a384a;--accent:#79f2d1;--blue:#6ed7ff;--violet:#d6b6ff;--warn:#ffd166;--bad:#ff7b86;--ok:#9affbc;
+  --shadow:0 30px 90px rgba(0,0,0,.38);--r:22px
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:radial-gradient(circle at 20% -10%,rgba(121,242,209,.15),transparent 30%),radial-gradient(circle at 92% 10%,rgba(110,215,255,.12),transparent 34%),linear-gradient(180deg,#06080c,#0d1118 36%,#07090d);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,sans-serif;line-height:1.72}.wrap{display:grid;grid-template-columns:350px minmax(0,1fr);min-height:100vh}.side{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:rgba(7,9,13,.88);backdrop-filter:blur(20px);padding:24px}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:var(--accent);font-weight:800}.side h1{font-size:28px;line-height:1.1;margin:10px 0}.meta{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0;margin:14px 0;color:var(--muted);font-size:13px}.nav{display:flex;flex-direction:column;gap:5px}.nav a{color:#cbd8e6;text-decoration:none;border-radius:10px;padding:7px 9px;font-size:13px}.nav a:hover{background:#172231;color:white}.main{padding:42px clamp(22px,4vw,72px) 90px;max-width:1400px}.hero{background:linear-gradient(135deg,rgba(21,31,45,.96),rgba(10,15,22,.96));border:1px solid var(--line);border-radius:34px;box-shadow:var(--shadow);padding:38px;margin-bottom:18px}.hero h2{font-size:clamp(38px,6vw,78px);line-height:.95;letter-spacing:-.07em;margin:10px 0 18px}.hero p{font-size:19px;color:#cfdae8;max-width:980px}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.chip{border:1px solid var(--line);background:#101926;border-radius:999px;padding:7px 11px;color:#c7d6e6;font-size:13px}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0 22px}.stat{border:1px solid var(--line);background:rgba(17,24,36,.82);border-radius:18px;padding:14px}.stat b{font-size:12px;text-transform:uppercase;color:var(--accent);letter-spacing:.08em}.stat span{display:block;font-size:22px;font-weight:900;margin-top:4px}.doc{border:1px solid var(--line);background:rgba(9,13,20,.82);border-radius:30px;padding:32px}section{border-top:1px solid rgba(255,255,255,.08);padding:32px 0}section:first-child{border-top:0;padding-top:0}h2{font-size:34px;line-height:1.15;margin:0 0 14px;letter-spacing:-.03em}h3{font-size:22px;margin:26px 0 10px}h4{font-size:17px;margin:18px 0 8px;color:#fff}p,li,td{color:#c9d7e6}strong{color:white}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0b2430;border:1px solid #244658;color:#bbf6ff;border-radius:8px;padding:2px 6px}.call{border-left:4px solid var(--accent);background:rgba(121,242,209,.08);padding:14px 16px;border-radius:0 16px 16px 0}.warn{border-left:4px solid var(--warn);background:rgba(255,209,102,.08);padding:14px 16px;border-radius:0 16px 16px 0}.danger{border-left:4px solid var(--bad);background:rgba(255,123,134,.08);padding:14px 16px;border-radius:0 16px 16px 0}.ok{border-left:4px solid var(--ok);background:rgba(154,255,188,.08);padding:14px 16px;border-radius:0 16px 16px 0}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.card{border:1px solid var(--line);background:#111a27;border-radius:20px;padding:17px}.card b{display:block;color:var(--accent);margin-bottom:7px}.table{width:100%;border-collapse:collapse;border:1px solid var(--line);border-radius:18px;overflow:hidden;margin:14px 0}.table th,.table td{padding:12px 13px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}.table th{background:#111c29;color:#fff}.tag{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:12px;background:#101925}.must{color:var(--ok);border-color:rgba(154,255,188,.42)}.test{color:var(--blue);border-color:rgba(110,215,255,.42)}.risk{color:var(--bad);border-color:rgba(255,123,134,.42)}.later{color:var(--violet);border-color:rgba(214,182,255,.42)}.phase{border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,#111a27,#0e141e);margin:18px 0;overflow:hidden}.phase-head{display:grid;grid-template-columns:120px 1fr 210px;gap:14px;align-items:center;background:#121d2b;border-bottom:1px solid var(--line);padding:16px}.phase-no{font-size:28px;font-weight:950;color:var(--accent)}.phase-title{font-size:21px;font-weight:900}.phase-time{color:#c7d6e6;font-size:13px;text-align:right}.phase-body{padding:18px}.flow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:14px 0}.flow span{border:1px solid var(--line);background:#101926;border-radius:13px;padding:9px 12px}.flow b{color:var(--blue)}.check li{margin:8px 0}.mini{font-size:13px;color:var(--muted)}.wire{border:1px dashed #42566b;background:#0c141f;border-radius:20px;padding:16px}.bar{height:9px;background:#243449;border-radius:999px;overflow:hidden;margin:8px 0}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--blue));border-radius:999px}.lane{display:grid;grid-template-columns:180px 1fr;gap:12px;border-top:1px solid rgba(255,255,255,.07);padding:12px 0}.lane:first-child{border-top:0}.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border:1px solid var(--line);border-bottom-color:#50657d;background:#121d2a;border-radius:7px;padding:2px 7px;color:#e8f4ff}.footer{color:var(--muted);font-size:12px;margin-top:26px}@media(max-width:1100px){.wrap{display:block}.side{position:relative;height:auto}.stats{grid-template-columns:repeat(2,1fr)}.grid2,.grid3{grid-template-columns:1fr}.phase-head{grid-template-columns:1fr}.phase-time{text-align:left}}@media(max-width:650px){.main{padding:18px}.hero,.doc{padding:20px}.stats{grid-template-columns:1fr}.lane{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<aside class="side">
+<div class="eyebrow">Maymint Voice-first Plan</div>
+<h1>รายงานฉบับเต็ม<br>วางฐานก่อนต่อยอด</h1>
+<div class="meta">
+<div>เป้าหมายหลัก: Voice Assistant ก่อน</div>
+<div>หลักคิด: เข้าใจระบบ → ทำฐาน → เทสทีละชั้น → ค่อยต่อยอด</div>
+<div>บริบทปัจจุบัน: Hermes + Maymint profile + STT/TTS config มีอยู่แล้ว</div>
+</div>
+<nav class="nav">
+<a href="#northstar">0. เป้าหมายจริง</a>
+<a href="#principle">1. หลักพัฒนาไม่ให้พัง</a>
+<a href="#current">2. ระบบที่มีอยู่ตอนนี้</a>
+<a href="#voice-stack">3. Voice Stack ที่ต้องเข้าใจ</a>
+<a href="#foundation">4. ฐานที่ต้องทำก่อน</a>
+<a href="#phases">5. Phase พัฒนาแบบละเอียด</a>
+<a href="#tests">6. Test Ladder</a>
+<a href="#ui">7. UI ที่ต้องมีเฉพาะ Voice</a>
+<a href="#data">8. Data/Event Contract</a>
+<a href="#risk">9. จุดพังที่ต้องกัน</a>
+<a href="#definition">10. Definition of Done</a>
+<a href="#next">11. งานถัดไปที่ควรเริ่ม</a>
+</nav>
+</aside>
+<main class="main">
+<header class="hero">
+<div class="eyebrow">Full development report</div>
+<h2>เราจะสร้าง Maymint Voice Assistant ให้แข็งแรงจากฐาน</h2>
+<p>ฉบับนี้ไม่ได้วางแผนแบบ “ต่อยอดมั่ว ๆ” แต่แตกลงไปถึงฐาน: ต้องเข้าใจระบบมาย/Hermes ก่อน, แยกชั้น voice ให้ชัด, สร้าง test แรกให้มั่นคง, แล้วค่อยไต่ขึ้นไปทีละ phase จนเป็น Voice Assistant ที่ใช้งานจริงได้ โดยไม่ทำให้ระบบเดิมพัง</p>
+<div class="chips"><span class="chip">Voice first</span><span class="chip">Foundation first</span><span class="chip">Test every layer</span><span class="chip">No big-bang rewrite</span><span class="chip">Hermes brain stays intact</span><span class="chip">Maymint UX layer grows around it</span></div>
+</header>
+<div class="stats"><div class="stat"><b>Focus</b><span>Voice</span></div><div class="stat"><b>Method</b><span>Phase</span></div><div class="stat"><b>Safety</b><span>Cancel</span></div><div class="stat"><b>Core</b><span>Hermes</span></div><div class="stat"><b>Goal</b><span>Stable</span></div></div>
+<article class="doc">
+
+<section id="northstar">
+<h2>0. เป้าหมายจริงของรอบนี้</h2>
+<p class="call"><strong>เป้าหมายหลัก:</strong> ทำให้ Maymint มี Voice Assistant ที่ “คุยได้จริง ฟังได้จริง พูดได้จริง หยุดได้จริง และต่อกับสมอง Hermes ได้จริง” ก่อน งานอื่น ๆ เช่น overlay, memory dashboard, mode switch, desktop control ค่อยเสริมหลังฐาน voice แข็งแล้ว</p>
+<h3>สิ่งที่เราจะยังไม่รีบทำ</h3>
+<ul class="check">
+<li>ยังไม่คุม desktop เต็ม เพราะเสี่ยงและ debug ยาก</li>
+<li>ยังไม่ทำ wake word ก่อน เพราะถ้าปุ่มพูดยังไม่เสถียร wake word จะพังหนักกว่า</li>
+<li>ยังไม่ทำ realtime เต็มแบบ ChatGPT Voice ทันที เพราะต้องพิสูจน์ STT/TTS/brain/interrupt ก่อน</li>
+<li>ยังไม่ rewrite Hermes core เพราะ Hermes คือสมองเดิมที่แข็งอยู่แล้ว</li>
+</ul>
+<h3>สิ่งที่จะทำก่อน</h3>
+<div class="grid3"><div class="card"><b>1. เข้าใจระบบ</b><p>รู้ว่าเสียงเข้ามาทางไหน, แปลงเป็นข้อความตรงไหน, เข้า Hermes ยังไง, ตอบกลับเป็นเสียงยังไง</p></div><div class="card"><b>2. ทำเส้นทางเสียงขั้นต่ำ</b><p>กดพูด → STT → Hermes → text → TTS → เล่นเสียง</p></div><div class="card"><b>3. เทสเป็นชั้น</b><p>เทสไมค์, เทส STT, เทส TTS, เทส brain, เทส interrupt, เทส latency แยกกัน</p></div></div>
+</section>
+
+<section id="principle">
+<h2>1. หลักพัฒนาไม่ให้พัง</h2>
+<p>หลักสำคัญคือ “ไม่เอาของใหม่ไปทับของเดิม” แต่ทำเป็นชั้นหุ้มรอบ Hermes/Maymint เดิม แล้วเชื่อมผ่าน contract ชัดเจน</p>
+<table class="table"><tr><th>หลัก</th><th>ความหมาย</th><th>ผลกับการพัฒนา</th></tr><tr><td>เข้าใจฐานก่อน</td><td>รู้ path ปัจจุบันของ Hermes, memory, provider, STT, TTS</td><td>ลดการติดตั้งซ้ำ/แก้ config มั่ว</td></tr><tr><td>ทำทีละชั้น</td><td>ไมค์ → STT → brain → TTS → playback → interrupt</td><td>รู้ทันทีว่าพังตรงไหน</td></tr><tr><td>มี test แรกเสมอ</td><td>ก่อนเพิ่ม feature ต้องมี smoke test</td><td>แก้แล้วไม่ทำของเดิมพัง</td></tr><tr><td>แยก adapter กับ product logic</td><td>Vapi/Gemini/Local เป็น adapter; Maymint brain/context อยู่กลาง</td><td>เปลี่ยน provider ได้โดยไม่รื้อระบบ</td></tr><tr><td>safe default</td><td>เริ่มจาก push-to-talk, short answer, no desktop control</td><td>ใช้งานได้เร็วและเสี่ยงต่ำ</td></tr><tr><td>observable</td><td>ทุก state ต้องเห็น: ฟัง/แปลงเสียง/คิด/พูด/error</td><td>debug ง่ายและบอสไม่ต้องเดา</td></tr></table>
+</section>
+
+<section id="current">
+<h2>2. ระบบที่มีอยู่ตอนนี้ จากที่ตรวจแล้ว</h2>
+<p>มายตรวจ context ปัจจุบันแบบไม่ดึง secrets แล้ว พบว่า Maymint/Hermes มีฐาน voice อยู่แล้วบางส่วน</p>
+<table class="table"><tr><th>ส่วน</th><th>สถานะปัจจุบัน</th><th>ความหมาย</th></tr><tr><td>Hermes brain</td><td>มี provider/model ใช้งานผ่าน Hermes profile</td><td>ไม่ต้องสร้างสมองใหม่ ให้ voice เรียก Hermes เดิม</td></tr><tr><td>STT</td><td>เปิดอยู่ ใช้ custom command provider <code>openrouter-gemini</code> ผ่าน script <code>openrouter_gemini_stt.py</code>, ภาษาไทย</td><td>มีเส้นทางแปลงเสียงเป็นข้อความแล้ว ต้องทำ harness เทสให้ชัด</td></tr><tr><td>TTS</td><td>ใช้ provider <code>macos-say</code> ผ่าน script <code>maymint_tts.sh</code>, output wav</td><td>มีเสียงพูดไทย local/free แล้ว เหมาะเป็นฐานรอบแรก</td></tr><tr><td>Thai glossary</td><td>มี pinned/recent STT terms</td><td>ควรใช้ช่วยแก้คำไทย/technical ที่ฟังผิด</td></tr><tr><td>Memory</td><td>เปิด memory/user profile</td><td>Voice ต้องระวังไม่จำทุก transcript มั่ว ต้องมี policy</td></tr><tr><td>Jarvis repo</td><td>มีตัวอย่าง voice listener/speaker/WebSocket/overlay</td><td>ใช้เป็นแหล่งเรียน UX/flow ไม่ควร copy ทั้งก้อน</td></tr></table>
+<p class="warn"><strong>ข้อสรุป:</strong> เราไม่เริ่มจากศูนย์ เรามีสมอง + STT + TTS แล้ว สิ่งที่ขาดคือ voice loop ที่เสถียร, UI state, interrupt/cancel, logging, และ test ladder</p>
+</section>
+
+<section id="voice-stack">
+<h2>3. Voice Stack ที่ต้องเข้าใจแบบลึก</h2>
+<div class="flow"><span>ไมค์</span><b>→</b><span>Audio capture</span><b>→</b><span>STT</span><b>→</b><span>Intent/context</span><b>→</b><span>Hermes brain</span><b>→</b><span>Text response</span><b>→</b><span>TTS</span><b>→</b><span>Playback</span></div>
+<h3>แต่ละชั้นต้องมีอะไร</h3>
+<table class="table"><tr><th>ชั้น</th><th>หน้าที่</th><th>ต้องวัดอะไร</th><th>ถ้าพังจะเห็นยังไง</th></tr><tr><td>Audio capture</td><td>รับเสียงจาก mic/browser/Discord</td><td>ระดับเสียง, silence, permission</td><td>ไม่ได้ยิน / อัดเงียบ / permission fail</td></tr><tr><td>STT</td><td>เสียงเป็นข้อความไทย</td><td>accuracy, latency, glossary hit</td><td>คำเพี้ยน / ภาษาไทยหลุด / ช้ามาก</td></tr><tr><td>Intent/context</td><td>เข้าใจว่าบอสอยากให้ทำอะไร</td><td>intent preview, risk level</td><td>สั่งผิดงาน / ทำเกินคำสั่ง</td></tr><tr><td>Hermes brain</td><td>คิด/ใช้ tools/memory/skills</td><td>time to first token, tool visibility</td><td>ค้าง / verbose เกินเสียง / เรียก tool เสี่ยง</td></tr><tr><td>TTS</td><td>ข้อความเป็นเสียงมาย</td><td>duration, quality, speed, truncation</td><td>พูดเร็ว / อ่าน emoji / ไฟล์เสีย</td></tr><tr><td>Playback</td><td>เล่นเสียงให้บอสได้ยิน</td><td>device, overlap, stop latency</td><td>เสียงซ้อน / หยุดไม่ได้ / เล่นผิดที่</td></tr><tr><td>State/UI</td><td>บอกว่ามายกำลังทำอะไร</td><td>state transitions</td><td>บอสไม่รู้ว่าฟัง/คิด/พูดอยู่ไหม</td></tr></table>
+<h3>โหมด Voice ที่ควรมีตั้งแต่ต้น</h3>
+<table class="table"><tr><th>โหมด</th><th>ใช้เมื่อไหร่</th><th>ทำก่อน/หลัง</th></tr><tr><td>Push-to-talk</td><td>กดค้าง/กดครั้งเดียวแล้วพูด</td><td><span class="tag must">ทำก่อน</span></td></tr><tr><td>Text + voice reply</td><td>บอสพิมพ์ แต่มายตอบเสียงด้วย</td><td><span class="tag must">ทำก่อน</span></td></tr><tr><td>Voice command</td><td>บอสพูดสั่งงาน แล้วมายตอบ/ทำ</td><td><span class="tag must">ทำก่อน</span></td></tr><tr><td>Realtime duplex</td><td>คุยลื่น แทรกได้</td><td><span class="tag later">ทำหลังฐานเสถียร</span></td></tr><tr><td>Wake word</td><td>เรียก “มาย” โดยไม่กด</td><td><span class="tag later">ท้ายสุด</span></td></tr></table>
+</section>
+
+<section id="foundation">
+<h2>4. ฐานที่ต้องทำก่อนลงมือเขียนจริง</h2>
+<div class="grid2"><div class="card"><b>Foundation A: Voice Harness</b><p>เครื่องมือเล็ก ๆ สำหรับเทสเสียงทีละส่วน เช่น input wav → STT → text, text → TTS → wav, prompt → Hermes → text</p></div><div class="card"><b>Foundation B: State Machine</b><p>สถานะกลาง: idle/listening/transcribing/thinking/working/speaking/confirm/error/cancelled</p></div><div class="card"><b>Foundation C: Event Log</b><p>บันทึกทุก turn แบบไม่เก็บ secret: timestamps, latency, provider, transcript, final answer, error</p></div><div class="card"><b>Foundation D: Safety Boundary</b><p>Voice รอบแรกต้อง default เป็น no-desktop-control, confirmation ก่อน tool เสี่ยง, cancel ได้</p></div></div>
+<h3>โครง folder ที่แนะนำ</h3>
+<table class="table"><tr><th>Folder/File</th><th>หน้าที่</th></tr><tr><td><code>maymint_voice/</code></td><td>voice layer ใหม่ แยกจาก Hermes core</td></tr><tr><td><code>adapters/stt_openrouter_gemini.py</code></td><td>เรียก STT เดิมผ่าน command/script</td></tr><tr><td><code>adapters/tts_macos_say.py</code></td><td>เรียก TTS macOS say เดิม</td></tr><tr><td><code>brain/hermes_client.py</code></td><td>ยิงข้อความเข้า Hermes แบบปลอดภัย</td></tr><tr><td><code>state/machine.py</code></td><td>รวม state transition</td></tr><tr><td><code>tests/voice_smoke/</code></td><td>test ไมค์/STT/TTS/brain แบบแยกชั้น</td></tr><tr><td><code>logs/voice_sessions/</code></td><td>logs สำหรับ debug โดยไม่เก็บ key</td></tr></table>
+</section>
+
+<section id="phases">
+<h2>5. Phase พัฒนาแบบละเอียด — Voice Assistant ก่อน</h2>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P0</div><div><div class="phase-title">Baseline Audit: เข้าใจระบบ Maymint ปัจจุบันก่อน</div><div class="mini">ไม่เขียน feature ใหม่ก่อนรู้ฐาน</div></div><div class="phase-time">0.5–1 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>ทำแผนที่ว่าเสียง/ข้อความ/provider/memory/tool flow ตอนนี้อยู่ตรงไหน และอะไรแตะได้/ห้ามแตะ</p></div><div class="lane"><strong>งาน</strong><ul><li>บันทึก config แบบ redacted: STT/TTS/model/memory</li><li>อ่าน voice docs/code ของ Hermes ที่เกี่ยวข้อง</li><li>ระบุ entrypoints: CLI voice, gateway voice, desktop voice, custom scripts</li><li>ทำ diagram current flow</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>รู้ว่า STT/TTS ใช้ provider อะไร</li><li>รู้ path scripts และสามารถรัน smoke ได้</li><li>ไม่มีการแก้ config หลักโดยไม่จำเป็น</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P1</div><div><div class="phase-title">Voice Harness: เทส STT/TTS/Brain แยกจากกัน</div><div class="mini">ฐานแรกที่ต้องมี ก่อนทำ UI หรือ realtime</div></div><div class="phase-time">1–2 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>มีชุดคำสั่ง/สคริปต์ที่เทส voice pipeline แยกชั้นได้</p></div><div class="lane"><strong>งาน</strong><ul><li>ทำ test input wav ภาษาไทยสั้น ๆ 3–5 ไฟล์</li><li>เทส STT: wav → transcript</li><li>เทส TTS: text → wav → verify file</li><li>เทส brain: transcript → Hermes text response</li><li>บันทึก latency แต่ละส่วน</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>STT ได้ข้อความไทยพอใช้</li><li>TTS สร้าง wav ได้จริงและเล่นได้</li><li>Hermes ตอบสั้นแบบ voice-friendly ได้</li><li>ถ้าพังรู้ว่าพังชั้นไหน</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P2</div><div><div class="phase-title">Text + Voice Reply Mode</div><div class="mini">บอสพิมพ์ → มายตอบ text + เสียง</div></div><div class="phase-time">1 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>ให้มายพูดคำตอบได้โดยยังไม่ต้องใช้ไมค์ เหมาะเทส TTS/voice tone/short answer</p></div><div class="lane"><strong>งาน</strong><ul><li>กำหนด voice response style: ไทย สั้น อบอุ่น ไม่อ่าน emoji</li><li>ทำ text cleanup ก่อน TTS</li><li>ทำ stop speaking local</li><li>ทำ fallback ถ้า TTS fail: ส่ง text อย่างเดียว</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>คำตอบสั้นพอสำหรับฟัง</li><li>หยุดเสียงได้</li><li>ไม่อ่าน emoji/markdown ประหลาด</li><li>ใช้ system default macOS say ตาม preference</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P3</div><div><div class="phase-title">Push-to-talk Voice Command v0</div><div class="mini">กดพูด → STT → Hermes → TTS</div></div><div class="phase-time">2–4 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>นี่คือ voice assistant ตัวแรกที่บอสใช้ได้จริงแบบปลอดภัย</p></div><div class="lane"><strong>งาน</strong><ul><li>ทำปุ่ม/shortcut เริ่มอัดเสียง</li><li>ทำ silence/timeout กันอัดยาว</li><li>ส่ง audio เข้า STT</li><li>แสดง transcript preview ก่อนส่งเข้า Hermes หรือส่งอัตโนมัติใน safe commands</li><li>Hermes ตอบแบบ voice-short</li><li>TTS พูดคำตอบ</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>พูดคำสั่งไทยสั้น ๆ แล้วมายตอบได้</li><li>latency รับได้</li><li>ถ้า STT เพี้ยน บอสเห็น transcript</li><li>กด cancel ได้ระหว่างคิด/พูด</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P4</div><div><div class="phase-title">Voice State UI + Progress Lite</div><div class="mini">บอสต้องเห็นว่ามายกำลังฟัง/คิด/พูด/ติดปัญหา</div></div><div class="phase-time">2–3 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>ทำ UI เบื้องต้นก่อน overlay เต็ม: state card หรือ mini panel</p></div><div class="lane"><strong>งาน</strong><ul><li>state indicator: idle/listening/transcribing/thinking/speaking/error</li><li>latency breakdown</li><li>ปุ่ม stop speaking / stop listening / cancel request</li><li>transcript + final answer history</li><li>error card พร้อม retry</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>state ไม่ค้างผิด</li><li>ปุ่มหยุดทำงานถูกชั้น</li><li>ปิด/เปิด UI แล้วไม่ทำ voice session พัง</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P5</div><div><div class="phase-title">Safety + Confirmation สำหรับ Voice</div><div class="mini">เสียงสั่งงานเสี่ยง ต้องมีถามก่อนทำ</div></div><div class="phase-time">2–3 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>แยกคำถาม/คุยทั่วไปจากคำสั่งที่กระทบไฟล์/ระบบ/browser</p></div><div class="lane"><strong>งาน</strong><ul><li>intent classifier แบบง่าย: chat / safe read / write / shell / browser / desktop</li><li>confirmation prompt ภาษาไทย</li><li>voice confirm: “ยืนยัน” / “ยกเลิก”</li><li>typed confirmation สำหรับ high-risk</li><li>dry-run default สำหรับงานเสี่ยง</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>คำสั่งทั่วไปไม่โดนถามจนรำคาญ</li><li>คำสั่งเสี่ยงไม่หลุดไปทำเอง</li><li>บอสยกเลิกด้วยเสียงหรือปุ่มได้</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P6</div><div><div class="phase-title">Memory Policy for Voice</div><div class="mini">เสียงคุยเยอะ ห้ามจำทุกอย่างมั่ว</div></div><div class="phase-time">1–2 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>ให้ voice ใช้ memory ได้ แต่ไม่ทำ memory สกปรก</p></div><div class="lane"><strong>งาน</strong><ul><li>กำหนดว่า transcript อะไรไม่ควรจำ</li><li>ทำ “มายควรจำไหม?” เฉพาะ insight สำคัญ</li><li>บันทึก command dictionary ของบอส เช่น “ชำแหละ”, “เปิดให้”, “อย่ารันมั่ว”</li><li>เพิ่ม memory review UI ภายหลัง</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>voice session ไม่เพิ่ม memory ขยะ</li><li>คำสั่งประจำของบอสเข้าใจดีขึ้น</li><li>บอสแก้ความจำผิดได้</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P7</div><div><div class="phase-title">Provider Adapter Layer</div><div class="mini">เตรียมเปลี่ยนเป็น Vapi/Gemini Live/LiveKit ได้โดยไม่รื้อระบบ</div></div><div class="phase-time">3–5 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>แยก voice transport ออกจาก Maymint brain</p></div><div class="lane"><strong>งาน</strong><ul><li>กำหนด interface: start, stop, transcribe, speak, interrupt, health</li><li>adapter 1: local/turn-based STT+TTS</li><li>adapter 2: browser push-to-talk</li><li>adapter 3: realtime provider ภายหลัง</li><li>config switch: <code>VOICE_PROVIDER=local|browser|vapi|gemini</code></li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>เปลี่ยน provider โดยไม่เปลี่ยน brain/context</li><li>transcript/profile/event log schema เดิมใช้ต่อได้</li><li>ถ้า provider fail มี fallback</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P8</div><div><div class="phase-title">Realtime Voice Trial</div><div class="mini">หลัง P0–P7 ผ่านเท่านั้น</div></div><div class="phase-time">ทดลอง 3–7 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>ทดลองความรู้สึกแบบคุยลื่น โดยยังรักษา Maymint/Hermes brain/control</p></div><div class="lane"><strong>งาน</strong><ul><li>เลือก stack: Vapi เร็วสุดสำหรับ MVP / LiveKit คุมเองกว่า / Gemini Live direct ภายหลัง</li><li>เก็บ transcript final events กลับ backend</li><li>ให้ Hermes เป็น deep brain หรือ supervisory brain</li><li>วัด cost/latency/quality</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>คุยไทยลื่นพอ</li><li>ไม่เกิดสองสมองที่ context แยกกันจนเพี้ยน</li><li>หยุด/แทรก/ยกเลิกได้</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P9</div><div><div class="phase-title">Overlay / Presence หลัง Voice เสถียร</div><div class="mini">ค่อยเพิ่มร่างบนจอ ไม่ใช่เริ่มจากความสวย</div></div><div class="phase-time">3–5 วัน</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>ให้ Maymint มี orb/overlay แสดงสถานะ voice จาก state machine ที่พิสูจน์แล้ว</p></div><div class="lane"><strong>งาน</strong><ul><li>compact orb</li><li>expanded voice panel</li><li>push-to-talk hotkey</li><li>stop/cancel buttons</li><li>confirmation badge</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>overlay ไม่แย่ง focus</li><li>state ตรงกับ backend</li><li>ซ่อน/ย้าย/reset ได้</li></ul></div></div></div>
+
+<div class="phase"><div class="phase-head"><div class="phase-no">P10</div><div><div class="phase-title">Wake Word / Always Listening</div><div class="mini">ทำท้ายสุด เพราะเสี่ยงสุด</div></div><div class="phase-time">ภายหลัง</div></div><div class="phase-body"><div class="lane"><strong>เป้าหมาย</strong><p>เรียกมายด้วยเสียงโดยไม่กด แต่ต้องไม่รบกวนและไม่รั่ว privacy</p></div><div class="lane"><strong>งาน</strong><ul><li>wake word local ก่อน cloud</li><li>privacy indicator</li><li>timeout/fail-safe</li><li>disable schedule</li><li>device permission UX</li></ul></div><div class="lane"><strong>เทสผ่านเมื่อ</strong><ul><li>false wake ต่ำ</li><li>ไม่อัดเสียงมั่ว</li><li>ปิดได้ทันที</li></ul></div></div></div>
+</section>
+
+<section id="tests">
+<h2>6. Test Ladder — เราจะเทสทีละชั้น</h2>
+<p class="call"><strong>หลัก:</strong> ถ้าชั้นล่างยังไม่ผ่าน ห้ามขึ้นชั้นบน เพราะจะ debug ยากและพังเป็นลูกโซ่</p>
+<table class="table"><tr><th>Test</th><th>คำถามที่ตอบ</th><th>ผ่านเมื่อ</th></tr><tr><td>T0 Config Redacted</td><td>ระบบใช้ STT/TTS/model อะไร</td><td>print config โดยไม่โชว์ key</td></tr><tr><td>T1 TTS File</td><td>มายพูดได้ไหม</td><td>text → wav, file valid, เล่นได้</td></tr><tr><td>T2 STT File</td><td>มายฟังไทยได้ไหม</td><td>wav → transcript ใกล้เคียง</td></tr><tr><td>T3 Brain Text</td><td>Hermes ตอบ voice-friendly ได้ไหม</td><td>คำตอบสั้น ชัด ไม่หลุด persona</td></tr><tr><td>T4 Full Turn</td><td>voice loop ขั้นต่ำทำงานไหม</td><td>wav → STT → Hermes → TTS → wav</td></tr><tr><td>T5 Interrupt</td><td>หยุดพูด/ยกเลิกได้ไหม</td><td>stop ภายในเวลาที่กำหนด</td></tr><tr><td>T6 Error Recovery</td><td>provider fail แล้วทำยังไง</td><td>fallback text/error ชัด</td></tr><tr><td>T7 Latency</td><td>คุยแล้วรู้สึกทันไหม</td><td>แยกเวลาของ STT/brain/TTS ได้</td></tr><tr><td>T8 Safety</td><td>เสียงสั่งเรื่องเสี่ยงหลุดไหม</td><td>confirmation ทำงาน</td></tr><tr><td>T9 Session Repeat</td><td>ใช้ 20 turn แล้วยังนิ่งไหม</td><td>ไม่มีเสียงซ้อน/state ค้าง/memory ขยะ</td></tr></table>
+</section>
+
+<section id="ui">
+<h2>7. UI ที่ต้องมีเฉพาะ Voice Assistant ก่อน</h2>
+<p>รอบแรกไม่ต้องทำ UI ใหญ่ทั้งหมด แต่ต้องมี voice panel ที่พอ debug และใช้งานจริง</p>
+<div class="grid2"><div class="wire"><h3>Voice Control Panel v0</h3><div class="bar"><i style="width:68%"></i></div><p><span class="tag must">Listening</span> / transcript preview / send / cancel</p><p><span class="kbd">Space</span> push-to-talk · <span class="kbd">Esc</span> stop/cancel</p></div><div class="wire"><h3>Voice Debug Panel</h3><p>STT: 1.2s · Brain: 3.4s · TTS: 0.8s</p><p>Provider: openrouter-gemini / macos-say</p><p>Error: none</p></div></div>
+<table class="table"><tr><th>UI</th><th>ต้องมีตั้งแต่แรกไหม</th><th>เหตุผล</th></tr><tr><td>Mic button</td><td><span class="tag must">ต้องมี</span></td><td>เริ่ม/หยุดพูดง่าย</td></tr><tr><td>Transcript preview</td><td><span class="tag must">ต้องมี</span></td><td>กัน STT เพี้ยนแล้วทำผิด</td></tr><tr><td>State badge</td><td><span class="tag must">ต้องมี</span></td><td>รู้ว่ามายกำลังฟัง/คิด/พูด</td></tr><tr><td>Stop speaking</td><td><span class="tag must">ต้องมี</span></td><td>เสียงต้องหยุดได้ทันที</td></tr><tr><td>Cancel current request</td><td><span class="tag must">ต้องมี</span></td><td>หยุดงานที่กำลังคิด/รัน</td></tr><tr><td>Latency view</td><td><span class="tag test">ควรมี</span></td><td>debug ความช้า</td></tr><tr><td>Confirmation</td><td><span class="tag must">ต้องมีเมื่อเริ่ม tool/action</span></td><td>กันเสียงสั่งงานเสี่ยง</td></tr><tr><td>Overlay orb</td><td><span class="tag later">หลัง voice loop เสถียร</span></td><td>เอา state ที่นิ่งแล้วไปโชว์</td></tr></table>
+</section>
+
+<section id="data">
+<h2>8. Data/Event Contract ที่ต้องวางก่อน</h2>
+<p>ถ้าไม่มี contract UI จะต้องเดาจากข้อความ และจะพังตอนเพิ่ม overlay/realtime</p>
+<table class="table"><tr><th>Event</th><th>Payload ขั้นต่ำ</th><th>ใช้ทำอะไร</th></tr><tr><td><code>voice_state</code></td><td>state, text, session_id, turn_id</td><td>แสดง idle/listening/thinking/speaking/error</td></tr><tr><td><code>audio_captured</code></td><td>duration_ms, size, source</td><td>debug mic/browser/discord</td></tr><tr><td><code>stt_result</code></td><td>transcript, confidence?, latency_ms, provider</td><td>preview + log</td></tr><tr><td><code>brain_started</code></td><td>turn_id, mode, prompt_summary</td><td>thinking state</td></tr><tr><td><code>brain_token</code></td><td>text_delta</td><td>stream text ถ้าต้องการ</td></tr><tr><td><code>brain_done</code></td><td>response_text, tool_summary, latency_ms</td><td>ส่งเข้า TTS</td></tr><tr><td><code>tts_ready</code></td><td>audio_path, duration_ms, provider</td><td>playback</td></tr><tr><td><code>playback_started</code></td><td>device, audio_id</td><td>speaking state</td></tr><tr><td><code>playback_stopped</code></td><td>reason</td><td>หยุดพูด</td></tr><tr><td><code>confirmation_required</code></td><td>risk, action, target, summary, id</td><td>ถามก่อนทำเรื่องเสี่ยง</td></tr><tr><td><code>turn_error</code></td><td>stage, message, recoverable</td><td>แสดง error + retry</td></tr></table>
+</section>
+
+<section id="risk">
+<h2>9. จุดพังที่ต้องกันตั้งแต่แรก</h2>
+<table class="table"><tr><th>จุดพัง</th><th>ทำไมเกิด</th><th>วิธีกัน</th></tr><tr><td>เสียงซ้อน</td><td>TTS ใหม่เริ่มก่อนเก่าหยุด</td><td>audio queue + stop previous default</td></tr><tr><td>state ค้าง speaking/thinking</td><td>error ไม่ส่ง event ปิด state</td><td>finally event + timeout watchdog</td></tr><tr><td>STT เพี้ยนแล้วทำงานผิด</td><td>ส่ง transcript เข้า brain ทันที</td><td>preview/confirm สำหรับ action</td></tr><tr><td>ตอบยาวเกินเสียง</td><td>ใช้ prompt แบบ chat ปกติ</td><td>voice-short policy + summarize detail to text/html</td></tr><tr><td>หยุดเสียงแต่ agent ยังทำงาน</td><td>stop audio != cancel task</td><td>แยกปุ่มและ API</td></tr><tr><td>provider ล่มแล้วระบบเงียบ</td><td>ไม่มี fallback/error UI</td><td>degraded mode + text-only fallback</td></tr><tr><td>memory ขยะ</td><td>เก็บ transcript ทุก turn</td><td>memory policy + review</td></tr><tr><td>สองสมอง</td><td>ใช้ realtime provider เป็น brain แยกจาก Hermes</td><td>provider เป็น transport; Hermes/Maymint เป็น brain/context หลัก</td></tr><tr><td>แก้ Hermes core แล้วพังทั้งระบบ</td><td>ต่อยอดแบบทับของเดิม</td><td>adapter layer แยก project/feature flag</td></tr></table>
+</section>
+
+<section id="definition">
+<h2>10. Definition of Done สำหรับ Voice Assistant v1</h2>
+<ul class="check">
+<li>บอสกดพูด แล้ว Maymint ได้ transcript ไทยที่อ่านรู้เรื่อง</li>
+<li>Maymint ส่ง transcript เข้า Hermes brain เดิมได้</li>
+<li>คำตอบเป็นเสียงไทย และมี text transcript คู่กัน</li>
+<li>กดหยุดเสียงได้ภายในเวลาสั้น</li>
+<li>ยกเลิก request ที่กำลังคิด/ทำงานได้</li>
+<li>มี state ชัด: ฟัง/แปลงเสียง/คิด/พูด/error</li>
+<li>มี latency breakdown</li>
+<li>งานเสี่ยงไม่ทำโดยไม่ยืนยัน</li>
+<li>มี log พอ debug แต่ไม่เก็บ secret</li>
+<li>มี smoke tests ที่รันซ้ำได้</li>
+<li>ไม่ทำ Hermes CLI/Gateway/Memory เดิมพัง</li>
+</ul>
+</section>
+
+<section id="next">
+<h2>11. งานถัดไปที่ควรเริ่มจริง</h2>
+<p class="ok"><strong>มายแนะนำเริ่มที่ Phase P0–P1 ก่อน:</strong> ทำ Voice Harness และ Test Ladder ให้ได้ก่อน อย่าเพิ่งทำ UI สวยหรือ realtime เพราะถ้า STT/TTS/brain/cancel ยังไม่มั่นคง UI จะเป็นแค่หน้าสวยที่ debug ยาก</p>
+<h3>ชุดงานแรกที่ควรทำ</h3>
+<ol>
+<li>สร้างโฟลเดอร์ทดลอง voice ที่ไม่แตะ Hermes core</li>
+<li>ทำ script <code>voice_doctor</code> ตรวจ STT/TTS/provider แบบ redacted</li>
+<li>ทำ script <code>tts_smoke</code>: text ไทย → wav → verify</li>
+<li>ทำ script <code>stt_smoke</code>: wav ไทย → transcript</li>
+<li>ทำ script <code>full_turn_smoke</code>: audio/text → Hermes → TTS</li>
+<li>ทำ log JSON ต่อ turn</li>
+<li>หลัง smoke ผ่าน ค่อยทำ push-to-talk UI v0</li>
+</ol>
+<h3>คำตอบสุดท้ายเชิงกลยุทธ์</h3>
+<p>ให้คิดว่าเรากำลังสร้าง “ระบบประสาทการได้ยินและการพูด” ให้มายก่อน ไม่ใช่สร้างแอปใหม่ทั้งก้อน พอหู/ปาก/การหยุด/การรู้สถานะนิ่งแล้ว ค่อยเอา overlay, memory dashboard, mode switch, progress UI มาเกาะทีละชั้น ระบบจะไม่พังง่าย เพราะฐานถูกเทสแล้ว</p>
+</section>
+
+</article>
+<div class="footer">สร้างเป็นรายงาน HTML ภาษาไทยสำหรับวางแผนพัฒนา Maymint Voice Assistant ก่อน โดยใช้แนวทาง foundation-first / phase-by-phase / test ladder</div>
+</main>
+</div>
+</body>
+</html>

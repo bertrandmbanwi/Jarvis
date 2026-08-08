@@ -289,7 +289,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
       >
         {/* Panel Header */}
         <div className="sticky top-0 bg-[rgba(0,10,24,0.94)] backdrop-blur-xl border-b border-jarvis-cyan/10 p-4 flex justify-between items-center">
-          <h2 id="jarvis-settings-title" className="text-base font-semibold text-jarvis-text tracking-[0.12em] uppercase">JARVIS Settings</h2>
+          <h2 id="jarvis-settings-title" className="text-base font-semibold text-jarvis-text tracking-[0.12em] uppercase">MayAss Settings</h2>
           <button
             onClick={() => setIsOpen(false)}
             className="w-9 h-9 rounded-lg border border-white/[0.06] text-jarvis-text-dim/70 hover:text-jarvis-cyan hover:border-jarvis-cyan/25 transition flex items-center justify-center"

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JARVIS Original UI — Mock Showcase</title>
+<style>
+  :root{
+    --bg:#02050a; --panel:#07111d; --panel2:#0b1726; --line:rgba(126,184,255,.18);
+    --cyan:#6ee7ff; --blue:#7eb8ff; --gold:#ffd98a; --red:#ff5f6d;
+    --text:#e8f3ff; --muted:#7d91a7; --dim:#4d6075;
+  }
+  *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 50% 22%,rgba(0,120,255,.13),transparent 35%),#000;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;overflow:hidden}
+  .app{height:100dvh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(5,12,24,.55),#000)}
+  header{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(3,8,15,.74);backdrop-filter:blur(14px)}
+  .brand{display:flex;align-items:center;gap:12px;letter-spacing:.3em;color:var(--blue);font-weight:300}.dot{width:10px;height:10px;border-radius:50%;box-shadow:0 0 18px var(--cyan);border:2px solid var(--cyan)}
+  .modes{display:flex;gap:6px}.modes button,.ghost{background:rgba(255,255,255,.025);border:1px solid rgba(126,184,255,.15);color:var(--muted);padding:8px 12px;border-radius:10px;font-size:11px;letter-spacing:.13em;text-transform:uppercase;cursor:pointer}.modes button.active{color:#03101b;background:var(--cyan);box-shadow:0 0 22px rgba(110,231,255,.22)}
+  .status{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace}.status b{color:var(--red);font-weight:500}
+  main{flex:1;min-height:0;position:relative}.view{display:none;height:100%;padding:24px}.view.active{display:block}.label{font-family:ui-monospace,Menlo,monospace;color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:.2em}.muted{color:var(--muted)}
+  .mocktag{position:absolute;right:22px;bottom:18px;color:var(--dim);font-size:11px;letter-spacing:.12em;text-transform:uppercase}.card{border:1px solid var(--line);background:linear-gradient(180deg,rgba(10,25,42,.78),rgba(4,10,18,.9));border-radius:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+
+  /* cinematic */
+  #cinematic{position:relative;overflow:hidden;background:radial-gradient(circle at 50% 52%,rgba(0,86,112,.34),rgba(0,26,48,.18) 36%,#000 76%)}
+  .scan{position:absolute;inset:0;opacity:.04;background-image:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,190,255,.12) 2px,rgba(0,190,255,.12) 3px);pointer-events:none}.center{height:100%;display:grid;place-items:center;text-align:center}.orb{width:410px;height:410px;border-radius:50%;display:grid;place-items:center;position:relative;background:radial-gradient(circle,#081524 0,#03101b 42%,rgba(0,212,255,.06) 63%,transparent 74%);filter:drop-shadow(0 0 38px rgba(0,212,255,.2))}.orb:before,.orb:after{content:"";position:absolute;border-radius:50%;inset:13%;border:1px solid rgba(110,231,255,.55);animation:pulse 3s ease-in-out infinite}.orb:after{inset:26%;border-color:rgba(255,217,138,.38);animation-duration:4.2s}.core{width:120px;height:120px;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(255,255,255,.18);background:#02070c;color:var(--text);letter-spacing:.38em;padding-left:.38em}.cinstate{position:absolute;top:26px;right:26px;color:var(--gold);font-family:ui-monospace,Menlo,monospace;letter-spacing:.2em;font-size:11px}.transcript{position:absolute;left:50%;bottom:72px;transform:translateX(-50%);width:min(720px,70vw);padding:18px 22px;border:1px solid rgba(126,184,255,.14);background:rgba(3,9,16,.72);border-radius:16px;color:rgba(232,243,255,.78)}
+  @keyframes pulse{50%{transform:scale(1.05);opacity:.55}}
+
+  /* chat */
+  .chatgrid{height:100%;display:grid;grid-template-columns:1fr 340px;gap:18px}.log{height:100%;display:flex;flex-direction:column;padding:18px}.messages{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:14px;padding:18px 6px}.msg{max-width:75%;padding:14px 16px;border-radius:16px;border:1px solid rgba(255,255,255,.06);line-height:1.5}.user{align-self:flex-end;background:rgba(126,184,255,.12)}.assistant{align-self:flex-start;background:rgba(110,231,255,.06);border-color:rgba(110,231,255,.12)}.input{display:flex;gap:10px}.input input{flex:1;background:#030914;border:1px solid rgba(126,184,255,.18);border-radius:12px;color:var(--text);padding:14px}.send{background:var(--cyan);border:0;color:#02101a;border-radius:12px;padding:0 18px;font-weight:700}.side{padding:18px;display:flex;flex-direction:column;gap:14px}.pill{display:inline-flex;border:1px solid rgba(126,184,255,.14);border-radius:999px;padding:7px 10px;color:var(--muted);font-size:12px;margin:4px}
+
+  /* dashboard */
+  .dash{height:100%;display:grid;grid-template-columns:1.2fr .8fr;grid-template-rows:1fr 1fr;gap:16px}.dash .card{padding:18px}.metric{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}.metric div{padding:16px;border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.055)}.num{font-size:28px;color:var(--blue);font-family:ui-monospace,Menlo,monospace}.bar{height:8px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;margin-top:12px}.bar span{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--gold))}
+
+  /* product */
+  .product{height:100%;display:grid;grid-template-columns:320px 1fr 320px;gap:16px}.product .card{padding:18px}.list{display:grid;gap:10px;margin-top:16px}.row{padding:12px;border:1px solid rgba(255,255,255,.06);border-radius:12px;background:rgba(255,255,255,.025);display:flex;justify-content:space-between;gap:14px}.ok{color:#72ffaa}.warn{color:var(--gold)}.bad{color:var(--red)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><span class="dot"></span><span>J.A.R.V.I.S.</span></div>
+    <div class="modes">
+      <button class="active" data-view="cinematic">Cinematic</button>
+      <button data-view="chat">Chat</button>
+      <button data-view="dashboard">Dashboard</button>
+      <button data-view="product">Product</button>
+    </div>
+    <div class="status">mock backend · <b>not connected</b></div>
+  </header>
+  <main>
+    <section id="cinematic" class="view active">
+      <div class="scan"></div><div class="cinstate" id="stateText">STANDING BY</div>
+      <div class="center"><div class="orb"><div class="core">JARVIS</div></div></div>
+      <div class="transcript"><span class="label">assistant transcript</span><br>Good evening. Systems are standing by. This is a mocked original-style cinematic surface.</div>
+      <div class="mocktag">original-inspired mock · no real backend</div>
+    </section>
+    <section id="chat" class="view">
+      <div class="chatgrid">
+        <div class="card log"><div class="label">Activity Log / Conversation</div><div class="messages"><div class="msg user">Summarize current workspace status.</div><div class="msg assistant">Local mode is unavailable in this mock. In the real app this view streams assistant replies and accepts voice/text input.</div><div class="msg assistant">Feature examples: mic capture, websocket chat, streaming reply, proactive toast, plan progress, confirmation modal.</div></div><div class="input"><input value="Ask JARVIS anything..." readonly><button class="send">Send</button></div></div>
+        <aside class="card side"><div><div class="label">Available UI functions</div><span class="pill">Text chat</span><span class="pill">Browser mic</span><span class="pill">Streaming</span><span class="pill">Clear log</span><span class="pill">Confirm action</span></div><div><div class="label">Note</div><p class="muted">This is a showcase mock. It does not call the original backend, STT, or LLM.</p></div></aside>
+      </div>
+    </section>
+    <section id="dashboard" class="view"><div class="dash"><div class="card"><div class="label">Activity / Server</div><div class="metric"><div><div class="num">0</div><div class="muted">messages</div></div><div><div class="num">—</div><div class="muted">memory</div></div><div><div class="num">off</div><div class="muted">backend</div></div></div></div><div class="card"><div class="label">Cost / Tokens</div><p class="muted">Original dashboard has cost summaries, cache savings, token totals and budget hard-limit status.</p><div class="bar"><span style="width:34%"></span></div></div><div class="card"><div class="label">Public Data Health</div><p class="muted">Mock provider health cards: weather, search, calendar, email.</p><div class="row"><span>Weather API</span><span class="ok">ok</span></div><div class="row"><span>Calendar</span><span class="warn">optional</span></div></div><div class="card"><div class="label">Plans / Agents</div><p class="muted">Original UI supports active plan progress, proactive suggestions and confirmation queue.</p></div></div><div class="mocktag">dashboard view mock</div></section>
+    <section id="product" class="view"><div class="product"><div class="card"><div class="label">Workflows</div><div class="list"><div class="row"><span>Email triage</span><span class="warn">template</span></div><div class="row"><span>Calendar assist</span><span class="warn">template</span></div><div class="row"><span>Research summary</span><span class="ok">ready</span></div></div></div><div class="card"><div class="label">Product Foundation</div><p>The original product surface collects workflow overview, team mode, calendar connections, public data providers, and settings into a work console.</p><p class="muted">For Maymint we should extract the concept: one place for voice, context, plan, review and status — not copy Jarvis identity directly.</p></div><div class="card"><div class="label">Settings / Safety</div><div class="list"><div class="row"><span>Auth PIN</span><span class="bad">backend needed</span></div><div class="row"><span>Model settings</span><span class="warn">mock</span></div><div class="row"><span>Confirmations</span><span class="ok">visible</span></div></div></div></div><div class="mocktag">product view mock</div></section>
+  </main>
+</div>
+<script>
+ const buttons=[...document.querySelectorAll('.modes button')];
+ const views=[...document.querySelectorAll('.view')];
+ buttons.forEach(b=>b.onclick=()=>{buttons.forEach(x=>x.classList.remove('active'));b.classList.add('active');views.forEach(v=>v.classList.toggle('active',v.id===b.dataset.view));});
+ const states=['STANDING BY','LISTENING','PROCESSING','SPEAKING']; let i=0; setInterval(()=>{i=(i+1)%states.length; const e=document.getElementById('stateText'); if(e)e.textContent=states[i];},2200);
+</script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+{
+  "summary": {
+    "timestamp": "20260805T113716",
+    "repo": "/Users/meuu/Desktop/โปรเจ็ค hermes/Jarvis-bertrandmbanwi",
+    "json_path": "/Users/meuu/Desktop/โปรเจ็ค hermes/Jarvis-bertrandmbanwi/.hermes/plans/reports/phase-1-deep-consistency-20260805T113716.json",
+    "md_path": "/Users/meuu/Desktop/โปรเจ็ค hermes/Jarvis-bertrandmbanwi/.hermes/plans/reports/phase-1-deep-consistency-20260805T113716.md",
+    "pass_conditions": {
+      "targeted_pytest_pass": false,
+      "full_pytest_pass": false,
+      "py_compile_pass": false,
+      "no_cloudflared": true,
+      "no_unexpected_changed_production_files": true,
+      "env_matrix_all_pass": true,
+      "all_mayass_flags_in_settings": true,
+      "all_mayass_flags_in_tests": true,
+      "unexpected_changed_production_files": [],
+      "settings_has_no_ui_voice_chat_imports_added": true,
+      "remote_default_false_line": true,
+      "audio_default_browser_line": true,
+      "mode_allowed_realtime_work_only": true
+    },
+    "overall_pass": false,
+    "issues": [],
+    "observations": [
+      "UI still shows J.A.R.V.I.S. by design; Phase 1 forbids UI edits, Phase 2/9 handle visible identity.",
+      "Running server process was started before these new env flags; Phase 1 verifies import-time config via fresh Python processes, not live server behavior.",
+      "MAYASS_REMOTE_ENABLED is a MayAss config flag only in this phase; start.sh still uses JARVIS_ENABLE_TUNNEL until later remote hardening phase.",
+      "Jarvis system prompt still contains Becs/sir/JARVIS persona; this is an inherited issue assigned to Phase 5 memory/persona quarantine, not Phase 1."
+    ],
+    "env_matrix": [
+      {
+        "case": "defaults",
+        "env": {},
+        "returncode": 0,
+        "stdout": "False|False|realtime|browser|MayAss|Maymint-Hermes|hermes chat -Q|default",
+        "stderr": ""
+      },
+      {
+        "case": "enable_true",
+        "env": {
+          "MAYASS_ENABLED": "true"
+        },
+        "returncode": 0,
+        "stdout": "True|False|realtime|browser|MayAss|Maymint-Hermes|hermes chat -Q|default",
+        "stderr": ""
+      },
+      {
+        "case": "enable_yes_on_1",
+        "env": {
+          "MAYASS_ENABLED": "yes",
+          "MAYASS_REMOTE_ENABLED": "on"
+        },
+        "returncode": 0,
+        "stdout": "True|True|realtime|browser|MayAss|Maymint-Hermes|hermes chat -Q|default",
+        "stderr": ""
+      },
+      {
+        "case": "enable_false_values",
+        "env": {
+          "MAYASS_ENABLED": "false",
+          "MAYASS_REMOTE_ENABLED": "0"
+        },
+        "returncode": 0,
+        "stdout": "False|False|realtime|browser|MayAss|Maymint-Hermes|hermes chat -Q|default",
+        "stderr": ""
+      },
+      {
+        "case": "work_macos",
+        "env": {
+          "MAYASS_DEFAULT_MODE": "work",
+          "MAYASS_AUDIO_OWNER": "macos"
+        },
+        "returncode": 0,
+        "stdout": "False|False|work|macos|MayAss|Maymint-Hermes|hermes chat -Q|default",
+        "stderr": ""
+      },
+      {
+        "case": "invalid_fallback",
+        "env": {
+          "MAYASS_DEFAULT_MODE": "bad",
+          "MAYASS_AUDIO_OWNER": "all"
+        },
+        "returncode": 0,
+        "stdout": "False|False|realtime|browser|MayAss|Maymint-Hermes|hermes chat -Q|default",
+        "stderr": ""
+      },
+      {
+        "case": "whitespace_display_fallback",
+        "env": {
+          "MAYASS_DISPLAY_NAME": "   ",
+          "MAYASS_CODENAME": "   ",
+          "MAYASS_HERMES_COMMAND": "   ",
+          "MAYASS_HERMES_PROFILE": "   "
+        },
+        "returncode": 0,
+        "stdout": "False|False|realtime|browser|MayAss|Maymint-Hermes|hermes chat -Q|default",
+        "stderr": ""
+      }
+    ]
+  },
+  "checks": {
+    "git_status": {
+      "cmd": "git status --short",
+      "exit_code": -1,
+      "output": ""
+    },
+    "diff_name_only": {
+      "cmd": "git diff --name-only -- jarvis/config/settings.py tests/test_mayass_settings.py",
+      "exit_code": -1,
+      "output": ""
+    },
+    "diff_name_only_all": {
+      "cmd": "git diff --name-only",
+      "exit_code": -1,
+      "output": ""
+    },
+    "targeted_pytest": {
+      "cmd": ".venv/bin/python -m pytest tests/test_mayass_settings.py -q",
+      "exit_code": -1,
+      "output": ""
+    },
+    "full_pytest": {
+      "cmd": ".venv/bin/python -m pytest -q",
+      "exit_code": -1,
+      "output": ""
+    },
+    "py_compile_settings": {
+      "cmd": ".venv/bin/python -m py_compile jarvis/config/settings.py tests/test_mayass_settings.py",
+      "exit_code": -1,
+      "output": ""
+    },
+    "remote_process": {
+      "cmd": "pgrep -fl cloudflared || true",
+      "exit_code": -1,
+      "output": ""
+    },
+    "ports": {
+      "cmd": "lsof -nP -iTCP:3001 -sTCP:LISTEN || true; lsof -nP -iTCP:8741 -sTCP:LISTEN || true",
+      "exit_code": -1,
+      "output": ""
+    }
+  },
+  "static": {
+    "all_mayass_flags_in_settings": true,
+    "all_mayass_flags_in_tests": true,
+    "unexpected_changed_production_files": [],
+    "settings_has_no_ui_voice_chat_imports_added": true,
+    "remote_default_false_line": true,
+    "audio_default_browser_line": true,
+    "mode_allowed_realtime_work_only": true
+  }
+}

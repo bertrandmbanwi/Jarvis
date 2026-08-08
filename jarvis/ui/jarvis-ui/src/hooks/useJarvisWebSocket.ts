@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   ConnectionStatus, ChatMessage, CostSummary, WSMessage,
-  ProactiveSuggestion, PlanState, PlanSubtask, ConnectedDevice, PendingConfirmation,
+  ProactiveSuggestion, PlanState, PlanSubtask, ConnectedDevice, PendingConfirmation, ConfirmationDecision,
 } from "@/lib/types";
 import { getApiBaseUrl, getWsUrl, jarvisHeaders } from "@/lib/apiBase";
 
@@ -139,7 +139,7 @@ interface UseJarvisWebSocketReturn {
   status: ConnectionStatus;
   messages: ChatMessage[];
   costSummary: CostSummary | null;
-  sendMessage: (text: string) => void;
+  sendMessage: (text: string, mode?: "realtime" | "work") => void;
   clearMessages: () => void;
   isProcessing: boolean;
   isStreaming: boolean;
@@ -153,7 +153,7 @@ interface UseJarvisWebSocketReturn {
   dismissSuggestion: (id: string) => void;
   activePlan: PlanState | null;
   pendingConfirmations: PendingConfirmation[];
-  respondToConfirmation: (id: string, approved: boolean) => void;
+  respondToConfirmation: (id: string, decision: ConfirmationDecision) => void;
 }
 function detectDeviceType(): { device_type: string; device_name: string } {
   if (typeof navigator === "undefined") {
@@ -749,7 +749,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     };
   }, [connect]);
 
-  const sendMessage = useCallback((text: string) => {
+  const sendMessage = useCallback((text: string, mode: "realtime" | "work" = "realtime") => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.error("[JARVIS WS] Cannot send: not connected");
       return;
@@ -777,7 +777,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     setIsStreaming(false);
     currentStreamRef.current = "";
 
-    wsRef.current.send(JSON.stringify({ message: text }));
+    wsRef.current.send(JSON.stringify({ message: text, mode }));
   }, []);
 
   const clearMessages = useCallback(() => {
@@ -818,7 +818,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     setSuggestions((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
-  const respondToConfirmation = useCallback((id: string, approved: boolean) => {
+  const respondToConfirmation = useCallback((id: string, decision: ConfirmationDecision) => {
     // Remove the prompt optimistically; the server is the source of truth.
     setPendingConfirmations((prev) => prev.filter((c) => c.id !== id));
     const url = `${getApiBaseUrl()}/tools/confirm`;
@@ -826,7 +826,7 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({ action_id: id, approved }),
+      body: JSON.stringify({ action_id: id, decision }),
     }).catch((e) => console.warn("[JARVIS WS] Confirmation response failed:", e));
   }, [authToken]);
 

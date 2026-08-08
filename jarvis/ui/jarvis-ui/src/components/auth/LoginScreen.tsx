@@ -112,10 +112,10 @@ export default function LoginScreen({ onLogin, error }: LoginScreenProps) {
             className="text-3xl font-light tracking-[0.3em] mb-2"
             style={{ color: "#7eb8ff" }}
           >
-            J.A.R.V.I.S.
+            MayAss
           </h1>
           <p className="text-sm text-gray-500 font-light">
-            Enter your access PIN
+            Enter your MayAss access PIN
           </p>
         </div>
 
@@ -161,7 +161,7 @@ export default function LoginScreen({ onLogin, error }: LoginScreenProps) {
         )}
 
         <p className="text-xs text-gray-600 text-center mt-8 leading-relaxed">
-          The PIN is displayed in the JARVIS terminal on startup.
+          The PIN is displayed in the terminal on startup.
           <br />
           Local connections bypass this screen automatically.
         </p>

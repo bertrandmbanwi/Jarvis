@@ -185,7 +185,16 @@ export interface PendingConfirmation {
   summary: string;
   risk: string;
   created_at: number;
+  action_type?: string;
+  affected_targets?: string[];
+  reversible?: boolean;
+  reason?: string;
+  consequence_if_denied?: string;
+  permanent_policy_key?: string;
+  allowed_decisions?: ConfirmationDecision[];
 }
+
+export type ConfirmationDecision = "confirm_once" | "confirm_always" | "deny";
 
 export interface WSMessage {
   token?: string;

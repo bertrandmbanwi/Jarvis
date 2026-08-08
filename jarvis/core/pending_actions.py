@@ -20,6 +20,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from jarvis.core.mayass_policy import ALLOWED_DECISIONS, evaluate_confirmation_decision
+
 logger = logging.getLogger("jarvis.pending_actions")
 
 DEFAULT_TIMEOUT_S = 120.0
@@ -42,6 +44,12 @@ class PendingAction:
     summary: str
     risk: str
     created_at: float
+    action_type: str = ""
+    affected_targets: tuple[str, ...] = ()
+    reversible: bool = False
+    reason: str = ""
+    consequence_if_denied: str = ""
+    permanent_policy_key: str = ""
 
     def public(self) -> dict[str, Any]:
         return {
@@ -50,6 +58,13 @@ class PendingAction:
             "summary": self.summary,
             "risk": self.risk,
             "created_at": self.created_at,
+            "action_type": self.action_type or self.tool_name,
+            "affected_targets": list(self.affected_targets),
+            "reversible": self.reversible,
+            "reason": self.reason,
+            "consequence_if_denied": self.consequence_if_denied,
+            "permanent_policy_key": self.permanent_policy_key,
+            "allowed_decisions": ALLOWED_DECISIONS,
         }
 
 
@@ -74,12 +89,51 @@ def list_pending() -> list[dict[str, Any]]:
     return [action.public() for action in _pending.values()]
 
 
-def resolve(action_id: str, approved: bool) -> bool:
+def create_pending_action(
+    *,
+    action_type: str,
+    summary: str,
+    risk: str,
+    affected_targets: list[str] | tuple[str, ...] = (),
+    reversible: bool = False,
+    reason: str = "",
+    consequence_if_denied: str = "",
+    permanent_policy_key: str = "",
+) -> PendingAction:
+    """Create a rich pending action without executing anything."""
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[bool] = loop.create_future()
+    action = PendingAction(
+        id=uuid.uuid4().hex,
+        tool_name=action_type,
+        action_type=action_type,
+        summary=summary,
+        risk=risk,
+        affected_targets=tuple(affected_targets),
+        reversible=reversible,
+        reason=reason,
+        consequence_if_denied=consequence_if_denied,
+        permanent_policy_key=permanent_policy_key,
+        created_at=time.time(),
+    )
+    _pending[action.id] = action
+    _futures[action.id] = future
+    return action
+
+
+def resolve(action_id: str, approved: bool | str) -> bool:
     """Answer a pending confirmation. Returns False if it is unknown or settled."""
+    action = _pending.get(action_id)
     future = _futures.get(action_id)
     if future is None or future.done():
         return False
-    future.set_result(approved)
+    decision = evaluate_confirmation_decision(action.risk if action else "medium", approved)
+    if decision.final_decision == "deny" and approved not in {False, "deny"}:
+        return False
+
+    future.set_result(decision.allowed)
+    _pending.pop(action_id, None)
+    _futures.pop(action_id, None)
     return True
 
 
@@ -98,17 +152,14 @@ async def request_confirmation(
     if not _notifiers:
         return False
 
-    loop = asyncio.get_running_loop()
-    future: asyncio.Future[bool] = loop.create_future()
-    action = PendingAction(
-        id=uuid.uuid4().hex,
-        tool_name=tool_name,
+    action = create_pending_action(
+        action_type=tool_name,
         summary=summary,
         risk=risk,
-        created_at=time.time(),
+        reason="Tool call requires human confirmation.",
+        consequence_if_denied="The tool call will not run.",
     )
-    _pending[action.id] = action
-    _futures[action.id] = future
+    future = _futures[action.id]
 
     payload = {"type": "confirmation_required", "confirmation": action.public()}
     delivered = False
