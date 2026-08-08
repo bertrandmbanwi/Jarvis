@@ -1,0 +1,179 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>รายงานเจาะลึก 3 ฟังก์ชัน Jarvis สู่ Maymint</title><style>
+:root{--bg:#080a0f;--panel:#101722;--panel2:#142131;--ink:#eef8ff;--muted:#9fb1c4;--line:#243549;--accent:#78e7ff;--mint:#9cffd2;--warn:#ffd166;--bad:#ff6b7a;--purple:#c6a8ff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% -10%,rgba(120,231,255,.17),transparent 32%),radial-gradient(circle at 86% 4%,rgba(198,168,255,.13),transparent 30%),linear-gradient(180deg,#080a0f,#0d1219 45%,#080a0f);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,sans-serif;line-height:1.72}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}.layout{display:grid;grid-template-columns:330px 1fr;min-height:100vh}aside{position:sticky;top:0;height:100vh;overflow:auto;background:rgba(8,12,18,.86);border-right:1px solid var(--line);padding:26px 22px;backdrop-filter:blur(16px)}.logo{font-size:12px;text-transform:uppercase;letter-spacing:.18em;color:var(--mint)}aside h1{font-size:27px;line-height:1.08;margin:10px 0 14px;letter-spacing:-.04em}.meta{font-size:12px;color:var(--muted);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0}nav{display:flex;flex-direction:column;gap:7px;margin-top:18px}nav a{font-size:13px;color:#c7d9e8;padding:8px 10px;border-radius:10px}nav a:hover{background:#142033;color:white;text-decoration:none}main{max-width:1240px;padding:42px clamp(22px,4vw,74px) 90px}.hero{border:1px solid var(--line);border-radius:32px;background:linear-gradient(135deg,rgba(19,31,46,.96),rgba(10,15,23,.82));padding:38px;box-shadow:0 24px 80px rgba(0,0,0,.42);margin-bottom:18px}.eyebrow{font-size:13px;color:var(--mint);letter-spacing:.16em;text-transform:uppercase}.hero h2{font-size:clamp(36px,5.5vw,72px);line-height:.98;letter-spacing:-.065em;margin:16px 0}.hero p{font-size:18px;color:#c9d9e8;max-width:920px}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0 34px}.summary div,.focus-grid div,.cards div,.limits div,.timeline div{border:1px solid var(--line);background:rgba(17,27,40,.78);border-radius:20px;padding:16px}.summary b,.focus-grid b,.cards b{display:block;color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:.12em}.summary span,.focus-grid span,.cards span{display:block;font-size:24px;font-weight:800;margin:6px 0;letter-spacing:-.04em}small,.summary small,.focus-grid small{color:var(--muted)}article{border:1px solid var(--line);border-radius:30px;background:rgba(10,15,22,.74);padding:34px;box-shadow:0 24px 80px rgba(0,0,0,.32)}section{border-top:1px solid rgba(255,255,255,.08);padding:24px 0}section:first-child{border-top:0;padding-top:0}h2{font-size:30px;line-height:1.2;margin:0 0 14px;letter-spacing:-.04em}h3{font-size:20px;margin:24px 0 8px;color:#dff8ff}p,li,td{color:#cbd9e5}strong{color:white}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0e2230;border:1px solid #1e3a4b;color:#baf4ff;border-radius:7px;padding:2px 6px;font-size:.92em}ul,ol{padding-left:24px}li{margin:6px 0}li::marker{color:var(--accent)}.focus-grid,.cards,.limits{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}.cards{grid-template-columns:repeat(4,1fr)}.limits{grid-template-columns:repeat(2,1fr)}.matrix{width:100%;border-collapse:collapse;margin:16px 0;border:1px solid var(--line);border-radius:16px;overflow:hidden}.matrix th,.matrix td{border-bottom:1px solid var(--line);padding:12px;text-align:left;vertical-align:top}.matrix th{background:#101b28;color:white}.tag{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:12px;background:#101b28}.tag.good{color:var(--mint);border-color:rgba(156,255,210,.45)}.tag.mid{color:var(--warn);border-color:rgba(255,209,102,.45)}.tag.bad{color:var(--bad);border-color:rgba(255,107,122,.45)}.diagram{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin:16px 0}.diagram span{border:1px solid var(--line);border-radius:16px;background:#101b28;padding:11px 13px}.diagram b{color:var(--accent)}.key{border-left:4px solid var(--mint);background:rgba(156,255,210,.08);padding:12px 14px;border-radius:0 14px 14px 0}.danger{border-left:4px solid var(--bad);background:rgba(255,107,122,.08);padding:12px 14px;border-radius:0 14px 14px 0}pre{overflow:auto;background:#071019;border:1px solid #1d3344;border-radius:18px;padding:18px}pre code{display:block;background:transparent;border:0;color:#d8eff8;padding:0;white-space:pre}.timeline{display:grid;gap:12px}.timeline b,.limits b{display:block;color:var(--mint);font-size:18px}footer{color:var(--muted);font-size:12px;margin-top:26px}
+@media(max-width:1000px){.layout{display:block}aside{position:relative;height:auto}.summary,.cards{grid-template-columns:1fr 1fr}}@media(max-width:680px){main{padding:18px}.hero,article{padding:22px}.summary,.focus-grid,.cards,.limits{grid-template-columns:1fr}}
+</style></head><body><div class="layout"><aside><div class="logo">Maymint / Hermes</div><h1>เจาะลึก 3 ฟังก์ชันที่ควรเพิ่ม</h1><div class="meta"><div>ภาษา: ไทย</div><div>รูปแบบ: HTML focused report</div><div>Scope: Chat command / Voice / Overlay</div><div>Runtime: static inspection, no setup/full run</div></div><nav><a href="#why">0. โฟกัสรายงาน: ไม่สนใจ tools อื่นแล้ว สนใจ 3 แกนที่ Maymint ยังขาด</a>
+<a href="#executive">1. สรุปแบบตัดสินใจ: ควรเพิ่มอะไรเข้า Maymint</a>
+<a href="#chat">2. คุย/สั่งงานทั่วไป: Jarvis ทำงานยังไง</a>
+<a href="#chat-limits">3. คุย/สั่งงานทั่วไป: ทำได้แค่ไหนและข้อจำกัด</a>
+<a href="#voice">4. Voice assistant: pipeline จริงของ Jarvis</a>
+<a href="#voice-add">5. Voice assistant: สิ่งที่ควรเพิ่มเข้า Maymint</a>
+<a href="#overlay">6. Desktop overlay: สิ่งที่ Jarvis ทำไว้ดีมาก</a>
+<a href="#overlay-add">7. Desktop overlay: แบบที่ควรทำให้ Maymint</a>
+<a href="#limits">8. ข้อจำกัดเฉพาะ 3 ฟังก์ชันนี้</a>
+<a href="#plan">9. Roadmap ที่มายแนะนำ: เพิ่ม 3 ฟังก์ชันนี้เข้า Maymint</a>
+<a href="#tests">10. Test ที่ควรทำเพื่อพิสูจน์ว่าเพิ่มแล้วคุ้ม</a></nav></aside><main><header class="hero"><div class="eyebrow">Focused Reverse Engineering</div><h2>Jarvis มีอะไรที่ Maymint ยังควรเอามาเพิ่มจริง ๆ</h2><p>รายงานนี้ตัดของที่ Hermes/Maymint ทำได้อยู่แล้วออก แล้วเจาะเฉพาะ 3 ชั้นที่ทำให้ผู้ช่วย “มีตัวตนและใช้งานแบบ Jarvis” คือ คุย/สั่งงานทั่วไป, voice assistant, และ desktop overlay</p></header><div class="summary"><div><b>Priority 1</b><span>Desktop overlay</span><small>เห็นภาพที่สุดและเสี่ยงต่ำถ้าทำแบบ mock/state ก่อน</small></div><div><b>Priority 2</b><span>Voice flow</span><small>push-to-talk + TTS + follow-up ก่อน wake word</small></div><div><b>Priority 3</b><span>Command layer</span><small>Hermes brain เดิม แต่เพิ่ม voice/overlay routing</small></div></div><article><section id="why"><h2>0. โฟกัสรายงาน: ไม่สนใจ tools อื่นแล้ว สนใจ 3 แกนที่ Maymint ยังขาด</h2>
+<p>บอสพูดถูก: หลายอย่างอย่าง file/shell/browser/search/automation มายหรือ Hermes ทำได้อยู่แล้ว หรืออย่างน้อยมีเครื่องมือ native อยู่แล้ว สิ่งที่น่าสนใจจาก Jarvis จริง ๆ คือ <strong>ประสบการณ์ผู้ช่วยที่รู้สึกเป็นตัวตนบน desktop</strong> ไม่ใช่แค่ tools เพิ่ม</p>
+<div class="focus-grid">
+  <div><b>คุย/สั่งงานทั่วไป</b><span>Conversation Command Layer</span><small>รับคำสั่งแบบธรรมชาติ → เลือกว่าจะตอบเร็ว วางแผน หรือสั่งงานยาว</small></div>
+  <div><b>Voice assistant</b><span>Hands-free Interaction</span><small>wake/hotkey → STT → brain → TTS → follow-up window</small></div>
+  <div><b>Desktop overlay</b><span>Maymint Presence</span><small>orb/หน้าต่างลอย แสดงสถานะ ฟัง คิด พูด และเป็นจุดเรียก Maymint</small></div>
+</div>
+<p class="key"><strong>แก่นที่ต้องเอามา:</strong> ทำให้ Maymint มี “หน้า/เสียง/จังหวะการคุย” บนเครื่อง ไม่ใช่แค่ terminal agent ที่เก่งอยู่เบื้องหลัง</p>
+</section>
+<section id="executive"><h2>1. สรุปแบบตัดสินใจ: ควรเพิ่มอะไรเข้า Maymint</h2>
+<table class="matrix"><thead><tr><th>ฟังก์ชัน</th><th>คุณค่ากับบอส</th><th>ควรเอาจาก Jarvis แค่ไหน</th><th>วิธีเอามา</th></tr></thead><tbody>
+<tr><td>คุย/สั่งงานทั่วไป</td><td>ทำให้คำสั่งเสียง/desktop กลายเป็นงานจริง ไม่ใช่แค่แชท</td><td><span class="tag mid">เอาแนวคิด</span></td><td>ใช้ Hermes brain เดิม แต่ยืม routing: quick chat / agent / plan+execute / async ack</td></tr>
+<tr><td>Voice assistant</td><td>ทำให้เรียกมายได้แบบไม่ต้องพิมพ์ และตอบกลับอัตโนมัติ</td><td><span class="tag good">เอา pipeline</span></td><td>เริ่มจาก hotkey/web voice ก่อน wake word, ใช้ STT/TTS ที่บอสมีแล้ว แล้วค่อยใส่ follow-up</td></tr>
+<tr><td>Desktop overlay</td><td>ทำให้มาย “อยู่บนจอ” มีสถานะ ฟัง/คิด/พูด เห็นภาพชัด</td><td><span class="tag good">เอาเต็มกว่าเพื่อน</span></td><td>ทำ Swift/Web overlay ต่อ Hermes WebSocket; ช่วงแรกเป็น display + hotkey ไม่คุมเครื่อง</td></tr>
+</tbody></table>
+<p class="key"><strong>ลำดับที่มายแนะนำ:</strong> Desktop overlay mock → WebSocket state bridge → text/voice command routing → TTS/animation sync → wake word ทีหลัง</p>
+</section>
+<section id="chat"><h2>2. คุย/สั่งงานทั่วไป: Jarvis ทำงานยังไง</h2>
+<p>ใน Jarvis “คุย/สั่งงาน” ไม่ได้เป็นแค่ prompt ไป LLM ตรง ๆ แต่มันมีชั้นตัดสินใจก่อนว่าจะตอบแบบไหน</p>
+<div class="diagram"><span>User text/voice</span><b>→</b><span>sanitize</span><b>→</b><span>local route</span><b>→</b><span>tier select</span><b>→</b><span>chat / agent / plan</span><b>→</b><span>memory + response</span></div>
+<h3>หลักฐานโค้ด</h3>
+<ul>
+<li><code>jarvis/core/brain.py:282-387</code> — <code>process()</code> รับ input, sanitize, local route, save conversation, เลือก tier, แล้ว route ไป chat/plan/agent</li>
+<li><code>jarvis/core/brain.py:365-387</code> — ถ้า fast + chat-only → chat; ถ้าซับซ้อน → planner; ไม่งั้น agent executor</li>
+<li><code>jarvis/agent/planner.py:186-250</code> — heuristic ว่าควรแตก task ไหมจาก sequence words/action verbs/compound actions</li>
+<li><code>jarvis/agent/executor.py:89-154</code> — executor ใช้ native tool-use loop + QA retry</li>
+<li><code>jarvis/agent/executor.py:223-341</code> — tool execution gate: validate args, permission, confirmation, timeout, cache, audit</li>
+</ul>
+<h3>มันทำอะไรได้ในเชิงประสบการณ์</h3>
+<ul>
+<li>คำถามสั้น ๆ → ตอบเร็ว ไม่ต้องแตก plan</li>
+<li>คำสั่งงานเดียว → เลือก tool ที่เกี่ยวข้องแล้ว execute</li>
+<li>งานหลายขั้น → แตก subtasks สูงสุด 8 ขั้น แล้วทำต่อเนื่อง</li>
+<li>งานเสียงที่นาน → ตอบ ack ก่อน เช่น “On it” แล้วทำงาน background</li>
+<li>มี memory context ช่วยให้ตอบต่อเนื่องได้</li>
+</ul>
+<h3>อะไรที่ Maymint/Hermes มีแล้ว</h3>
+<p>Hermes มี brain/tool/session/memory/cron/delegation ดีกว่าอยู่แล้ว ดังนั้นไม่ควรย้าย JarvisBrain มาแทน แต่ควรเอา <strong>interaction routing</strong> มาเป็น layer หน้า Hermes</p>
+<h3>สิ่งที่ควรเพิ่มเข้า Maymint</h3>
+<ol>
+<li><strong>Command Router:</strong> แยกคำสั่งเป็น chat / quick action / plan / long-running task</li>
+<li><strong>Voice-friendly ack:</strong> ถ้างานนาน ให้มายพูดรับก่อน แล้วแจ้งผลทีหลัง</li>
+<li><strong>State broadcasting:</strong> ทุก request ส่ง state ไป overlay: listening, thinking, speaking, done, error</li>
+<li><strong>Short response mode:</strong> สำหรับเสียง ให้ตอบสั้นก่อน รายละเอียดเก็บใน UI/report</li>
+<li><strong>Follow-up context:</strong> หลังพูดจบ เปิดช่วงให้บอสตอบต่อโดยไม่ต้องเรียกใหม่</li>
+</ol>
+</section>
+<section id="chat-limits"><h2>3. คุย/สั่งงานทั่วไป: ทำได้แค่ไหนและข้อจำกัด</h2>
+<table class="matrix"><thead><tr><th>ความสามารถ</th><th>ระดับพร้อม</th><th>ข้อจำกัด</th><th>Maymint adaptation</th></tr></thead><tbody>
+<tr><td>แยก chat vs command</td><td><span class="tag good">สูง</span></td><td>heuristic อังกฤษเป็นหลัก</td><td>ต้องเพิ่มภาษาไทย/ภาษาพูดบอส เช่น “เปิดให้หน่อย”, “ลองดู”, “ชำแหละ”</td></tr>
+<tr><td>แตก task ยาว</td><td><span class="tag good">สูง</span></td><td>max 8 subtasks, ใช้ LLM tier เดิม</td><td>ให้ Hermes planner/delegation ทำแทน แต่ส่ง progress กลับ overlay</td></tr>
+<tr><td>ตอบแบบ voice-friendly</td><td><span class="tag mid">กลาง</span></td><td>ยังเป็น persona JARVIS/Sir ภาษาอังกฤษ</td><td>ต้องเปลี่ยนเป็น Maymint ไทย สั้น อบอุ่น ไม่เวิ่น</td></tr>
+<tr><td>background long task</td><td><span class="tag mid">กลาง</span></td><td>fire-and-forget ใน voice mode ยังต้องดู error/notification</td><td>ใช้ Hermes process/cron/delegation ที่มีอยู่แล้ว แล้ว overlay แสดง progress</td></tr>
+<tr><td>memory context</td><td><span class="tag mid">กลาง</span></td><td>ซ้ำกับ Hermes/Oracle และเสี่ยงส่ง memory เข้า cloud LLM</td><td>ใช้ Hermes memory/Oracle เป็น source เดียว ไม่เพิ่ม Chroma ซ้ำ</td></tr>
+</tbody></table>
+<p class="danger"><strong>ข้อจำกัดหลัก:</strong> Jarvis คิดแบบ JARVIS อังกฤษ/Anthropic-first ส่วน Maymint ต้องคิดแบบไทย + Hermes-native + safety discipline เดิมของบอส</p>
+</section>
+<section id="voice"><h2>4. Voice assistant: pipeline จริงของ Jarvis</h2>
+<p>นี่คือส่วนที่มีค่ามาก เพราะ Jarvis ออกแบบ voice เป็น pipeline มี state ไม่ใช่ loop ฟังมั่วแบบ Maya-ai-1.2</p>
+<div class="diagram"><span>Wake word / Hotkey</span><b>→</b><span>Record until silence</span><b>→</b><span>STT</span><b>→</b><span>Brain</span><b>→</b><span>TTS</span><b>→</b><span>Follow-up 8s</span></div>
+<h3>Input voice</h3>
+<ul>
+<li><code>jarvis/voice/listener.py:17-31</code> — optional PyAudio/OpenWakeWord</li>
+<li><code>listener.py:87-162</code> — initialize PyAudio, download wake models, initialize STT</li>
+<li><code>listener.py:108-115</code> — hardcode OpenWakeWord model <code>hey_jarvis_v0.1</code></li>
+<li><code>listener.py:121-160</code> — STT priority: Moonshine ONNX → faster-whisper → original whisper</li>
+<li><code>listener.py:258-356</code> — main listen loop, wake word/hotkey/follow-up detection</li>
+<li><code>listener.py:428-507</code> — record speech until silence threshold</li>
+<li><code>listener.py:607-656</code> — filter Whisper hallucination/noise เช่น “thanks for watching”</li>
+</ul>
+<h3>Output voice</h3>
+<ul>
+<li><code>jarvis/voice/speaker.py:43-73</code> — TTS backend priority: Kokoro → Edge TTS → macOS say</li>
+<li><code>speaker.py:123-198</code> — clean markdown/naturalize text for TTS</li>
+<li><code>speaker.py:239-363</code> — Kokoro chunk streaming + amplitude envelope</li>
+<li><code>speaker.py:418-483</code> — macOS say fallback + ffmpeg convert for browser audio</li>
+<li><code>speaker.py:565-583</code> — compute amplitude envelope for orb animation</li>
+</ul>
+<h3>Voice mode wiring</h3>
+<ul>
+<li><code>jarvis/main.py:232-250</code> — full mode creates shared listener/speaker and greets user</li>
+<li><code>jarvis/main.py:332-359</code> — on_speech: stop current speech, set thinking, process brain, speak response</li>
+<li><code>jarvis/main.py:337-353</code> — complex tasks get quick ack then background task</li>
+<li><code>jarvis/main.py:369-379</code> — voice confirmation notifier for pending actions</li>
+</ul>
+</section>
+<section id="voice-add"><h2>5. Voice assistant: สิ่งที่ควรเพิ่มเข้า Maymint</h2>
+<div class="cards"><div><b>ระยะ 1</b><span>Hotkey voice</span><p>ยังไม่ต้อง wake word ใช้ hotkey/ปุ่มใน overlay กดแล้วพูด ปลอดภัยกว่าและ debug ง่ายกว่า</p></div><div><b>ระยะ 2</b><span>Web/Discord voice bridge</span><p>ใช้ระบบเสียงที่บอสมีแล้วก่อน เพื่อให้ Maymint brain เป็นตัวคุม ไม่ต้องลง stack หนักทันที</p></div><div><b>ระยะ 3</b><span>Local STT/TTS</span><p>เพิ่ม Moonshine/faster-whisper + macOS say/Edge/Kokoro ตามคุณภาพ/latency</p></div><div><b>ระยะ 4</b><span>Wake word</span><p>เพิ่ม OpenWakeWord หลังจาก hotkey voice เสถียรแล้ว</p></div></div>
+<h3>ฟีเจอร์ voice ที่ควรมีใน Maymint</h3>
+<ol>
+<li><strong>Interrupt:</strong> บอสพูดแทรก/กด stop แล้วมายหยุดพูดทันที</li>
+<li><strong>Short voice answer:</strong> ตอบเสียงแบบสั้น ส่วนละเอียดส่งเป็น HTML/report</li>
+<li><strong>Follow-up window:</strong> หลังมายตอบ เปิด 5-8 วินาทีให้บอสพูดต่อได้</li>
+<li><strong>Voice task ack:</strong> งานยาวพูด “ได้ค่ะ กำลังทำให้” แล้ว overlay แสดง progress</li>
+<li><strong>Thai STT glossary:</strong> ใช้ glossary เดิมของ Maymint เช่น Hermes, OpenRouter, Jarvis, ชำแหละ</li>
+<li><strong>Privacy switch:</strong> ปุ่มปิดไมค์/ปิด memory injection ชัดเจน</li>
+</ol>
+<h3>สิ่งที่ไม่ควร copy ตรง</h3>
+<ul>
+<li>Wake word hardcode “hey_jarvis_v0.1” ต้องเปลี่ยนเป็น Maymint/มายมิ้นหรือใช้ hotkey ก่อน</li>
+<li>ภาษา/voice defaults เป็นอังกฤษ ต้องรองรับไทยจริง</li>
+<li>Moonshine/Whisper models อาจหนัก ต้อง benchmark latency บน Mac ของบอสก่อน</li>
+<li>อย่าผูก voice กับ full desktop control ตั้งแต่วันแรก</li>
+</ul>
+</section>
+<section id="overlay"><h2>6. Desktop overlay: สิ่งที่ Jarvis ทำไว้ดีมาก</h2>
+<p>นี่คือส่วนที่น่าจะ “เติมความเป็นมาย” ให้ระบบมากที่สุด เพราะทำให้ assistant มีตัวตนบน desktop</p>
+<div class="diagram"><span>Swift floating window</span><b>→</b><span>WKWebView</span><b>→</b><span>overlay HTML / Next overlay</span><b>→</b><span>WebSocket /ws/overlay</span><b>→</b><span>Voice activation + state</span></div>
+<h3>หลักฐานโค้ด</h3>
+<ul>
+<li><code>desktop-overlay/JarvisOverlay.swift:74-147</code> — สร้าง transparent borderless NSWindow, always-on-top, accessory app</li>
+<li><code>JarvisOverlay.swift:169-199</code> — load overlay จาก <code>JARVIS_OVERLAY_URL</code> หรือ bundled <code>overlay.html</code></li>
+<li><code>JarvisOverlay.swift:202-262</code> — global hotkey Control+Option+J แล้วเรียก <code>window.jarvisActivateVoice()</code></li>
+<li><code>desktop-overlay/overlay.html:249-306</code> — ต่อ <code>ws://localhost:8741/ws/overlay</code> และส่ง <code>activate_voice</code></li>
+<li><code>server.py:2744-2781</code> — overlay WebSocket local-only, รับ command activate_voice/ping</li>
+<li><code>server.py:60-110</code> และ <code>329-436</code> — broadcast overlay state/voice state/audio envelope</li>
+</ul>
+<h3>สิ่งที่ overlay แสดงได้</h3>
+<ul>
+<li>สถานะ: idle / listening / thinking / speaking / error</li>
+<li>ข้อความที่บอสพูดล่าสุด</li>
+<li>คำตอบล่าสุดของ assistant</li>
+<li>orb animation ตาม state</li>
+<li>audio amplitude envelope ให้ orb ขยับตามเสียงพูด</li>
+<li>hotkey เรียก voice activation</li>
+</ul>
+</section>
+<section id="overlay-add"><h2>7. Desktop overlay: แบบที่ควรทำให้ Maymint</h2>
+<p>มายไม่ควรเอา overlay ของ Jarvis มาเปลี่ยนชื่อเฉย ๆ แต่ควรทำเป็น <strong>Maymint Presence Layer</strong> ต่อกับ Hermes</p>
+<table class="matrix"><thead><tr><th>ชั้น</th><th>หน้าที่</th><th>ทำก่อน/หลัง</th></tr></thead><tbody>
+<tr><td>Overlay Shell</td><td>หน้าต่างลอย + orb + hotkey + drag/pin</td><td><span class="tag good">ทำก่อน</span></td></tr>
+<tr><td>State Bridge</td><td>รับ state จาก Hermes: idle/listening/thinking/speaking/error/progress</td><td><span class="tag good">ทำก่อน</span></td></tr>
+<tr><td>Voice Button</td><td>กดแล้วอัดเสียง ส่งเข้า Hermes voice endpoint</td><td><span class="tag good">ทำก่อน</span></td></tr>
+<tr><td>Task Progress</td><td>แสดงงานที่กำลังทำ, tool ที่กำลังใช้, pending confirmation</td><td><span class="tag mid">ทำกลาง</span></td></tr>
+<tr><td>Conversation Peek</td><td>ดูคำถาม/คำตอบล่าสุดแบบสั้น</td><td><span class="tag mid">ทำกลาง</span></td></tr>
+<tr><td>Command Palette</td><td>พิมพ์สั่ง Maymint จาก overlay</td><td><span class="tag mid">ทำกลาง</span></td></tr>
+<tr><td>Desktop Control</td><td>กด confirm แล้วให้มายคุมแอป/ไฟล์/browser</td><td><span class="tag bad">ทำหลังสุด</span></td></tr>
+</tbody></table>
+<h3>หน้าตาที่ควรเป็นสำหรับบอส</h3>
+<ul>
+<li>ไม่ใช่ Jarvis ผู้ชาย/Sir แต่เป็น Maymint/มาย น้ำเสียงไทย อบอุ่น</li>
+<li>ควรมี mode: เงียบ, พร้อมฟัง, กำลังคิด, กำลังทำงาน, ต้องการอนุมัติ</li>
+<li>มีปุ่มหยุดเสียง/ปิดไมค์/ปิด overlay ชัดเจน</li>
+<li>ถ้างานยาว ให้ overlay แสดง “มายกำลังทำอะไรอยู่” แทนให้บอสเดา</li>
+<li>ไม่ควรเปิด browser/dashboard เยอะ ๆ เองแบบที่บอสไม่ชอบ</li>
+</ul>
+</section>
+<section id="limits"><h2>8. ข้อจำกัดเฉพาะ 3 ฟังก์ชันนี้</h2>
+<div class="limits"><div><b>ภาษาไทย</b><p>Jarvis เดิมเป็นอังกฤษ ต้องเพิ่ม Thai STT prompts/glossary, Thai response style, Thai command intent</p></div><div><b>Latency</b><p>Voice pipeline ถ้าใช้ local Whisper/Kokoro อาจหน่วง ต้อง benchmark ก่อนเลือก stack</p></div><div><b>macOS permission</b><p>overlay/hotkey/mic/screen อาจต้อง permission หลายจุด ต้องแยกเปิดทีละชั้น</p></div><div><b>Provider mismatch</b><p>Jarvis ผูก Anthropic/Ollama แต่ Maymint ใช้ Hermes/OpenRouter/custom providers</p></div><div><b>Full mode ไม่เหมาะ</b><p>เปิดหลาย service พร้อมกัน ทำให้บอสรู้สึกวุ่นวาย ต้องทำ minimal mode</p></div><div><b>Safety UX</b><p>ถ้า overlay กดสั่ง desktop ได้ ต้องมี confirmation UX ไม่งั้นเสี่ยงพัง/กดผิด</p></div></div>
+</section>
+<section id="plan"><h2>9. Roadmap ที่มายแนะนำ: เพิ่ม 3 ฟังก์ชันนี้เข้า Maymint</h2>
+<div class="timeline"><div><b>Phase 1 — Overlay Mock</b><p>ทำ HTML/Swift overlay ที่ยังไม่คุมเครื่อง แสดง state fake/local ได้ เปิด/ปิด/ลากได้ ไม่มี side effect</p></div><div><b>Phase 2 — Hermes State Bridge</b><p>ทำ local WebSocket ให้ Hermes ส่ง state ไป overlay: listening/thinking/speaking/progress/error</p></div><div><b>Phase 3 — Text Command Layer</b><p>เพิ่ม command palette ใน overlay พิมพ์สั่ง Hermes ได้ เห็น response สั้น ๆ</p></div><div><b>Phase 4 — Push-to-talk Voice</b><p>กด hotkey/ปุ่มแล้วอัดเสียง ส่ง STT เข้า Hermes ใช้ TTS ตอบ และ sync orb amplitude</p></div><div><b>Phase 5 — Follow-up + Interrupt</b><p>ตอบต่อเนื่องได้โดยไม่ต้องกดซ้ำ และกด/พูดหยุดมายได้ทันที</p></div><div><b>Phase 6 — Wake Word</b><p>ค่อยเพิ่ม wake word หลังจาก push-to-talk เสถียรและ latency ดีแล้ว</p></div></div>
+<p class="key"><strong>ถ้าจะเริ่มงานจริง:</strong> มายแนะนำสร้าง “Maymint Overlay Prototype” ก่อน เพราะบอสจะเห็นภาพทันทีโดยยังไม่เสี่ยงคุมเครื่อง</p>
+</section>
+<section id="tests"><h2>10. Test ที่ควรทำเพื่อพิสูจน์ว่าเพิ่มแล้วคุ้ม</h2>
+<table class="matrix"><thead><tr><th>Test</th><th>คำสั่ง/สถานการณ์</th><th>ผ่านเมื่อ</th><th>ความเสี่ยง</th></tr></thead><tbody>
+<tr><td>Overlay visibility</td><td>เปิด overlay แล้วลาก/ย้าย/ปิดได้</td><td>ไม่เปิด browser มั่ว ไม่บังงานเกินไป</td><td><span class="tag good">ต่ำ</span></td></tr>
+<tr><td>State sync</td><td>Hermes ส่ง state thinking/speaking</td><td>orb เปลี่ยน state ใน < 200ms</td><td><span class="tag good">ต่ำ</span></td></tr>
+<tr><td>Text command</td><td>พิมพ์ “สรุป repo นี้ให้หน่อย”</td><td>Hermes ตอบ และ overlay แสดง progress</td><td><span class="tag good">ต่ำ</span></td></tr>
+<tr><td>Push-to-talk Thai</td><td>กด hotkey พูดไทยปนเทคนิค</td><td>STT เข้าใจคำหลัก เช่น Hermes/OpenRouter/Jarvis</td><td><span class="tag mid">กลาง</span></td></tr>
+<tr><td>Voice answer</td><td>ถามง่าย ๆ แล้วให้มายตอบเสียงสั้น</td><td>เสียงออกอัตโนมัติ ไม่ต้องเปิดไฟล์เอง</td><td><span class="tag mid">กลาง</span></td></tr>
+<tr><td>Interrupt</td><td>ระหว่างมายพูด กด stop</td><td>เสียงหยุดใน < 500ms และ state กลับ idle</td><td><span class="tag mid">กลาง</span></td></tr>
+<tr><td>Long task ack</td><td>สั่งงานยาว</td><td>มายพูดรับก่อน แล้ว overlay แสดง running/progress</td><td><span class="tag mid">กลาง</span></td></tr>
+</tbody></table>
+</section></article><footer>Generated for Boss / Maymint-Hermes. No secrets included. This is a focused static report based on local repo inspection.</footer></main></div></body></html>

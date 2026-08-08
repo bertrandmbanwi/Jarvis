@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis Reverse Engineering Report — Maymint/Hermes</title>
+<style>
+:root {
+  --bg:#0b0f14; --panel:#111820; --panel2:#16212c; --ink:#e8f1f8; --muted:#98a9b7;
+  --line:#253442; --accent:#62d4ff; --accent2:#92ffca; --warn:#ffd166; --danger:#ff6b7a;
+  --code:#071018; --shadow: 0 20px 70px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 20% 0%,rgba(98,212,255,.13),transparent 30%),linear-gradient(180deg,#0b0f14,#0e1319 45%,#090d12);color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.68}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+.shell{display:grid;grid-template-columns:300px minmax(0,1fr);min-height:100vh}
+aside{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:rgba(8,13,18,.82);backdrop-filter:blur(18px);padding:24px}
+.brand{font-size:13px;color:var(--muted);letter-spacing:.18em;text-transform:uppercase;margin-bottom:8px}
+aside h1{font-size:24px;line-height:1.15;margin:0 0 12px}
+.meta{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px;margin-top:18px}
+.toc{display:flex;flex-direction:column;gap:7px;margin-top:22px}
+.toc a{color:#b9cad7;font-size:13px;padding:7px 9px;border-radius:8px}
+.toc a:hover{background:#15202a;text-decoration:none;color:var(--ink)}
+.toc-l2{font-weight:650}
+main{padding:42px clamp(22px,4vw,70px) 80px;max-width:1180px}
+.hero{border:1px solid var(--line);background:linear-gradient(135deg,rgba(17,24,32,.96),rgba(15,24,31,.72));box-shadow:var(--shadow);border-radius:28px;padding:34px;margin-bottom:24px}
+.eyebrow{display:inline-flex;gap:8px;align-items:center;color:var(--accent2);font-size:13px;text-transform:uppercase;letter-spacing:.14em}
+.hero h2{font-size:clamp(34px,5vw,66px);line-height:.98;margin:16px 0 16px;letter-spacing:-.055em}
+.hero p{max-width:850px;color:#bed0dc;font-size:18px;margin:0}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:20px 0 32px}
+.card{border:1px solid var(--line);border-radius:20px;padding:18px;background:rgba(19,29,38,.78)}
+.card span{display:block;font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:.12em}
+.card h3{font-size:19px;line-height:1.2;margin:8px 0}
+.card p{font-size:13px;color:var(--muted);margin:0}
+.report{border:1px solid var(--line);border-radius:28px;background:rgba(12,18,24,.68);padding:30px;box-shadow:var(--shadow)}
+h1,h2,h3,h4{scroll-margin-top:24px;letter-spacing:-.025em}
+.report h1{font-size:36px;margin-top:0}
+.report h2{font-size:29px;margin:42px 0 14px;padding-top:20px;border-top:1px solid var(--line)}
+.report h3{font-size:22px;margin:28px 0 10px;color:#dff5ff}
+.report h4{font-size:17px;color:#c7e8f5}
+p{color:#c9d7e0} ul{margin:8px 0 18px;padding-left:22px} li{margin:5px 0;color:#cbd8e1} li::marker{color:var(--accent)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#10202b;color:#b9f2ff;padding:2px 6px;border-radius:7px;font-size:.92em}
+pre{position:relative;overflow:auto;background:var(--code);border:1px solid #1e3442;border-radius:18px;padding:42px 18px 18px;margin:16px 0 24px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
+pre code{background:transparent;color:#d5edf8;padding:0}
+.code-label{position:absolute;top:0;left:0;right:0;height:30px;background:#0e1a23;border-bottom:1px solid #1e3442;color:#82dfff;font-size:12px;padding:5px 12px}
+.step{border-left:3px solid var(--accent2);padding-left:12px;background:rgba(146,255,202,.06);border-radius:0 10px 10px 0}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 0}
+.badge{border:1px solid var(--line);background:#101923;color:#c9dbe6;border-radius:999px;padding:7px 10px;font-size:12px}
+.warn{border-color:rgba(255,209,102,.4);color:#ffe2a0;background:rgba(255,209,102,.08)}
+@media(max-width:900px){.shell{display:block} aside{position:relative;height:auto} .grid{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){main{padding:18px} .grid{grid-template-columns:1fr} .hero{padding:24px} .report{padding:20px}}
+@media print{body{background:#fff;color:#111} aside{display:none} .shell{display:block} main{max-width:none;padding:0} .hero,.report,.card{box-shadow:none;background:#fff;color:#111} a{color:#0645ad}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside>
+  <div class="brand">Maymint / Hermes</div>
+  <h1>Jarvis Reverse Engineering</h1>
+  <div class="badges"><span class="badge">Static inspection</span><span class="badge">104 tools</span><span class="badge warn">Safe-run required</span></div>
+  <div class="meta">
+    <div>Generated: 2026-07-31</div>
+    <div>Repo: bertrandmbanwi/Jarvis</div>
+    <div>Local: /Users/meuu/Desktop/โปรเจ็ค hermes/Jarvis-bertrandmbanwi</div>
+  </div>
+  <nav class="toc"><a class="toc-l2" href="#scope">Scope</a>
+<a class="toc-l2" href="#repository-evidence">Repository Evidence</a>
+<a class="toc-l2" href="#top-level-structure">Top-Level Structure</a>
+<a class="toc-l2" href="#claimed-documented-architecture">Claimed/Documented Architecture</a>
+<a class="toc-l2" href="#launch-system">Launch System</a>
+<a class="toc-l2" href="#configuration">Configuration</a>
+<a class="toc-l2" href="#backend-server">Backend / Server</a>
+<a class="toc-l2" href="#brain-agent-orchestration">Brain / Agent Orchestration</a>
+<a class="toc-l2" href="#llm-layer">LLM Layer</a>
+<a class="toc-l2" href="#tool-registry">Tool Registry</a>
+<a class="toc-l2" href="#permissions-safety">Permissions / Safety</a>
+<a class="toc-l2" href="#voice-stack">Voice Stack</a>
+<a class="toc-l2" href="#ui-overlay-browser-bridge">UI / Overlay / Browser Bridge</a>
+<a class="toc-l2" href="#memory-learning">Memory / Learning</a>
+<a class="toc-l2" href="#validation-tests">Validation / Tests</a>
+<a class="toc-l2" href="#setup-risks-do-not-run-blindly">Setup Risks / Do Not Run Blindly</a>
+<a class="toc-l2" href="#recommended-safe-run-path">Recommended safe run path:</a>
+<a class="toc-l2" href="#subagent-cross-check-additions">Subagent Cross-Check Additions</a>
+<a class="toc-l2" href="#what-to-reuse-for-maymint-hermes">What to Reuse for Maymint/Hermes</a>
+<a class="toc-l2" href="#adaptation-direction">Adaptation Direction</a></nav>
+</aside>
+<main>
+<section class="hero">
+  <div class="eyebrow">Reverse Engineering Report</div>
+  <h2>ถอดโครง Jarvis เพื่อเอาแกนที่ดีมาใส่ Maymint/Hermes</h2>
+  <p>รายงาน HTML ฉบับละเอียดจาก static inspection + cross-check subagents: โครง backend, voice, UI/overlay, tool registry, memory, safety, risks และแผน adaptation แบบปลอดภัย</p>
+</section>
+<section class="grid"><article class="card"><span>Verdict</span><h3>มีของจริงกว่า Maya</h3><p>Repo นี้เป็นระบบ voice/desktop assistant เต็มโครง มี backend, UI, overlay, Chrome bridge, memory, tools และ tests จริง แต่มี side effects สูง ต้องรันแบบ safe-first.</p></article>
+<article class="card"><span>Scale</span><h3>104 tools / 190 tracked files</h3><p>Tool registry ใหญ่และมี permission catalog ตรงกัน แต่ high-risk tools บางตัวไม่ require confirmation ต้อง harden ก่อนใช้จริง.</p></article>
+<article class="card"><span>Best reuse</span><h3>Overlay + voice + permission model</h3><p>เอา pattern ไปต่อยอดกับ Hermes/Maymint ดีกว่า migrate ทั้งดุ้น: Swift overlay, wake-followup pipeline, WebSocket state, safety audit.</p></article>
+<article class="card"><span>Run risk</span><h3>อย่ากด full/setup มั่ว</h3><p>setup อาจ install/pull model หนัก; full อาจเปิด overlay/UI/browser/tunnel และ kill port listener บางตัว.</p></article></section>
+<article class="report">
+<h1 id="reverse-engineering-bertrandmbanwi-jarvis">Reverse Engineering: bertrandmbanwi/Jarvis</h1>
+<p>Date: 2026-07-31</p>
+<p>Local path: <code>/Users/meuu/Desktop/โปรเจ็ค hermes/Jarvis-bertrandmbanwi</code></p>
+<p>Upstream: <a href="https://github.com/bertrandmbanwi/Jarvis">https://github.com/bertrandmbanwi/Jarvis</a></p>
+<h2 id="scope">Scope</h2>
+<p>Static inspection only. No full setup or runtime demo was started for this repo. Goal is to decompose the system for possible Maymint/Hermes adaptation.</p>
+<h2 id="repository-evidence">Repository Evidence</h2>
+<ul>
+<li>Full clone, not shallow.</li>
+<li>Branch: <code>main</code></li>
+<li>Latest commit observed: <code>5784e0c Merge pull request #28 from bertrandmbanwi/codex/split-workflows</code></li>
+<li>Commit count: 110</li>
+<li>Git tracked files: 190</li>
+<li>No submodules.</li>
+<li>No git-lfs files observed.</li>
+<li>GitHub API license is null; README badge says MIT but no <code>LICENSE</code> file exists in checkout. Treat license as unclear until verified upstream.</li>
+</ul>
+<h2 id="top-level-structure">Top-Level Structure</h2>
+<pre><div class="code-label">text</div><code>
+.env.example
+
+.github/workflows/ci.yml
+
+CLAUDE.md
+
+HOW-TO.md
+
+README.md
+
+com.jarvis.assistant.plist
+
+desktop-overlay/
+
+docs/
+
+evals/
+
+github-setup.sh
+
+jarvis/
+
+pyproject.toml
+
+requirements*.txt
+
+scripts/
+
+setup.sh
+
+start.sh
+
+templates/prompts/
+
+tests/
+
+</code></pre>
+<p>File counts by extension excluding <code>.git</code> and common build/dependency folders:</p>
+<ul>
+<li>Python: 108</li>
+<li>TSX: 19</li>
+<li>Shell: 9</li>
+<li>JavaScript: 8</li>
+<li>YAML: 7</li>
+<li>TypeScript: 7</li>
+<li>Markdown: 6</li>
+<li>PNG: 6</li>
+<li>JSON: 5</li>
+<li>HTML: 2</li>
+<li>Swift: 1</li>
+</ul>
+<h2 id="claimed-documented-architecture">Claimed/Documented Architecture</h2>
+<p>README architecture shows:</p>
+<pre><div class="code-label">text</div><code>
+Desktop Overlay + Chrome Extension + Next.js UI
+
+        -&gt; FastAPI server on port 8741
+
+        -&gt; Brain / LLM
+
+        -&gt; Voice Pipeline
+
+        -&gt; Multi-Agent Layer
+
+        -&gt; Tool Registry
+
+        -&gt; Memory + Learning
+
+</code></pre>
+<p>Ports and endpoints:</p>
+<ul>
+<li>UI: <code><a href="http://localhost:3000">http://localhost:3000</a></code> by default.</li>
+<li>API: <code><a href="http://localhost:8741">http://localhost:8741</a></code> by default.</li>
+<li>Ollama fallback: <code><a href="http://localhost:11434">http://localhost:11434</a></code>.</li>
+<li>Overlay websocket: <code>ws://localhost:8741/ws/overlay</code>.</li>
+<li>Chrome extension websocket: <code>ws://localhost:8741/ws/extension</code>.</li>
+<li>Optional Cloudflare tunnel exposes UI URL when enabled.</li>
+</ul>
+<h2 id="launch-system">Launch System</h2>
+<p>Key files:</p>
+<ul>
+<li><code>setup.sh</code> — one-time macOS setup.</li>
+<li><code>start.sh</code> — mode launcher.</li>
+<li><code>jarvis/main.py</code> — Python entrypoint and mode router.</li>
+</ul>
+<p>Modes from docs/start script:</p>
+<pre><div class="code-label">bash</div><code>
+./start.sh text
+
+./start.sh voice
+
+./start.sh server
+
+./start.sh full
+
+</code></pre>
+<p><code>full</code> launches roughly:</p>
+<p class="step">1. Ollama if not already running.</p>
+<p class="step">2. Desktop overlay on macOS.</p>
+<p class="step">3. Next.js UI.</p>
+<p class="step">4. Optional Cloudflare tunnel if <code>JARVIS_ENABLE_TUNNEL=true</code> and cloudflared exists.</p>
+<p class="step">5. FastAPI backend with voice listener.</p>
+<p class="step">6. Chrome extension reconnects if installed.</p>
+<p>Important risk: <code>start.sh</code> has <code>stop_listeners_on_ports</code> and may kill listeners on UI/API ports, so inspect port ownership before running. It also opens browser dashboard by default unless <code>JARVIS_OPEN_DASHBOARD=false</code>.</p>
+<h2 id="configuration">Configuration</h2>
+<p>Key files:</p>
+<ul>
+<li><code>.env.example</code></li>
+<li><code>jarvis/config/settings.py</code></li>
+<li><code>jarvis/core/secrets.py</code></li>
+<li><code>jarvis/core/settings_api.py</code></li>
+</ul>
+<p>Important env vars:</p>
+<ul>
+<li><code>ANTHROPIC_API_KEY</code> for Claude cloud backend.</li>
+<li><code>CLAUDE_FAST_MODEL</code>, <code>CLAUDE_BRAIN_MODEL</code>, <code>CLAUDE_DEEP_MODEL</code>.</li>
+<li><code>PREFER_CLAUDE=true</code> default.</li>
+<li><code>OLLAMA_BASE_URL</code>, <code>OLLAMA_MODEL</code>, <code>OLLAMA_FAST_MODEL</code>.</li>
+<li><code>TTS_ENGINE</code>, <code>TTS_VOICE</code>, <code>TTS_SPEED</code>, <code>TTS_BROWSER_FORMAT</code>.</li>
+<li><code>STT_ENGINE</code>, <code>WHISPER_MODEL</code>.</li>
+<li><code>API_PORT</code>, <code>UI_PORT</code>.</li>
+<li><code>JARVIS_PIN_AUTH_ENABLED</code>, <code>JARVIS_ENABLE_TUNNEL</code>, <code>JARVIS_PIN</code>.</li>
+<li><code>JARVIS_TOOL_PERMISSION_MODE</code>; <code>.env.example</code> recommends enforce, docs/OPERATIONS says default audit.</li>
+</ul>
+<p>Settings layer loads <code>.env</code>, then keyring fallback for secrets. Some upstream prompt text is personalized to “Becs”; this must be removed/replaced before adapting to Maymint.</p>
+<h2 id="backend-server">Backend / Server</h2>
+<p>Key files:</p>
+<ul>
+<li><code>jarvis/core/server.py</code> — FastAPI app, ~2,781 lines.</li>
+<li><code>jarvis/main.py</code> — run modes and shared voice/server wiring.</li>
+</ul>
+<p>Important server features:</p>
+<ul>
+<li>Global <code>JarvisBrain</code> instance.</li>
+<li>Auth routes: <code>/auth/login</code>, <code>/auth/status</code>, <code>/auth/logout</code>, <code>/auth/set-pin</code>.</li>
+<li>Chat: <code>POST /chat</code>.</li>
+<li>Background jobs: <code>/jobs</code>, <code>/jobs/{job_id}</code>, cancel endpoint.</li>
+<li>Pending tool confirmations: <code>/tools/pending</code>, <code>/tools/confirm</code>.</li>
+<li>Routines and workflows endpoints.</li>
+<li>Workflow scheduler, approvals, versioning, dry-run, assertions, replay, releases.</li>
+<li>Settings API router.</li>
+<li>Calendar/OAuth/team/profile/proactive/cost APIs.</li>
+<li>WebSocket manager for browser UI, multi-device audio routing, overlay, extension.</li>
+<li>Middleware for tracing, security headers, CSRF protection.</li>
+</ul>
+<h2 id="brain-agent-orchestration">Brain / Agent Orchestration</h2>
+<p>Key files:</p>
+<ul>
+<li><code>jarvis/core/brain.py</code></li>
+<li><code>jarvis/core/llm.py</code></li>
+<li><code>jarvis/agent/planner.py</code></li>
+<li><code>jarvis/agent/executor.py</code></li>
+<li><code>jarvis/agent/coordinator.py</code></li>
+<li><code>jarvis/agent/qa_agent.py</code></li>
+<li><code>jarvis/agent/task_tracker.py</code></li>
+<li><code>jarvis/agent/learning.py</code></li>
+</ul>
+<p>Flow:</p>
+<p class="step">1. <code>JarvisBrain.initialize()</code> checks LLM backend, initializes memory, wires executor/planner/learning/coordinator/proactive.</p>
+<p class="step">2. <code>JarvisBrain.process()</code> sanitizes input, catches shutdown requests, handles local routing/simple cases, selects model tier, enriches with memory, and dispatches to agent/tool loop or planner.</p>
+<p class="step">3. <code>_select_tier()</code> routes simple chat to fast, normal work to brain, complex requests to deep unless cost settings downgrade.</p>
+<p class="step">4. <code>TaskPlanner</code> uses heuristics first, then optional fast LLM complexity check; max subtasks is 8.</p>
+<p class="step">5. <code>AgentExecutor</code> selects relevant tools, calls Claude native tool use, executes tools, feeds tool results back, optionally performs QA retry.</p>
+<p class="step">6. Multi-step tasks can be decomposed into subtasks with prior-result context.</p>
+<p class="step">7. Learning loop records tool reliability and plan outcomes.</p>
+<h2 id="llm-layer">LLM Layer</h2>
+<p>Key file: <code>jarvis/core/llm.py</code></p>
+<ul>
+<li>Primary: Anthropic Claude API.</li>
+<li>Fallback: Ollama via HTTP.</li>
+<li>Model tiers:</li>
+<ul>
+<li>fast: <code>claude-haiku-4-5-20251001</code></li>
+<li>brain: <code>claude-sonnet-4-6</code></li>
+<li>deep: <code>claude-opus-4-6</code></li>
+<li>local: <code>llama3.1:8b</code></li>
+</ul>
+<li>Uses Anthropic tool_use schemas from <code>jarvis/agent/tools_schema.py</code>.</li>
+<li>Tool result content is truncated at 8,000 chars.</li>
+<li>Has cost tracking and hard budget checks.</li>
+<li>Uses prompt caching when possible.</li>
+</ul>
+<p>Maymint note: Instead of adopting Anthropic-only wiring, map this tier concept to Hermes configured providers/OpenRouter/Antigravity/custom providers.</p>
+<h2 id="tool-registry">Tool Registry</h2>
+<p>Key file: <code>jarvis/agent/tools_schema.py</code></p>
+<p>Observed 104 tool schemas and 104 registry entries. Tool groups:</p>
+<ul>
+<li>macOS/app/system: open/close apps, running apps, frontmost app, URL open, volume, brightness, clipboard, paste/write to app, notifications.</li>
+<li>Filesystem: list/read/write/move/copy/create/info/open/search.</li>
+<li>Screen: capture, OCR/read, analyze.</li>
+<li>Shell/coding: run command, smart terminal via Claude Code, run Claude Code, scaffold project.</li>
+<li>Web/search/public data: search web/news/read, weather, currency, crypto, holidays, countries, SEC, IP, spaceflight, citybikes.</li>
+<li>Browser: Playwright persistent browser, tab switching, screenshots, upload, sync sessions.</li>
+<li>Chrome extension bridge: navigate, click, type, read page, find elements, screenshot, tabs, execute JS, fill form, scroll.</li>
+<li>Memory/profile: facts, patterns, preferences, notes.</li>
+<li>Calendar/email: events, calendar list, email read/search/send.</li>
+<li>Meta tools: agent status, learning insights, perf/cache, proactive settings, plan status/history.</li>
+</ul>
+<p>Tool modules:</p>
+<pre><div class="code-label">text</div><code>
+jarvis/tools/browser_agent.py
+
+jarvis/tools/calendar_email.py
+
+jarvis/tools/chrome_extension.py
+
+jarvis/tools/chrome_sync.py
+
+jarvis/tools/claude_code.py
+
+jarvis/tools/filesystem.py
+
+jarvis/tools/mac_control.py
+
+jarvis/tools/notes_access.py
+
+jarvis/tools/public_data.py
+
+jarvis/tools/screen.py
+
+jarvis/tools/shell.py
+
+jarvis/tools/weather.py
+
+jarvis/tools/web_browse.py
+
+jarvis/tools/web_search.py
+
+</code></pre>
+<h2 id="permissions-safety">Permissions / Safety</h2>
+<p>Key files:</p>
+<ul>
+<li><code>jarvis/core/permissions.py</code></li>
+<li><code>jarvis/core/hardening.py</code></li>
+<li><code>jarvis/core/pending_actions.py</code></li>
+<li><code>jarvis/core/confirmation.py</code></li>
+<li><code>jarvis/tools/filesystem.py</code></li>
+<li><code>jarvis/tools/shell.py</code></li>
+<li><code>jarvis/tools/mac_control.py</code></li>
+</ul>
+<p>Safety features observed:</p>
+<ul>
+<li>Tool permission catalog with risk levels: low, medium, high, critical.</li>
+<li>Capabilities: read/write local, system control, shell, browser, external network, communication, memory, observation, destructive.</li>
+<li>High/critical tools can require confirmation.</li>
+<li>Audit DB at <code>data/jarvis_security_audit.db</code>, sensitive keys redacted.</li>
+<li>Shell blocks <code>rm -rf /</code>, shutdown/reboot/poweroff/log out/sleep/systemsetup/fdesetup, sensitive prefixes like <code>rm</code>, <code>sudo</code>, <code>kill</code>, <code>diskutil</code> unless confirmed.</li>
+<li>AppleScript blocks shut down/restart/log out/sleep/power off and protected app quit attempts.</li>
+<li>Filesystem tools block sensitive paths and credential-like files: <code>.ssh</code>, <code>.aws</code>, <code>.kube</code>, <code>.docker</code>, <code>.env</code>, PEM/key files, credentials files, keychains, etc.</li>
+<li>Chrome extension JS execution is scoped in code/docs to localhost/tunnel targets.</li>
+</ul>
+<p>Caveat: docs/OPERATIONS says default is audit mode, while <code>.env.example</code> comments recommend enforce. Before running with real desktop control, set <code>JARVIS_TOOL_PERMISSION_MODE=enforce</code>.</p>
+<h2 id="voice-stack">Voice Stack</h2>
+<p>Key files:</p>
+<ul>
+<li><code>jarvis/voice/listener.py</code></li>
+<li><code>jarvis/voice/speaker.py</code></li>
+<li><code>jarvis/voice/confirm.py</code></li>
+</ul>
+<p>Listener:</p>
+<ul>
+<li>PyAudio microphone.</li>
+<li>OpenWakeWord <code>hey_jarvis_v0.1</code> if installed, otherwise keyboard activation.</li>
+<li>STT priority: Moonshine ONNX, then faster-whisper, then original whisper.</li>
+<li>Audio sample rate 16 kHz, mono.</li>
+<li>Follow-up window after JARVIS speaks so user can answer without wake word.</li>
+<li>External activation through overlay hotkey calls <code>request_activation()</code>.</li>
+</ul>
+<p>Speaker:</p>
+<ul>
+<li>TTS priority: Kokoro if selected/available, then Edge TTS, then macOS <code>say</code>.</li>
+<li>Naturalizes text for TTS: removes markdown, fixes dashes/ellipsis, contractions, acronym pronunciation.</li>
+<li>Can stream audio chunks/base64 to browser clients.</li>
+<li>Computes amplitude envelope for orb animation.</li>
+</ul>
+<h2 id="ui-overlay-browser-bridge">UI / Overlay / Browser Bridge</h2>
+<p>Key files:</p>
+<ul>
+<li><code>jarvis/ui/jarvis-ui/package.json</code></li>
+<li><code>jarvis/ui/jarvis-ui/src/app</code></li>
+<li><code>jarvis/ui/jarvis-ui/src/components/{auth,chat,cinematic,dashboard,overlay,product,settings,shared}</code></li>
+<li><code>jarvis/ui/jarvis-ui/src/hooks/{useAuth,useJarvisWebSocket,useServerStatus,useVoiceRecorder}.ts</code></li>
+<li><code>jarvis/ui/jarvis-ui/src/lib/jarvisOrbRenderer.js</code></li>
+<li><code>desktop-overlay/JarvisOverlay.swift</code></li>
+<li><code>desktop-overlay/overlay.html</code></li>
+<li><code>jarvis/extensions/chrome/background.js</code></li>
+<li><code>jarvis/extensions/chrome/content.js</code></li>
+</ul>
+<p>Frontend stack:</p>
+<ul>
+<li>Next.js 15, React 18, TypeScript, Three.js, Tailwind.</li>
+<li>UI modes: cinematic orb, chat, system dashboard, product/workflow/settings panels.</li>
+<li>WebSocket hook talks to API on port 8741.</li>
+</ul>
+<p>Desktop overlay:</p>
+<ul>
+<li>Native Swift app using WKWebView.</li>
+<li>Borderless transparent always-on-top window, movable, all Spaces.</li>
+<li>Registers global hotkey Control+Option+J.</li>
+<li>Connects to <code>ws://localhost:8741/ws/overlay</code>.</li>
+<li>Shows state, user utterance, assistant response, orb animation.</li>
+</ul>
+<p>Chrome extension:</p>
+<ul>
+<li>Manifest V3.</li>
+<li>Background service connects to <code>ws://localhost:8741/ws/extension</code>.</li>
+<li>Content script handles DOM/page actions.</li>
+<li>Keepalive via chrome alarms.</li>
+</ul>
+<h2 id="memory-learning">Memory / Learning</h2>
+<p>Key files:</p>
+<ul>
+<li><code>jarvis/memory/store.py</code></li>
+<li><code>jarvis/memory/conversation_store.py</code></li>
+<li><code>jarvis/memory/sqlite_store.py</code></li>
+<li><code>jarvis/memory/facts.py</code></li>
+<li><code>jarvis/memory/preferences.py</code></li>
+<li><code>jarvis/agent/learning.py</code></li>
+<li><code>jarvis/agent/evolution_pipeline.py</code></li>
+<li><code>jarvis/agent/ab_testing.py</code></li>
+</ul>
+<p>Memory design:</p>
+<ul>
+<li>ChromaDB persistent vector store under <code>data/memory/chroma</code>.</li>
+<li>SQLite/FTS5 fast keyword lookup.</li>
+<li>JSON-like facts/preferences stores.</li>
+<li>Conversation turns are stored, pruned, and used as context.</li>
+<li>Learning loop tracks tool success/failure, planner context, and reliability reports.</li>
+<li>Evolution/A-B pipeline exists for prompt/template improvement.</li>
+</ul>
+<p>Maymint note: This overlaps with Hermes memory/session_search/Oracle vault/skills. Avoid copying blindly; extract patterns: reliability tracking, explicit facts vs preferences, cost/perf dashboards.</p>
+<h2 id="validation-tests">Validation / Tests</h2>
+<p>Key files:</p>
+<ul>
+<li><code>scripts/validate.sh</code></li>
+<li><code>tests/</code></li>
+<li><code>.github/workflows/ci.yml</code></li>
+</ul>
+<p>Validation script performs:</p>
+<pre><div class="code-label">bash</div><code>
+python -m compileall -q jarvis tests scripts
+
+python -m ruff check .
+
+python -m mypy jarvis
+
+python -m pytest tests -q
+
+python scripts/check_tool_contracts.py
+
+python scripts/run_evals.py --offline
+
+python -m bandit -q -r jarvis
+
+# if UI node_modules exists: npm run lint, npm run build, npm audit --audit-level=high
+
+</code></pre>
+<p>Observed test coverage files include auth, confirmation, coordinator, cost controls, hardening, learning, memory, permissions, planner, public data, tool contracts, voice activation/confirmation, weather, app lifecycle, operational infra, and UI smoke.</p>
+<h2 id="setup-risks-do-not-run-blindly">Setup Risks / Do Not Run Blindly</h2>
+<p><code>setup.sh</code> does real machine changes:</p>
+<ul>
+<li>Installs Homebrew packages: portaudio, ffmpeg.</li>
+<li>Checks Ollama.</li>
+<li>Pulls <code>llama3.1:8b</code> (~4.7GB) if missing.</li>
+<li>Creates <code>.venv</code>.</li>
+<li>Installs Python packages including faster-whisper, kokoro, openwakeword, chromadb.</li>
+<li>Creates <code>data/</code> dirs.</li>
+</ul>
+<p><code>start.sh full</code> does real machine actions:</p>
+<ul>
+<li>Can start Ollama.</li>
+<li>Can build/open macOS overlay.</li>
+<li>Starts UI and API.</li>
+<li>May kill stale listeners on configured UI/API ports.</li>
+<li>May start Cloudflare tunnel if enabled.</li>
+<li>Opens dashboard unless disabled.</li>
+</ul>
+<h2 id="recommended-safe-run-path">Recommended safe run path:</h2>
+<p class="step">1. Do not run <code>setup.sh</code> until dependencies/ports are accepted.</p>
+<p class="step">2. Prefer creating <code>.env</code> with safe settings first:</p>
+<ul>
+<ul>
+<li><code>JARVIS_OPEN_DASHBOARD=false</code></li>
+<li><code>JARVIS_ENABLE_TUNNEL=false</code></li>
+<li><code>JARVIS_TOOL_PERMISSION_MODE=enforce</code></li>
+<li><code>JARVIS_TOOL_PERMISSION_MODE</code> should fail closed if invalid; upstream may not.</li>
+<li><code>TTS_ENGINE=say</code> initially</li>
+<li>map Anthropic backend to available Hermes/OpenRouter later or provide Anthropic key separately.</li>
+</ul>
+</ul>
+<p class="step">3. Check ports 3000/8741/11434 before launch.</p>
+<p class="step">4. Run <code>./start.sh text</code> before <code>voice</code> or <code>full</code>.</p>
+<p class="step">5. Run tests after minimal deps install, not after full desktop launch.</p>
+<h2 id="subagent-cross-check-additions">Subagent Cross-Check Additions</h2>
+<p>Independent static inspections confirmed the overall architecture and added these details:</p>
+<ul>
+<li><code>server.py</code> route inventory:</li>
+<ul>
+<li>Auth: <code>/auth/login</code>, <code>/auth/status</code>, <code>/auth/logout</code>, <code>/auth/set-pin</code>.</li>
+<li>Core: <code>POST /chat</code>, <code>/jobs</code>, <code>/tools/pending</code>, <code>/tools/confirm</code>.</li>
+<li>Observability/config: <code>/health</code>, <code>/perf</code>, <code>/cache</code>, <code>/costs</code>, <code>/privacy</code>, <code>/models</code>, <code>/profile</code>, <code>/plan</code>, <code>/learning</code>, <code>/agents</code>.</li>
+<li>Voice: <code>POST /voice/transcribe</code> uses ffmpeg temp file + faster-whisper.</li>
+<li>WebSockets: <code>/ws</code>, <code>/ws/extension</code>, <code>/ws/overlay</code>.</li>
+</ul>
+<li>Auth details:</li>
+<ul>
+<li>Localhost bypasses auth; remote uses PIN/session token.</li>
+<li>Query-token auth is off by default unless <code>JARVIS_ALLOW_QUERY_TOKEN</code>.</li>
+<li>Non-local state-changing requests need <code>X-JARVIS-Client</code> CSRF header.</li>
+</ul>
+<li>Planner/coordinator details:</li>
+<ul>
+<li>Agent types include researcher, coder, browser, system, communicator, analyst, generalist.</li>
+<li>Coordinator builds dependency-based parallel groups with max parallel 3.</li>
+<li>Complex plan execution broadcasts plan progress to UI and creates final LLM summary.</li>
+</ul>
+<li>UI/voice details:</li>
+<ul>
+<li>Web UI modes include cinematic, chat, dashboard, product.</li>
+<li>Three.js orb uses about 2,400 particles and shared renderer for UI/overlay.</li>
+<li>Browser mic path uses MediaRecorder Opus/WebM or mp4/webm, then backend <code>/voice/transcribe</code> converts to WAV 16k mono with ffmpeg.</li>
+<li>Overlay docs say click-through, but Swift code sets <code>window.ignoresMouseEvents = false</code>; current overlay is draggable/clickable, not true click-through.</li>
+<li><code>settings.py</code> exposes <code>WAKE_WORD_MODEL=hey_jarvis</code>, but listener hardcodes <code>hey_jarvis_v0.1</code>.</li>
+<li><code>.env.example</code> comments <code>UI_PORT=3741</code>, while code/docs default to <code>3000</code>.</li>
+</ul>
+<li>Security details:</li>
+<ul>
+<li>Tool selector reduces tool schemas to lower token/cost.</li>
+<li>Shell has two guard layers: tool-level blocklist plus executor hardening regex.</li>
+<li>Some high/critical tools are not marked <code>requires_confirmation=True</code>, notably <code>write_file</code>, <code>move_file</code>, <code>paste_to_app</code>, <code>write_to_app</code>, <code>chrome_type</code>, <code>chrome_execute_js</code>, <code>chrome_fill_form</code>, <code>run_claude_code</code>, <code>scaffold_project</code>, <code>forget_fact</code>.</li>
+<li><code>run_claude_code</code> can add <code>--dangerously-skip-permissions</code> if <code>JARVIS_CLAUDE_CODE_SKIP_PERMISSIONS</code> is set.</li>
+<li>Persistent Playwright profile and cookie sync can expose real sessions/logins.</li>
+<li>Memory/facts can be injected into cloud LLM prompts when privacy mode is off.</li>
+</ul>
+</ul>
+<h2 id="what-to-reuse-for-maymint-hermes">What to Reuse for Maymint/Hermes</h2>
+<p>High-value patterns:</p>
+<p class="step">1. Desktop overlay pattern: Swift WKWebView always-on-top orb + WS state feed + global hotkey.</p>
+<p class="step">2. Voice pipeline shape: wake word → one-shot capture → STT → brain → TTS → follow-up window.</p>
+<p class="step">3. Tool permission catalog with capabilities/risk/confirmation/audit.</p>
+<p class="step">4. Tool registry grouping and schema discipline.</p>
+<p class="step">5. Multi-device WebSocket audio routing.</p>
+<p class="step">6. Browser bridge extension plus Playwright fallback.</p>
+<p class="step">7. Cost dashboard and tier routing.</p>
+<p class="step">8. Memory split: facts/preferences/conversation/semantic search.</p>
+<p class="step">9. Planner + executor + QA retry as a bounded multi-step flow.</p>
+<p class="step">10. Validation stack and tool-contract tests.</p>
+<p>Do not reuse as-is:</p>
+<ul>
+<li>Persona/system prompt hard-coded for “Becs” and JARVIS.</li>
+<li>Anthropic-only model names.</li>
+<li>Full shell/desktop control without adapting confirmation into Hermes safety model.</li>
+<li>Auto port-kill behavior.</li>
+<li>Cloudflare tunnel defaults without explicit opt-in.</li>
+<li>Ollama model pull as mandatory setup step.</li>
+</ul>
+<h2 id="adaptation-direction">Adaptation Direction</h2>
+<p>Best Maymint architecture from this repo:</p>
+<pre><div class="code-label">text</div><code>
+Maymint UI/Overlay/Voice
+
+  -&gt; local FastAPI/WebSocket shim or Hermes gateway
+
+  -&gt; Hermes brain/providers/memory/tools
+
+  -&gt; desktop-tool adapter with explicit confirmation
+
+  -&gt; Oracle vault/session/memory/skills as long-term brain
+
+</code></pre>
+<p>Practical phases:</p>
+<p class="step">1. Study-only: read tests and modules, no install.</p>
+<p class="step">2. Safe smoke: create venv, install only backend test deps, run compile/tool contract tests if possible.</p>
+<p class="step">3. LLM adapter: make JARVIS LLM layer talk to Hermes/OpenRouter instead of Anthropic/Ollama.</p>
+<p class="step">4. UI extraction: run/copy Next.js orb or Swift overlay with fake WS state first.</p>
+<p class="step">5. Tool adapter: port selected macOS/screen/browser tools into Hermes skills/tools with confirmation.</p>
+<p class="step">6. Voice integration: use existing Maymint Discord/web voice first; local OpenWakeWord/overlay hotkey later.</p>
+</article>
+</main>
+</div>
+<script>
+document.querySelectorAll('pre').forEach(pre => {
+  pre.addEventListener('dblclick', () => navigator.clipboard?.writeText(pre.innerText.replace(/^\w+\n/,'')));
+});
+</script>
+</body>
+</html>

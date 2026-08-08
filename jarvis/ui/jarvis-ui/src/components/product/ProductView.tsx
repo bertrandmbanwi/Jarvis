@@ -1034,26 +1034,26 @@ export default function ProductView({ authToken }: ProductViewProps) {
     await refreshLifecycle();
   }
 
-  async function restartJarvis() {
-    if (!window.confirm("Restart JARVIS now? Active voice, workflow, and socket sessions will briefly disconnect.")) {
+  async function restartMayAss() {
+    if (!window.confirm("Restart MayAss now? Active voice, workflow, and socket sessions will briefly disconnect.")) {
       return;
     }
     const data = await api("/app/lifecycle/restart", {
       method: "POST",
       body: JSON.stringify({ mode: lifecycle?.runtime.mode || "full", dry_run: false }),
     });
-    setMessage(data.message || "JARVIS restart scheduled.");
+    setMessage(data.message || "MayAss restart scheduled.");
   }
 
-  async function quitJarvis() {
-    if (!window.confirm("Quit JARVIS now? You will need to relaunch it from the desktop or terminal.")) {
+  async function quitMayAss() {
+    if (!window.confirm("Quit MayAss now? You will need to relaunch it from the desktop or terminal.")) {
       return;
     }
     const data = await api("/app/lifecycle/quit", {
       method: "POST",
       body: JSON.stringify({ dry_run: false, force_after_seconds: 8 }),
     });
-    setMessage(data.message || "JARVIS quit scheduled.");
+    setMessage(data.message || "MayAss quit scheduled.");
   }
 
   return (
@@ -1659,11 +1659,11 @@ export default function ProductView({ authToken }: ProductViewProps) {
                 <button
                   className="jarvis-btn-ghost text-2xs uppercase tracking-wider px-3 py-2 rounded-md disabled:opacity-40"
                   disabled={lifecycle?.controls?.can_restart === false}
-                  onClick={restartJarvis}
+                  onClick={restartMayAss}
                 >
                   Restart
                 </button>
-                <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={quitJarvis}>
+                <button className="jarvis-btn-primary text-2xs uppercase tracking-wider px-3 py-2 rounded-md" onClick={quitMayAss}>
                   Quit
                 </button>
               </div>

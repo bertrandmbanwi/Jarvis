@@ -90,7 +90,7 @@ export default function ChatView({
                 </svg>
               </div>
               <p className="text-sm text-jarvis-text-dim/35 font-light">
-                Start a conversation with JARVIS
+                คุยกับมาย
               </p>
               <p className="text-2xs text-jarvis-text-dim/20 mt-1.5">
                 Type below or switch to Voice mode
@@ -118,13 +118,13 @@ export default function ChatView({
                           : "bg-white/[0.03] text-jarvis-text-dim/50 border border-white/[0.06]"
                         }
                       `}>
-                      {isUser ? "B" : "J"}
+                      {isUser ? "B" : "M"}
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-2xs font-medium text-jarvis-text-dim/55">
-                          {isUser ? "Becs" : "JARVIS"}
+                          {isUser ? "บอส" : "Maymint"}
                         </span>
                         {!isUser && (msg.agentType || msg.tierUsed) && (
                           <AgentBadge agentType={msg.agentType} tierUsed={msg.tierUsed} />
@@ -141,7 +141,7 @@ export default function ChatView({
                         <div className="text-[13px] text-jarvis-text/80 leading-relaxed whitespace-pre-wrap">
                           {msg.content || (
                             <span className="text-jarvis-text-dim/40 italic text-xs">
-                              Thinking...
+                              มายกำลังคิด...
                             </span>
                           )}
                         </div>
@@ -159,7 +159,7 @@ export default function ChatView({
                   <span></span>
                   <span></span>
                 </div>
-                <span className="text-2xs font-mono">Processing...</span>
+                <span className="text-2xs font-mono">มายกำลังคิด...</span>
               </div>
             )}
           </div>

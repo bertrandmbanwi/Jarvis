@@ -53,7 +53,7 @@ async def run_voice_mode():
     listener = VoiceListener()
     speaker = VoiceSpeaker()
 
-    logger.info("Initializing JARVIS components...")
+    logger.info("Initializing MayAss components...")
 
     brain_ok = await brain.initialize()
     if not brain_ok:
@@ -70,7 +70,7 @@ async def run_voice_mode():
     speaker.initialize()
 
     listener.set_speaking(True)
-    await speaker.speak("JARVIS online. All systems operational. How can I help you?")
+    await speaker.speak("Maymint online. All systems operational. How can I help you?")
     listener.set_speaking(False)
 
     def on_wake():
@@ -129,10 +129,10 @@ async def run_text_mode():
 
     speaker_ok = speaker.initialize()
 
-    print("\nJARVIS is ready. Type your message (or 'quit' to exit).\n")
+    print("\nMaymint is ready. Type your message (or 'quit' to exit).\n")
 
     if speaker_ok:
-        await speaker.speak("JARVIS online. How can I help you?")
+        await speaker.speak("Maymint online. How can I help you?")
 
     while True:
         try:
@@ -143,7 +143,7 @@ async def run_text_mode():
             break
 
         if user_input.lower() in ("quit", "exit", "bye", "goodbye"):
-            print("\nJARVIS: Goodbye. Shutting down systems.")
+            print("\nMaymint: Goodbye. Shutting down systems.")
             if speaker_ok:
                 await speaker.speak("Goodbye. Shutting down systems.")
             break
@@ -161,7 +161,7 @@ async def run_text_mode():
             continue
 
         response = await brain.process(user_input)
-        print(f"\nJARVIS: {response}")
+        print(f"\nMaymint: {response}")
 
         if speaker_ok:
             await speaker.speak(response)
@@ -246,7 +246,7 @@ async def run_full():
             set_voice_components(speaker, listener)
 
             listener.set_speaking(True)
-            await speaker.speak("JARVIS online. All systems operational. How can I help you?")
+            await speaker.speak("Maymint online. All systems operational. How can I help you?")
             listener.set_speaking(False)
         except asyncio.CancelledError:
             listener.cleanup()

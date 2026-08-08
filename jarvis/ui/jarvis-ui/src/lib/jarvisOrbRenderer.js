@@ -417,7 +417,7 @@ export function createJarvisOrbRenderer(THREE, mount, options = {}) {
   const prefersReducedMotion = browserWindow.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const initialCompact = browserWindow.matchMedia?.("(max-width: 640px)").matches ?? false;
   const layoutRandom = seededRandom(0x4a415256);
-  const clock = new THREE.Clock();
+  const clock = new THREE.Timer();
 
   let isDisposed = false;
   let isVisible = browserDocument.visibilityState !== "hidden";

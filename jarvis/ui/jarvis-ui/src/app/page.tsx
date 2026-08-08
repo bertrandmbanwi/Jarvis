@@ -102,9 +102,10 @@ export default function Page() {
 
   const handleChatSubmit = useCallback(
     (message: string) => {
-      sendMessage(message);
+      const backendMode: "realtime" | "work" = viewMode === "cinematic" ? "realtime" : "work";
+      sendMessage(message, backendMode);
     },
-    [sendMessage]
+    [sendMessage, viewMode]
   );
 
   const handleModeChange = useCallback((mode: ViewMode) => {

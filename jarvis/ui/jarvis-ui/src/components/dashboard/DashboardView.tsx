@@ -229,7 +229,7 @@ export default function DashboardView({
           {visibleMessages.length === 0 ? (
             <div className="flex-1 flex items-center justify-center h-full">
               <p className="text-sm text-jarvis-text-dim/30 font-light">
-                No activity yet. Use Voice or Chat to interact with JARVIS.
+                No activity yet. Use Voice or Chat to interact with MayAss.
               </p>
             </div>
           ) : (
@@ -246,12 +246,12 @@ export default function DashboardView({
                           : "bg-white/[0.03] text-jarvis-text-dim/40 border border-white/[0.05]"
                         }
                       `}>
-                      {isUser ? "B" : "J"}
+                      {isUser ? "B" : "M"}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="text-2xs font-medium text-jarvis-text-dim/50">
-                          {isUser ? "Becs" : "JARVIS"}
+                          {isUser ? "บอส" : "Maymint"}
                         </span>
                         {!isUser && (msg.agentType || msg.tierUsed) && (
                           <AgentBadge agentType={msg.agentType} tierUsed={msg.tierUsed} />

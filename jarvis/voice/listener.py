@@ -205,7 +205,7 @@ class VoiceListener:
     async def _capture_and_dispatch_speech(self, source: str, wake_delay: float = 0.0) -> bool:
         """Record, transcribe, filter, and dispatch one utterance."""
         if self._is_speaking:
-            logger.info("Ignoring %s activation while JARVIS is speaking.", source)
+            logger.info("Ignoring %s activation while MayAss is speaking.", source)
             return False
 
         if self._on_wake_callback:
@@ -263,9 +263,9 @@ class VoiceListener:
 
         self._is_listening = True
         if self._wake_model is None:
-            logger.info("JARVIS is listening for desktop hotkey activation.")
+            logger.info("MayAss is listening for desktop hotkey activation.")
         else:
-            logger.info("JARVIS is listening... Say 'Hey JARVIS' or use the desktop hotkey.")
+            logger.info("MayAss is listening... Say 'Hey Maymint' or use the desktop hotkey.")
 
         try:
             self._stream = self._audio.open(
@@ -312,7 +312,7 @@ class VoiceListener:
                     elapsed_followup = time.time() - self._followup_start
                     if elapsed_followup > self.FOLLOWUP_WINDOW_SECONDS:
                         self._in_followup_window = False
-                        logger.info("Follow-up window closed. Say 'Hey JARVIS' to activate.")
+                        logger.info("Follow-up window closed. Say 'Hey Maymint' to activate.")
                         continue
 
                     amplitude = np.abs(audio_array).mean()

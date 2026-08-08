@@ -82,9 +82,10 @@ class VoiceSpeaker:
         import re
 
         pronunciation_map = {
-            "JARVIS": "Jarvis",
-            "J.A.R.V.I.S.": "Jarvis",
-            "J.A.R.V.I.S": "Jarvis",
+            "JARVIS": "Maymint",
+            "J.A.R.V.I.S.": "Maymint",
+            "J.A.R.V.I.S": "Maymint",
+            "MayAss": "Maymint",
             "AI": "A.I.",  # Keep as initialism
             "API": "A.P.I.",
             "URL": "U.R.L.",
@@ -202,7 +203,7 @@ class VoiceSpeaker:
         text: str,
         on_audio_ready: "Callable | None" = None,
         on_audio_chunk: "Callable | None" = None,
-        skip_local_playback: bool = False,
+        skip_local_playback: bool | None = None,
     ):
         """Convert text to speech and play it; optionally stream chunks for faster UI response."""
         if not text or not text.strip():
@@ -216,6 +217,8 @@ class VoiceSpeaker:
 
         self._on_audio_ready = on_audio_ready
         self._on_audio_chunk = on_audio_chunk
+        if skip_local_playback is None:
+            skip_local_playback = settings.MAYASS_AUDIO_OWNER != "macos"
         self._skip_local_playback = skip_local_playback
 
         try:

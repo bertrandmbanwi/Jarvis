@@ -34,6 +34,7 @@ from jarvis.core import (
 )
 from jarvis.core import profile as user_profile
 from jarvis.core.brain import JarvisBrain
+from jarvis.core.mayass_bridge import MayAssBridge, MayAssBridgeRequest
 from jarvis.core.permissions import TOOL_PERMISSIONS, list_tool_audit, summarize_permissions
 from jarvis.core.savings import savings_tracker
 from jarvis.core.settings_api import settings_router
@@ -333,6 +334,7 @@ async def broadcast_voice_state(
     audio_base64: str | None = None,
     target_ws: WebSocket | None = None,
     audio_format: str = "audio/wav",
+    audio_owner: str | None = None,
 ):
     """Signal to the UI whether TTS is actively speaking aloud.
 
@@ -344,12 +346,10 @@ async def broadcast_voice_state(
     - amplitude_envelope: for audio-reactive visualization
     - audio_base64: WAV audio encoded as base64 for browser playback
 
-    Device-targeted audio routing (smart routing):
-    - voice_speaking + amplitude_envelope are broadcast to ALL clients (orb animation)
-    - voice_audio (the heavy WAV payload) routing depends on the origin:
-      1. Browser-originated (target_ws set): audio to requesting client only
-      2. Terminal-originated (target_ws=None): audio to all clients that
-         registered with wants_audio=True (respects per-device preferences)
+    Audio-owner routing rules:
+    - browser: browser gets voice_audio, local playback is skipped
+    - macos: local macOS playback only, browser gets animation but no voice_audio
+    - none: text-only; no voice_audio is sent anywhere
     """
     await broadcast_overlay_state(
         "speaking" if speaking else "idle",
@@ -367,6 +367,19 @@ async def broadcast_voice_state(
     if speaking and amplitude_envelope:
         base_payload["amplitude_envelope"] = amplitude_envelope
         base_payload["audio_duration"] = audio_duration
+
+    owner = (audio_owner or settings.MAYASS_AUDIO_OWNER).strip().lower()
+    if not speaking:
+        await ws_manager.broadcast_json(base_payload)
+        return
+
+    if owner == "none":
+        await ws_manager.broadcast_json(base_payload)
+        return
+
+    if owner == "macos":
+        await ws_manager.broadcast_json(base_payload)
+        return
 
     if speaking and audio_base64 and target_ws:
         audio_size_kb = len(audio_base64) // 1024
@@ -415,6 +428,7 @@ async def broadcast_voice_chunk(
     chunk_duration: float,
     target_ws: WebSocket | None = None,
     audio_format: str = "audio/wav",
+    audio_owner: str | None = None,
 ):
     """Send a streamed audio chunk to browser clients.
 
@@ -439,7 +453,8 @@ async def broadcast_voice_chunk(
             voice_speaking=True,
         )
 
-    if not ws_manager.active:
+    owner = (audio_owner or settings.MAYASS_AUDIO_OWNER).strip().lower()
+    if owner != "browser" or not ws_manager.active:
         return
 
     payload = {
@@ -534,13 +549,17 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     logger.info("Starting JARVIS server...")
     jobs.init_jobs_db()
-    success = await brain.initialize()
-    if not success:
-        logger.warning(
-            "Brain initialization incomplete. Some features may be unavailable."
-        )
-    brain._on_plan_progress = broadcast_plan_progress
-    brain.proactive._on_suggestion = _deliver_proactive_suggestion
+    legacy_brain_enabled = not settings.MAYASS_ENABLED
+    if legacy_brain_enabled:
+        success = await brain.initialize()
+        if not success:
+            logger.warning(
+                "Brain initialization incomplete. Some features may be unavailable."
+            )
+        brain._on_plan_progress = broadcast_plan_progress
+        brain.proactive._on_suggestion = _deliver_proactive_suggestion
+    else:
+        logger.info("MayAss mode enabled; skipping legacy JarvisBrain/Ollama startup.")
     # Let the executor ask connected clients to approve high-risk tool calls.
     pending_actions.add_notifier(ws_manager.broadcast_json)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
@@ -556,7 +575,8 @@ async def lifespan(app: FastAPI):
     with suppress(asyncio.CancelledError):
         await scheduler_task
     with suppress(Exception):
-        await asyncio.wait_for(brain.shutdown(), timeout=5)
+        if legacy_brain_enabled:
+            await asyncio.wait_for(brain.shutdown(), timeout=5)
     logger.info("JARVIS server shut down.")
 
 
@@ -878,6 +898,7 @@ async def _workflow_scheduler_loop():
 class ChatRequest(BaseModel):
     message: str
     tier: str = ""
+    mode: str = "realtime"
 
 
 class JobRequest(BaseModel):
@@ -887,7 +908,18 @@ class JobRequest(BaseModel):
 
 class ConfirmActionRequest(BaseModel):
     action_id: str
-    approved: bool
+    approved: bool | None = None
+    decision: str = ""
+
+
+class FakePendingActionRequest(BaseModel):
+    action_type: str = "delete_file"
+    affected_targets: list[str] = []
+    reversible: bool = False
+    reason: str = "Phase 6 smoke test only."
+    consequence_if_denied: str = "No real action will run."
+    permanent_policy_key: str = ""
+    risk: str = "high"
 
 
 class CostEstimateRequest(BaseModel):
@@ -1069,6 +1101,7 @@ class ChatResponse(BaseModel):
     tier_used: str
     backend: str
     local_savings: dict
+    action_cards: list[dict[str, Any]] = []
 
 
 class StatusResponse(BaseModel):
@@ -1122,6 +1155,64 @@ async def _run_chat_job(job_id: str, message: str) -> None:
         record_event("job.failed", job_id=job_id, error=str(exc))
     finally:
         reset_trace_id(token)
+
+
+async def process_user_request(text: str, source: str = "chat", mode: str = "realtime") -> ChatResponse:
+    """Process one text request through MayAss when enabled, else JarvisBrain."""
+    start = time.time()
+    if settings.MAYASS_ENABLED:
+        bridge_request = MayAssBridgeRequest(
+            text=text,
+            source=source,
+            mode=mode,
+            wants_voice=False,
+            allow_tools=False,
+        )
+        bridge_response = await MayAssBridge().process(bridge_request)
+        elapsed = (time.time() - start) * 1000
+        if bridge_response.ok:
+            pending_action = getattr(bridge_response, "pending_action", None)
+            action_cards = getattr(bridge_response, "action_cards", ())
+            if pending_action:
+                await ws_manager.broadcast_json(
+                    {
+                        "type": "confirmation_required",
+                        "confirmation": pending_action,
+                    }
+                )
+            return ChatResponse(
+                response=bridge_response.text,
+                elapsed_ms=round(elapsed, 1),
+                tier_used="mayass",
+                backend=bridge_response.backend,
+                local_savings=savings_tracker.get_summary(),
+                action_cards=list(action_cards),
+            )
+
+        return ChatResponse(
+            response=bridge_response.error,
+            elapsed_ms=round(elapsed, 1),
+            tier_used="mayass-error",
+            backend=bridge_response.backend,
+            local_savings=savings_tracker.get_summary(),
+        )
+
+    response = await brain.process(text)
+    elapsed = (time.time() - start) * 1000
+
+    tier_used = "unknown"
+    if brain.conversation:
+        last = brain.conversation[-1]
+        if last.role == "assistant":
+            tier_used = last.tier_used or "brain"
+
+    return ChatResponse(
+        response=response,
+        elapsed_ms=round(elapsed, 1),
+        tier_used=tier_used,
+        backend=brain.llm.active_backend,
+        local_savings=savings_tracker.get_summary(),
+    )
 
 
 async def _run_workflow_job(
@@ -1229,23 +1320,8 @@ async def chat(request: ChatRequest):
             status_code=400,
             content={"error": "Message too long (max 50,000 characters)."},
         )
-    start = time.time()
-    response = await brain.process(request.message)
-    elapsed = (time.time() - start) * 1000
-
-    tier_used = "unknown"
-    if brain.conversation:
-        last = brain.conversation[-1]
-        if last.role == "assistant":
-            tier_used = last.tier_used or "brain"
-
-    return ChatResponse(
-        response=response,
-        elapsed_ms=round(elapsed, 1),
-        tier_used=tier_used,
-        backend=brain.llm.active_backend,
-        local_savings=savings_tracker.get_summary(),
-    )
+    result = await process_user_request(request.message, source="chat", mode=request.mode)
+    return result
 
 
 @app.post("/jobs", dependencies=[Depends(require_auth)])
@@ -1286,8 +1362,31 @@ async def confirm_pending_action(request: ConfirmActionRequest):
     This is the trusted, authenticated source of confirmation — the model cannot
     reach it, so it cannot self-approve its own tool calls.
     """
-    resolved = pending_actions.resolve(request.action_id, request.approved)
+    decision = request.decision or (request.approved if request.approved is not None else False)
+    resolved = pending_actions.resolve(request.action_id, decision)
     return {"resolved": resolved}
+
+
+@app.post("/tools/pending/fake", dependencies=[Depends(require_auth)])
+async def create_fake_pending_action(request: FakePendingActionRequest):
+    """Create a fake pending action for Phase 6 modal smoke tests.
+
+    This does not execute tools. It only broadcasts the same rich payload a real
+    future MayAss action would use, so the UI brake can be verified first.
+    """
+    action = pending_actions.create_pending_action(
+        action_type=request.action_type,
+        summary=f"มายกำลังจะทำ action ทดสอบ: {request.action_type}",
+        risk=request.risk,
+        affected_targets=request.affected_targets,
+        reversible=request.reversible,
+        reason=request.reason,
+        consequence_if_denied=request.consequence_if_denied,
+        permanent_policy_key=request.permanent_policy_key,
+    )
+    payload = {"type": "confirmation_required", "confirmation": action.public()}
+    await ws_manager.broadcast_json(payload)
+    return {"pending": action.public()}
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(require_auth)])
@@ -2644,23 +2743,47 @@ async def websocket_chat(websocket: WebSocket):
             if _listener:
                 _listener.set_speaking(True)
 
-            full_response = []
-            async for token in brain.process_stream(message):
-                full_response.append(token)
+            if settings.MAYASS_ENABLED:
+                mode = str(data.get("mode", "realtime"))
+                logger.info("Browser request mode=%s", mode)
+                result = await process_user_request(
+                    message,
+                    source="chat",
+                    mode=mode,
+                )
+                complete = result.response
+                if complete:
+                    await websocket.send_json({
+                        "token": complete,
+                        "done": False,
+                    })
                 await websocket.send_json({
-                    "token": token,
-                    "done": False,
+                    "token": EMPTY_CHUNK,
+                    "done": True,
+                    "full_response": complete,
+                    "backend": result.backend,
+                    "session_cost": brain.llm.get_cost_summary(),
+                    "local_savings": result.local_savings,
+                    "tier_used": result.tier_used,
                 })
+            else:
+                full_response = []
+                async for token in brain.process_stream(message):
+                    full_response.append(token)
+                    await websocket.send_json({
+                        "token": token,
+                        "done": False,
+                    })
 
-            complete = "".join(full_response)
-            await websocket.send_json({
-                "token": EMPTY_CHUNK,
-                "done": True,
-                "full_response": complete,
-                "backend": brain.llm.active_backend,
-                "session_cost": brain.llm.get_cost_summary(),
-                "local_savings": savings_tracker.get_summary(),
-            })
+                complete = "".join(full_response)
+                await websocket.send_json({
+                    "token": EMPTY_CHUNK,
+                    "done": True,
+                    "full_response": complete,
+                    "backend": brain.llm.active_backend,
+                    "session_cost": brain.llm.get_cost_summary(),
+                    "local_savings": savings_tracker.get_summary(),
+                })
 
             if _speaker and complete.strip():
                 await broadcast_overlay_state("speaking", text=complete, user_text=message)
@@ -2674,19 +2797,21 @@ async def websocket_chat(websocket: WebSocket):
                             audio_duration=duration,
                             audio_base64=audio_b64,
                             target_ws=target_ws,
+                            audio_owner=settings.MAYASS_AUDIO_OWNER,
                         )
 
                     async def on_audio_chunk(chunk_b64, idx, is_last, env, dur, target_ws=requesting_ws):
                         await broadcast_voice_chunk(
                             chunk_b64, idx, is_last, env, dur,
                             target_ws=target_ws,
+                            audio_owner=settings.MAYASS_AUDIO_OWNER,
                         )
 
                     await _speaker.speak(
                         complete,
                         on_audio_ready=on_audio_ready,
                         on_audio_chunk=on_audio_chunk,
-                        skip_local_playback=True,
+                        skip_local_playback=settings.MAYASS_AUDIO_OWNER != "macos",
                     )
                     await broadcast_voice_state(False)
                     await broadcast_overlay_state("idle")

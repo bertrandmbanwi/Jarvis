@@ -63,6 +63,30 @@ WORKFLOW_SCHEDULER_ENABLED = os.getenv("WORKFLOW_SCHEDULER_ENABLED", "false").lo
 CONTEXT_RECENT_MESSAGES = int(os.getenv("CONTEXT_RECENT_MESSAGES", "10"))
 CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("CONTEXT_SUMMARY_MAX_CHARS", "1800"))
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable with common truthy values."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_choice(name: str, default: str, allowed: set[str]) -> str:
+    """Read a lower-case environment choice, falling back to a safe default."""
+    value = os.getenv(name, default).strip().lower()
+    return value if value in allowed else default
+
+
+MAYASS_ENABLED = _env_bool("MAYASS_ENABLED", False)
+MAYASS_DISPLAY_NAME = os.getenv("MAYASS_DISPLAY_NAME", "MayAss").strip() or "MayAss"
+MAYASS_CODENAME = os.getenv("MAYASS_CODENAME", "Maymint-Hermes").strip() or "Maymint-Hermes"
+MAYASS_REMOTE_ENABLED = _env_bool("MAYASS_REMOTE_ENABLED", False)
+MAYASS_DEFAULT_MODE = _env_choice("MAYASS_DEFAULT_MODE", "realtime", {"realtime", "work"})
+MAYASS_AUDIO_OWNER = _env_choice("MAYASS_AUDIO_OWNER", "browser", {"browser", "macos", "none"})
+MAYASS_HERMES_COMMAND = os.getenv("MAYASS_HERMES_COMMAND", "hermes -z").strip() or "hermes -z"
+MAYASS_HERMES_PROFILE = os.getenv("MAYASS_HERMES_PROFILE", "default").strip() or "default"
+
 GOOGLE_CALENDAR_CLIENT_ID = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
 GOOGLE_CALENDAR_CLIENT_SECRET = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
 OUTLOOK_CALENDAR_CLIENT_ID = os.getenv("OUTLOOK_CALENDAR_CLIENT_ID", "")
