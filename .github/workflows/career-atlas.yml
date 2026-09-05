@@ -1,0 +1,32 @@
+name: Career Atlas event update
+on:
+  push:
+    branches: [main]
+  watch:
+    types: [started]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+concurrency:
+  group: career-atlas-event
+  cancel-in-progress: false
+jobs:
+  update:
+    if: github.repository_owner == 'bertrandmbanwi' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Update this repository's public portfolio evidence
+        run: node .github/scripts/career-atlas-sync.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SITE_URL: https://bertrand-career-atlas.bmbanwi.chatgpt.site
+          PORTFOLIO_AUTH: github-oidc
