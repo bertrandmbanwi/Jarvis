@@ -178,13 +178,6 @@ export async function main() {
           throw new Error('GitHub identity could not be obtained.');
         const { value } = await identityResponse.json();
         if (!value) throw new Error('GitHub identity is missing.');
-
-        if (attempt === 0) {
-          // Only public identity metadata; never log the credential or its signature.
-          const [h,c] = value.split('.').slice(0,2).map(p => JSON.parse(Buffer.from(p, 'base64url')));
-          const fields = ['iss','aud','repository','repository_id','repository_owner','repository_owner_id','repository_visibility','runner_environment','ref','ref_type','event_name','workflow_ref','sub'];
-          console.log('Public identity diagnostics:', JSON.stringify({alg:h.alg,typ:h.typ,claims:Object.fromEntries(fields.map(k=>[k,c[k]??null])),lifetime:c.exp-c.iat,age:Math.floor(Date.now()/1000)-c.iat,notBeforeOffset:c.nbf-c.iat}));
-        }
         auth = { 'X-GitHub-OIDC-Token': value };
       } else
         auth = {
