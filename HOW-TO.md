@@ -540,6 +540,16 @@ JARVIS_REGEN_PIN=false ./start.sh full
 
 You can also set a fixed 4-8 digit PIN with `JARVIS_PIN=1234 ./start.sh full`.
 
+### What counts as "local"
+
+A request skips the PIN only when it comes from this Mac: directly, or through the web UI's own proxy with nothing in the forwarding headers pointing elsewhere. Anything arriving through Cloudflare Tunnel or another HTTP tunnel or reverse proxy carries the visitor's address in those headers and always needs the PIN.
+
+A raw TCP forwarder running on this Mac (for example `ssh -R` or `ngrok tcp` pointed at port 3000 or 8741) adds no such headers, so its visitors look local. If you expose JARVIS that way, require the PIN for everyone:
+
+```bash
+JARVIS_DISABLE_LOCAL_BYPASS=true ./start.sh full
+```
+
 ## Settings Panel
 
 The web UI includes a Settings Panel (gear icon) for runtime configuration. Changes made in the panel are saved via the `/api/settings` REST endpoint and persist across restarts.

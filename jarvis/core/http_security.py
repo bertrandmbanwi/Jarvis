@@ -3,6 +3,7 @@
 Which browser origins are JARVIS clients, whether a connection is a genuine
 loopback client, and the ``require_auth`` dependency for remote access.
 """
+import ipaddress
 import logging
 import os
 import re
@@ -69,22 +70,58 @@ def _origin_allowed(
     return False
 
 
-# Presence of any of these means a reverse proxy/tunnel relayed the request, so
-# the loopback peer address is the proxy — not the real (remote) client.
-_FORWARDING_HEADERS = (
-    "x-forwarded-for", "x-real-ip", "x-forwarded-host",
-    "forwarded", "cf-connecting-ip", "true-client-ip",
-)
+# Set only by a CDN/tunnel edge or a non-Next proxy; any of them means the
+# loopback peer address is the proxy — not the real (remote) client.
+_REMOTE_PROXY_HEADERS = ("cf-connecting-ip", "true-client-ip", "forwarded")
+_LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "[::1]"}
+
+
+def _is_loopback_address(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
+
+
+def _header_values(headers, name: str) -> list[str]:
+    """Every value of a header; ``headers[name]`` alone would hide a repeated line."""
+    if hasattr(headers, "getlist"):
+        return list(headers.getlist(name))
+    return [headers[name]] if name in headers else []
+
+
+def _relayed_for_remote_client(headers) -> bool:
+    """Return True unless every proxy header says the client is on this machine.
+
+    The web UI reaches the API through the Next.js rewrite, which adds
+    ``X-Forwarded-For``/``X-Forwarded-Host`` even for a browser on this Mac. A
+    tunnel (Cloudflare -> Next -> backend) arrives from the same loopback peer,
+    but the edge sets ``CF-Connecting-IP`` and puts the real client address in
+    ``X-Forwarded-For``, which Next appends to rather than replaces. So a
+    request is only local when no edge header is present, every address in the
+    chain is loopback, and the UI itself was opened under a loopback hostname.
+    """
+    if any(name in headers for name in _REMOTE_PROXY_HEADERS):
+        return True
+    for name in ("x-forwarded-for", "x-real-ip"):
+        hops = ",".join(_header_values(headers, name)).split(",") if name in headers else []
+        if not all(_is_loopback_address(hop) for hop in hops):
+            return True
+    return any(
+        re.sub(r":\d+$", "", host.strip().lower()) not in _LOCAL_HOSTNAMES
+        for host in _header_values(headers, "x-forwarded-host")
+    )
 
 
 def _client_is_local(conn) -> bool:
-    """Return True only for a genuine loopback client with no proxy in front.
+    """Return True only for a genuine loopback client, direct or via the local UI proxy.
 
     Accepts a Request or WebSocket (both expose ``.client`` and ``.headers``).
     """
     client_host = conn.client.host if conn.client else ""
-    forwarded = any(name in conn.headers for name in _FORWARDING_HEADERS)
-    return auth.is_local_request(client_host, forwarded=forwarded)
+    return auth.is_local_request(client_host, forwarded=_relayed_for_remote_client(conn.headers))
 
 
 async def require_auth(request: Request) -> bool:
