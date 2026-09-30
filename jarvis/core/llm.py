@@ -411,24 +411,6 @@ class JarvisLLM:
         logger.info("Agentic loop complete: %d tool calls", len(result.tool_calls))
         return result.text, result.tool_calls
 
-    async def chat_with_tools_stream(
-        self,
-        user_message: str,
-        tools: list[dict],
-        tool_executor,
-        conversation_history: list[dict] | None = None,
-        tier: str = "brain",
-        max_iterations: int = 10,
-        system_prompt_override: str | None = None,
-    ) -> AsyncGenerator[str, None]:
-        """Run the tool loop, then yield the final response."""
-        text, _ = await self.chat_with_tools(
-            user_message, tools, tool_executor, conversation_history,
-            tier=tier, max_iterations=max_iterations,
-            system_prompt_override=system_prompt_override,
-        )
-        yield text or "I completed the tool work, but did not receive a final response."
-
     async def _chat_cloud(
         self,
         user_message: str,
