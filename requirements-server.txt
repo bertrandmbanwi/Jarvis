@@ -1,0 +1,18 @@
+# Backend-only dependencies for running the JARVIS API server on Linux or in
+# Docker: no local voice stack (PyAudio, Kokoro, Whisper) and no Playwright.
+# On macOS, use requirements.txt instead.
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+httpx>=0.28.0
+pydantic>=2.10.0
+websockets>=14.0
+python-multipart>=0.0.18
+openai>=3.20.0
+anthropic>=0.52.0
+mcp>=2.2.0
+chromadb>=0.6.0
+ddgs>=7.0.0
+beautifulsoup4>=4.12.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+keyring>=25.0.0

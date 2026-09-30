@@ -44,6 +44,50 @@ jobs:
       - name: Bandit
         run: python -m bandit -q -r jarvis
 
+  backend-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-ci.lock
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements-ci.lock
+
+      - name: Unit tests (Linux)
+        run: python -m pytest tests -q --ignore=tests/e2e
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Start the API and wait for it to answer
+        run: |
+          docker compose up -d api
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8741/health/ping >/dev/null; then
+              echo "API is up"; exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs api
+          exit 1
+
+      - name: Remote clients need the PIN
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8741/costs)
+          test "$code" = "401" -o "$code" = "403"
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

@@ -9,7 +9,7 @@
   <a href="https://github.com/bertrandmbanwi/Jarvis/actions/workflows/ci.yml"><img src="https://github.com/bertrandmbanwi/Jarvis/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/models-OpenAI%20%7C%20Claude%20%7C%20Ollama%20%7C%20Apple-412991?style=flat-square" alt="Models: OpenAI, Claude, Ollama, Apple" />
   <img src="https://img.shields.io/badge/MCP-client%20%2B%20server-0A7BBB?style=flat-square" alt="MCP client and server" />
-  <img src="https://img.shields.io/badge/platform-macOS-999999?style=flat-square&logo=apple&logoColor=white" alt="macOS" />
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Docker-999999?style=flat-square&logo=apple&logoColor=white" alt="macOS, Docker" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License" /></a>
 </p>
 
@@ -249,7 +249,7 @@ bash scripts/package_macos_app.sh --install-user
 
 | Requirement | Minimum |
 |------------|---------|
-| OS | macOS 12+ (Apple Silicon recommended) |
+| OS | macOS 12+ (Apple Silicon recommended) for everything; Linux or Docker for the backend and web UI |
 | RAM | 8 GB (16 GB recommended for Ollama) |
 | Python | 3.11+ |
 | Node.js | 18+ |

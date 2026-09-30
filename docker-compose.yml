@@ -1,0 +1,39 @@
+# Run the JARVIS backend and web UI on Linux, Windows (WSL) or a server:
+#
+#   echo 'OPENAI_API_KEY=sk-...' > .env
+#   echo 'JARVIS_PIN=123456' >> .env        # your login PIN for the UI
+#   docker compose up --build
+#
+# Then open http://localhost:3000 and enter the PIN. Ports are published on
+# localhost only. macOS-only tools and local voice need the native install.
+services:
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      API_HOST: 0.0.0.0
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+    ports:
+      - "127.0.0.1:8741:8741"
+    volumes:
+      - jarvis-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: jarvis/ui/jarvis-ui
+      args:
+        JARVIS_API_HOST: api
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  jarvis-data:
