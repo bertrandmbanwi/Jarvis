@@ -356,13 +356,13 @@ class JarvisBrain:
 
         tier = _select_tier(user_input)
         parts: list[str] = []
+        # Memory lookup is blocking SQLite/Chroma; run it off the event loop
+        # so a concurrent client's request isn't stalled behind it.
+        recall = "" if self._privacy_mode else await asyncio.to_thread(self.memory.recall_block, user_input, 3)
+        enriched_input = f"{recall}\n\nUser request: {user_input}" if recall else user_input
 
         if tier == "fast" and _is_chat_only(user_input):
             logger.info("[req:%s] Routing to CHAT mode [tier: fast].", request_id)
-            # Memory lookup is blocking SQLite/Chroma; run it off the event loop
-            # so a concurrent client's request isn't stalled behind it.
-            enriched_context = await asyncio.to_thread(self.memory.get_enriched_context, user_input, 3)
-            enriched_input = f"{enriched_context}\n\nUser: {user_input}" if enriched_context else user_input
             with trace_span("brain.chat", request_id=request_id, tier="fast"):
                 async for token in self.llm.chat_stream(enriched_input, history, tier="fast"):
                     parts.append(token)
@@ -375,7 +375,7 @@ class JarvisBrain:
             else:
                 logger.info("[req:%s] Routing to AGENT mode [tier: %s].", request_id, tier)
                 with trace_span("brain.agent_execute", request_id=request_id, tier=tier):
-                    result = await self.agent.execute(user_input, history, tier=tier)
+                    result = await self.agent.execute(enriched_input, history, tier=tier)
             parts.append(result)
             yield result
 

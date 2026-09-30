@@ -18,7 +18,7 @@ def brain(monkeypatch):
     monkeypatch.setattr(settings, "MEMORY_ENABLED", False)
     monkeypatch.setattr(b, "_save_turn", lambda turn: None)
     b.memory = MagicMock()
-    b.memory.get_enriched_context.return_value = ""
+    b.memory.recall_block.return_value = ""
     b.planner.should_decompose = AsyncMock(return_value=False)
     b.agent.execute = AsyncMock(return_value="agent answer")
     b.success_tracker = MagicMock()
