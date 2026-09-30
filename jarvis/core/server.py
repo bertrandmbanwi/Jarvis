@@ -22,6 +22,7 @@ from jarvis.core import (
     cost_tracker,
     feedback,
     jobs,
+    notify,
     pending_actions,
     routines,
     workflow_scheduler,
@@ -575,16 +576,20 @@ async def lifespan(app: FastAPI):
         logger.warning("MCP startup failed: %s", exc)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
+    routine_task = asyncio.create_task(_routine_scheduler_loop())
 
     yield
 
     pending_actions.remove_notifier(ws_manager.broadcast_json)
     cleanup_task.cancel()
     scheduler_task.cancel()
+    routine_task.cancel()
     with suppress(asyncio.CancelledError):
         await cleanup_task
     with suppress(asyncio.CancelledError):
         await scheduler_task
+    with suppress(asyncio.CancelledError):
+        await routine_task
     if _mcp_manager is not None:
         with suppress(Exception):
             await _mcp_manager.close()
@@ -827,6 +832,35 @@ async def _workflow_scheduler_loop():
             logger.error("Workflow scheduler tick failed: %s", exc)
 
 
+async def run_scheduled_routine(routine: dict) -> str:
+    """Run one scheduled routine and deliver the result to the UI, voice, and channels."""
+    routines.mark_routine_run(routine["id"])
+    logger.info("Running scheduled routine: %s", routine.get("name"))
+    response = await brain.process(str(routine.get("prompt", "")))
+    await ws_manager.broadcast_json({
+        "routine_result": {"id": routine["id"], "name": routine.get("name"), "response": response}
+    })
+    await notify.notify(f"{routine.get('name')}: {response}")
+    if routine.get("speak") and _speaker:
+        try:
+            await _speaker.speak(response)
+        except Exception as exc:
+            logger.warning("Speaking routine result failed: %s", exc)
+    return response
+
+
+async def _routine_scheduler_loop():
+    while True:
+        await asyncio.sleep(30)
+        if not settings.ROUTINE_SCHEDULER_ENABLED:
+            continue
+        try:
+            for routine in routines.due_routines():
+                await run_scheduled_routine(routine)
+        except Exception as exc:
+            logger.error("Routine scheduler tick failed: %s", exc)
+
+
 # ============================================================
 # Request/Response Models
 # ============================================================
@@ -987,12 +1021,19 @@ async def create_routine(request: RoutineRequest):
     """Create a repeatable routine."""
     if not request.name.strip() or not request.prompt.strip():
         return JSONResponse(status_code=400, content={"error": "Name and prompt are required."})
-    return routines.create_routine(request.name, request.prompt, request.enabled, request.tags)
+    if not routines.valid_schedule(request.schedule_time, request.schedule_days):
+        return JSONResponse(status_code=400, content={"error": "schedule_time must be HH:MM; days mon..sun."})
+    return routines.create_routine(
+        request.name, request.prompt, request.enabled, request.tags,
+        request.schedule_time, request.schedule_days, request.speak,
+    )
 
 
 @app.put("/routines/{routine_id}", dependencies=[Depends(require_auth)])
 async def update_routine(routine_id: str, request: RoutineRequest):
     """Update a routine."""
+    if not routines.valid_schedule(request.schedule_time, request.schedule_days):
+        return JSONResponse(status_code=400, content={"error": "schedule_time must be HH:MM; days mon..sun."})
     routine = routines.update_routine(
         routine_id,
         {
@@ -1000,6 +1041,9 @@ async def update_routine(routine_id: str, request: RoutineRequest):
             "prompt": request.prompt.strip(),
             "enabled": request.enabled,
             "tags": request.tags,
+            "schedule_time": request.schedule_time,
+            "schedule_days": request.schedule_days,
+            "speak": request.speak,
         },
     )
     if routine is None:
