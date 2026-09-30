@@ -55,8 +55,30 @@ _ERROR_PATTERNS = [
 ]
 
 
+def _status_code(error: BaseException | None) -> int | None:
+    """HTTP status from an SDK error, or from the error it wraps."""
+    while error is not None:
+        status = getattr(error, "status_code", None)
+        if isinstance(status, int):
+            return status
+        error = error.__cause__
+    return None
+
+
 def classify_error(error: Exception) -> ErrorCategory:
     """Classify an exception into a structured error category."""
+    status = _status_code(error)
+    if status is not None:
+        if status == 429:
+            return ErrorCategory.RATE_LIMIT
+        if status in (401, 403):
+            return ErrorCategory.AUTH
+        if status in (400, 404, 409, 422):
+            return ErrorCategory.INVALID_INPUT
+        if status in (408, 504):
+            return ErrorCategory.TIMEOUT
+        if status >= 500:
+            return ErrorCategory.API_ERROR
     error_str = str(error).lower()
     error_type = type(error).__name__.lower()
     combined = f"{error_type}: {error_str}"
@@ -419,7 +441,7 @@ class CircuitBreaker:
         }
 
 
-claude_circuit = CircuitBreaker(name="claude_api", failure_threshold=5, recovery_timeout_s=60.0)
+cloud_circuit = CircuitBreaker(name="cloud_llm", failure_threshold=5, recovery_timeout_s=60.0)
 ollama_circuit = CircuitBreaker(name="ollama", failure_threshold=3, recovery_timeout_s=30.0)
 
 tool_circuits: dict[str, CircuitBreaker] = {}
@@ -439,7 +461,7 @@ def get_tool_circuit(tool_name: str) -> CircuitBreaker:
 def get_health_report() -> dict:
     """Get a comprehensive health report of all hardening subsystems."""
     circuit_statuses = {
-        "claude_api": claude_circuit.get_status(),
+        "cloud_llm": cloud_circuit.get_status(),
         "ollama": ollama_circuit.get_status(),
     }
 

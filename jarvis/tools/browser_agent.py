@@ -1,4 +1,4 @@
-"""Browser automation via Playwright and Claude Computer Use API."""
+"""Browser automation via Playwright and a computer-use model (OpenAI or Claude)."""
 import asyncio
 import base64
 import contextlib
@@ -19,9 +19,22 @@ DOWNLOAD_DIR = Path.home() / "Downloads" / "JARVIS"
 JARVIS_HOME = Path(__file__).parent.parent.parent
 BROWSER_PROFILE_DIR = JARVIS_HOME / "data" / "browser-profile"
 
+# Anthropic path (LLM_PROVIDER=anthropic)
 COMPUTER_USE_BETA = "computer-use-2025-11-24"
 COMPUTER_USE_TOOL_TYPE = "computer_20251124"
 COMPUTER_USE_MODEL = "claude-sonnet-4-6"
+
+# Screenshots kept in the model's context. Older ones are replaced with a
+# placeholder so cost and context don't grow with every step.
+KEEP_SCREENSHOTS = 3
+SCREENSHOT_MEDIA_TYPE = "image/jpeg"
+_PLACEHOLDER_IMAGE = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+)
+
+# OpenAI button names -> Playwright button names
+_OPENAI_BUTTONS = {"left": "left", "right": "right", "wheel": "middle"}
 
 KEY_TRANSLATION = {
     "ctrl": "Control", "control": "Control", "cmd": "Meta", "command": "Meta",
@@ -180,12 +193,13 @@ class BrowserAgent:
         return await self.initialize()
 
     async def take_screenshot(self) -> str:
-        """Capture the current page as a base64-encoded PNG."""
+        """Capture the current page as a base64-encoded JPEG."""
         if not self._page:
             return ""
         try:
             screenshot_bytes = await self._page.screenshot(
-                type="png",
+                type="jpeg",
+                quality=SCREENSHOT_QUALITY,
                 full_page=False,
             )
             return base64.b64encode(screenshot_bytes).decode("utf-8")
@@ -279,6 +293,72 @@ class BrowserAgent:
             logger.error("Browser action '%s' failed: %s", action, error_msg)
             return f"Action '{action}' failed: {error_msg}"
 
+    async def execute_openai_action(self, action: dict[str, Any]) -> str:
+        """Execute one OpenAI computer-tool action (click, type, keypress, ...)."""
+        if not self._page:
+            return "Error: no browser page available"
+        kind = action.get("type", "")
+        # For pointer actions, ``keys`` are modifiers held during the action.
+        # For keypress, ``keys`` is the combo itself and is pressed below.
+        held = [] if kind == "keypress" else [_translate_key_combo(k) for k in action.get("keys") or []]
+        mouse = self._page.mouse
+        keyboard = self._page.keyboard
+        try:
+            for key in held:
+                await keyboard.down(key)
+            try:
+                if kind == "click":
+                    button = action.get("button", "left")
+                    if button in ("back", "forward"):
+                        await (self._page.go_back() if button == "back" else self._page.go_forward())
+                        return f"Navigated {button}"
+                    await mouse.click(action["x"], action["y"], button=_OPENAI_BUTTONS.get(button, "left"))
+                    with contextlib.suppress(Exception):
+                        await self._page.wait_for_load_state("domcontentloaded", timeout=5000)
+                    return f"Clicked {button} at ({action['x']}, {action['y']})"
+                if kind == "double_click":
+                    await mouse.dblclick(action["x"], action["y"])
+                    return f"Double-clicked at ({action['x']}, {action['y']})"
+                if kind == "move":
+                    await mouse.move(action["x"], action["y"])
+                    return f"Moved to ({action['x']}, {action['y']})"
+                if kind == "drag":
+                    path = action.get("path") or []
+                    if len(path) < 2:
+                        return "Drag needs at least two points"
+                    await mouse.move(path[0]["x"], path[0]["y"])
+                    await mouse.down()
+                    for point in path[1:]:
+                        await mouse.move(point["x"], point["y"], steps=5)
+                    await mouse.up()
+                    return f"Dragged through {len(path)} points"
+                if kind == "scroll":
+                    await mouse.move(action["x"], action["y"])
+                    await mouse.wheel(action.get("scroll_x", 0), action.get("scroll_y", 0))
+                    await asyncio.sleep(0.3)
+                    return f"Scrolled ({action.get('scroll_x', 0)}, {action.get('scroll_y', 0)})"
+                if kind == "type":
+                    text = action.get("text", "")
+                    await keyboard.type(text, delay=30)
+                    return f"Typed: '{text[:50]}{'...' if len(text) > 50 else ''}'"
+                if kind == "keypress":
+                    combo = "+".join(_translate_key_combo(k) for k in action.get("keys") or [])
+                    await keyboard.press(combo)
+                    return f"Pressed key: {combo}"
+                if kind == "wait":
+                    await asyncio.sleep(2)
+                    return "Waited 2s"
+                if kind == "screenshot":
+                    return "screenshot_taken"
+                return f"Unknown action: {kind}"
+            finally:
+                for key in reversed(held):
+                    await keyboard.up(key)
+        except Exception as e:
+            error_msg = str(e)[:200]
+            logger.error("Browser action '%s' failed: %s", kind, error_msg)
+            return f"Action '{kind}' failed: {error_msg}"
+
     async def navigate(self, url: str) -> str:
         """Navigate to a URL and sync Chrome cookies for the target domain."""
         ok = await self._ensure_ready()
@@ -321,39 +401,8 @@ class BrowserAgent:
         finally:
             self._task_running = False
 
-    async def _run_computer_use_loop(self, task: str, start_url: str | None = None) -> str:
-        """Core loop: screenshot, send to Claude, execute action, repeat; handles rate limits."""
-        import anthropic
-
-        from jarvis.core.hardening import claude_circuit
-        from jarvis.core.llm import _get_anthropic_client
-
-        client = _get_anthropic_client()
-        if client is None:
-            return "Error: ANTHROPIC_API_KEY not set. Cannot use Computer Use."
-
-        max_retries = 3
-        base_backoff_seconds = 5.0
-        inter_step_delay = 0.3
-
-        if start_url:
-            nav_result = await self.navigate(start_url)
-            logger.info("Browser: %s", nav_result)
-
-        await asyncio.sleep(1)
-
-        screenshot_b64 = await self.take_screenshot()
-        if not screenshot_b64:
-            return "Error: could not capture initial screenshot"
-
-        computer_tool = {
-            "type": COMPUTER_USE_TOOL_TYPE,
-            "name": "computer",
-            "display_width_px": VIEWPORT_WIDTH,
-            "display_height_px": VIEWPORT_HEIGHT,
-        }
-
-        system_prompt = (
+    def _system_prompt(self) -> str:
+        return (
             "You are a browser automation agent. You can see a browser window and "
             "interact with it using mouse clicks, keyboard input, and scrolling. "
             "Complete the user's task step by step. After each action, you will "
@@ -386,143 +435,230 @@ class BrowserAgent:
             f"DOWNLOADS: {DOWNLOAD_DIR}\n"
         )
 
-        messages: list[Any] = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": f"Task: {task}"},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
-                        },
-                    },
-                    {"type": "text", "text": "Here is the current browser state. Begin working on the task."},
-                ],
-            }
-        ]
+    async def _prepare(self, start_url: str | None) -> str:
+        """Navigate to the start URL and return the first screenshot (or "")."""
+        if start_url:
+            nav_result = await self.navigate(start_url)
+            logger.info("Browser: %s", nav_result)
+        await asyncio.sleep(1)
+        return await self.take_screenshot()
 
-        step = 0
+    def _closed_summary(self, actions_taken: list[str]) -> str:
+        summary = "The browser window was closed while I was working. "
+        if actions_taken:
+            summary += f"I completed {len(actions_taken)} action(s) before it closed. "
+        return summary + "I can try again if you reopen the browser."
+
+    def _limit_summary(self, actions_taken: list[str]) -> str:
+        summary = f"Browser task stopped after {MAX_STEPS} steps (safety limit). Actions taken:\n"
+        return summary + "\n".join(actions_taken[-10:])
+
+    async def _run_computer_use_loop(self, task: str, start_url: str | None = None) -> str:
+        """Screenshot, ask the model for actions, execute them, repeat."""
+        from jarvis.config import settings
+
+        if settings.LLM_PROVIDER == "anthropic":
+            return await self._run_anthropic_loop(task, start_url)
+        return await self._run_openai_loop(task, start_url)
+
+    async def _run_openai_loop(self, task: str, start_url: str | None) -> str:
+        from jarvis.config import settings
+        from jarvis.core.hardening import cloud_circuit
+        from jarvis.core.providers import build_provider
+        from jarvis.core.providers.openai_provider import OpenAIProvider
+
+        provider = build_provider("openai")
+        if not isinstance(provider, OpenAIProvider) or not provider.is_configured():
+            return "Error: OPENAI_API_KEY not set. Cannot use computer use."
+
+        screenshot_b64 = await self._prepare(start_url)
+        if not screenshot_b64:
+            return "Error: could not capture initial screenshot"
+
+        base_kwargs: dict[str, Any] = {
+            "model": settings.OPENAI_COMPUTER_USE_MODEL,
+            "instructions": self._system_prompt(),
+            "tools": [{"type": "computer"}],
+            "store": False,
+            "include": ["reasoning.encrypted_content"],
+            "max_output_tokens": 4096,
+        }
+        items: list[dict[str, Any]] = [{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": f"Task: {task}\nHere is the current browser state. Begin working on the task."},
+                {"type": "input_image", "image_url": f"data:{SCREENSHOT_MEDIA_TYPE};base64,{screenshot_b64}", "detail": "original"},
+            ],
+        }]
         actions_taken: list[str] = []
-        client_any: Any = client
 
-        while step < MAX_STEPS:
-            step += 1
+        for step in range(1, MAX_STEPS + 1):
             logger.info("Browser agent step %d/%d", step, MAX_STEPS)
-
-            if step > 1:
-                await asyncio.sleep(inter_step_delay)
-
             if not self._is_page_alive():
-                logger.warning("Browser closed during task at step %d. Aborting.", step)
-                summary = "The browser window was closed while I was working. "
-                if actions_taken:
-                    summary += f"I completed {len(actions_taken)} action(s) before it closed. "
-                summary += "I can try again if you reopen the browser."
-                return summary
+                return self._closed_summary(actions_taken)
+            if not cloud_circuit.allow_request():
+                return (f"Browser task paused at step {step}: the model API is temporarily "
+                        "unavailable (circuit breaker open). Try again shortly.")
+            try:
+                response = await provider._create(input=items, **base_kwargs)
+                cloud_circuit.record_success()
+            except Exception as e:
+                cloud_circuit.record_failure()
+                logger.error("Browser agent API error: %s", e)
+                return f"Browser task failed at step {step}: {str(e)[:200]}"
 
-            if not claude_circuit.allow_request():
-                return (
-                    f"Browser task paused at step {step}: the Claude API is "
-                    "temporarily unavailable (circuit breaker open). Try again shortly."
+            output = list(getattr(response, "output", None) or [])
+            items.extend(o.model_dump(mode="json", exclude_none=True) for o in output)
+            calls = [o for o in output if getattr(o, "type", "") == "computer_call"]
+            if not calls:
+                final_text = (getattr(response, "output_text", "") or "").strip()
+                logger.info("Browser agent completed: %s", final_text[:100])
+                return final_text or f"Task completed after {step} steps."
+
+            for call in calls:
+                checks = list(getattr(call, "pending_safety_checks", None) or [])
+                if checks:
+                    # Never auto-acknowledge: a human has to review these.
+                    reasons = "; ".join(c.message or c.code or "safety check" for c in checks)
+                    return (f"I paused the browser task at step {step} because it needs your review: "
+                            f"{reasons}. Tell me to continue once you've checked the page.")
+                actions = [a.model_dump(mode="json", exclude_none=True) for a in (call.actions or [])]
+                if not actions and getattr(call, "action", None) is not None:
+                    actions = [call.action.model_dump(mode="json", exclude_none=True)]
+                for action in actions:
+                    logger.info("Browser agent action: %s", action)
+                    result = await self.execute_openai_action(action)
+                    if action.get("type") != "screenshot":
+                        actions_taken.append(f"Step {step}: {action.get('type')} - {result}")
+                await asyncio.sleep(0.5)
+                shot = await self.take_screenshot()
+                _prune_openai_screenshots(items)
+                items.append({
+                    "type": "computer_call_output",
+                    "call_id": call.call_id,
+                    "output": {
+                        "type": "computer_screenshot",
+                        "image_url": f"data:{SCREENSHOT_MEDIA_TYPE};base64,{shot}" if shot else _PLACEHOLDER_IMAGE,
+                        "detail": "original",
+                    },
+                })
+
+        return self._limit_summary(actions_taken)
+
+    async def _run_anthropic_loop(self, task: str, start_url: str | None) -> str:
+        from jarvis.config import settings
+        from jarvis.core.hardening import cloud_circuit
+
+        if not settings.ANTHROPIC_API_KEY:
+            return "Error: ANTHROPIC_API_KEY not set. Cannot use Computer Use."
+        import anthropic
+
+        client: Any = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=3)
+
+        screenshot_b64 = await self._prepare(start_url)
+        if not screenshot_b64:
+            return "Error: could not capture initial screenshot"
+
+        computer_tool = {
+            "type": COMPUTER_USE_TOOL_TYPE,
+            "name": "computer",
+            "display_width_px": VIEWPORT_WIDTH,
+            "display_height_px": VIEWPORT_HEIGHT,
+        }
+        messages: list[Any] = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": f"Task: {task}"},
+                {"type": "image", "source": {"type": "base64", "media_type": SCREENSHOT_MEDIA_TYPE, "data": screenshot_b64}},
+                {"type": "text", "text": "Here is the current browser state. Begin working on the task."},
+            ],
+        }]
+        actions_taken: list[str] = []
+
+        for step in range(1, MAX_STEPS + 1):
+            logger.info("Browser agent step %d/%d", step, MAX_STEPS)
+            if step > 1:
+                await asyncio.sleep(0.3)
+            if not self._is_page_alive():
+                return self._closed_summary(actions_taken)
+            if not cloud_circuit.allow_request():
+                return (f"Browser task paused at step {step}: the model API is temporarily "
+                        "unavailable (circuit breaker open). Try again shortly.")
+            try:
+                response = await client.beta.messages.create(
+                    model=COMPUTER_USE_MODEL,
+                    max_tokens=1024,
+                    system=self._system_prompt(),
+                    tools=[computer_tool],
+                    messages=messages,
+                    betas=[COMPUTER_USE_BETA],
                 )
-
-            response = None
-            for attempt in range(max_retries + 1):
-                try:
-                    response = await client_any.beta.messages.create(
-                        model=COMPUTER_USE_MODEL,
-                        max_tokens=1024,
-                        system=system_prompt,
-                        tools=[computer_tool],
-                        messages=messages,
-                        betas=[COMPUTER_USE_BETA],
-                    )
-                    claude_circuit.record_success()
-                    break  # Success
-                except anthropic.RateLimitError as e:
-                    if attempt < max_retries:
-                        wait_time = base_backoff_seconds * (2 ** attempt)
-                        logger.warning(
-                            "Rate limited at step %d (attempt %d/%d). "
-                            "Backing off %.1fs before retry.",
-                            step, attempt + 1, max_retries, wait_time,
-                        )
-                        await asyncio.sleep(wait_time)
-                    else:
-                        claude_circuit.record_failure()
-                        error_msg = f"Rate limited after {max_retries + 1} attempts: {str(e)[:200]}"
-                        logger.error("Browser agent: %s", error_msg)
-                        return f"Browser task paused at step {step} due to rate limiting. {error_msg}"
-                except Exception as e:
-                    claude_circuit.record_failure()
-                    error_msg = f"Claude API error: {str(e)[:200]}"
-                    logger.error("Browser agent: %s", error_msg)
-                    return f"Browser task failed at step {step}: {error_msg}"
-
-            if response is None:
-                return f"Browser task failed at step {step}: no response received."
+                cloud_circuit.record_success()
+            except Exception as e:
+                cloud_circuit.record_failure()
+                logger.error("Browser agent API error: %s", e)
+                return f"Browser task failed at step {step}: {str(e)[:200]}"
 
             assistant_content = response.content
             messages.append({"role": "assistant", "content": assistant_content})
 
-            if response.stop_reason == "end_turn":
-                final_text = ""
-                for block in assistant_content:
-                    if hasattr(block, "text"):
-                        final_text += block.text
-                if not final_text:
-                    final_text = f"Task completed after {step} steps."
+            if response.stop_reason != "tool_use":
+                final_text = "".join(getattr(b, "text", "") for b in assistant_content)
                 logger.info("Browser agent completed: %s", final_text[:100])
-                return final_text
+                return final_text or f"Task completed after {step} steps."
 
             tool_results = []
             for block in assistant_content:
-                if block.type == "tool_use":
-                    tool_input = block.input
-                    action = str(tool_input.get("action", "screenshot"))
+                if block.type != "tool_use":
+                    continue
+                tool_input = block.input
+                action = str(tool_input.get("action", "screenshot"))
+                logger.info("Browser agent action: %s (params: %s)",
+                            action, {k: v for k, v in tool_input.items() if k != "action"})
+                if action == "screenshot":
+                    result_text = "Here is the current screenshot."
+                else:
+                    action_params = {k: v for k, v in tool_input.items() if k != "action"}
+                    result_text = await self.execute_action(action, **action_params)
+                    actions_taken.append(f"Step {step}: {action} - {result_text}")
+                    await asyncio.sleep(0.5)
 
-                    logger.info("Browser agent action: %s (params: %s)",
-                                action, {k: v for k, v in tool_input.items() if k != "action"})
+                new_screenshot = await self.take_screenshot()
+                content: list[dict[str, Any]] = []
+                if new_screenshot:
+                    content.append({"type": "image", "source": {
+                        "type": "base64", "media_type": SCREENSHOT_MEDIA_TYPE, "data": new_screenshot,
+                    }})
+                content.append({"type": "text", "text": result_text})
+                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": content})
 
-                    if action == "screenshot":
-                        result_text = "Here is the current screenshot."
-                    else:
-                        action_params = {k: v for k, v in tool_input.items() if k != "action"}
-                        result_text = await self.execute_action(action, **action_params)
-                        actions_taken.append(f"Step {step}: {action} - {result_text}")
-                        await asyncio.sleep(0.5)
-
-                    new_screenshot = await self.take_screenshot()
-
-                    tool_result_content = []
-                    if new_screenshot:
-                        tool_result_content.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": new_screenshot,
-                            },
-                        })
-                    tool_result_content.append({
-                        "type": "text",
-                        "text": result_text,
-                    })
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": tool_result_content,
-                    })
-
+            _prune_anthropic_screenshots(messages)
             messages.append({"role": "user", "content": tool_results})
 
-        summary = f"Browser task stopped after {MAX_STEPS} steps (safety limit). Actions taken:\n"
-        summary += "\n".join(actions_taken[-10:])
-        return summary
+        return self._limit_summary(actions_taken)
+
+
+def _prune_openai_screenshots(items: list[dict[str, Any]]) -> None:
+    """Keep the last KEEP_SCREENSHOTS - 1 screenshots (a new one is about to be added)."""
+    outputs = [i for i in items if i.get("type") == "computer_call_output"]
+    for item in outputs[: max(0, len(outputs) - (KEEP_SCREENSHOTS - 1))]:
+        item["output"] = {**item["output"], "image_url": _PLACEHOLDER_IMAGE}
+
+
+def _prune_anthropic_screenshots(messages: list[Any]) -> None:
+    """Replace screenshots in older tool results with a text placeholder."""
+    result_msgs = [
+        m for m in messages
+        if m.get("role") == "user" and isinstance(m.get("content"), list)
+        and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in m["content"])
+    ]
+    for msg in result_msgs[: max(0, len(result_msgs) - (KEEP_SCREENSHOTS - 1))]:
+        for block in msg["content"]:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                block["content"] = [
+                    part if part.get("type") != "image" else {"type": "text", "text": "[earlier screenshot omitted]"}
+                    for part in block["content"]
+                ]
 
 
 _browser_agent: BrowserAgent | None = None
@@ -562,7 +698,7 @@ async def browser_navigate(url: str) -> list[dict[str, Any]]:
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
+                "media_type": SCREENSHOT_MEDIA_TYPE,
                 "data": screenshot_b64,
             },
         })
@@ -589,7 +725,7 @@ async def browser_screenshot() -> list[dict[str, Any]]:
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
+                "media_type": SCREENSHOT_MEDIA_TYPE,
                 "data": screenshot_b64,
             },
         },
@@ -648,7 +784,7 @@ async def get_browser_state() -> list[dict[str, Any]]:
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
+                "media_type": SCREENSHOT_MEDIA_TYPE,
                 "data": screenshot_b64,
             },
         })
@@ -683,7 +819,7 @@ async def browser_switch_tab(tab_number: int) -> list[dict[str, Any]]:
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
+                "media_type": SCREENSHOT_MEDIA_TYPE,
                 "data": screenshot_b64,
             },
         })

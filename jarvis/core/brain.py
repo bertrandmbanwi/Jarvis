@@ -259,7 +259,7 @@ class JarvisBrain:
         if not llm_ok:
             logger.error(
                 "No LLM backend available. "
-                "Set ANTHROPIC_API_KEY in .env or start Ollama."
+                "Set OPENAI_API_KEY (or ANTHROPIC_API_KEY with LLM_PROVIDER=anthropic) or start Ollama."
             )
             return False
 
