@@ -220,7 +220,7 @@ class VoiceListener:
             logger.info("Recording too short or empty (%s).", source)
             return False
 
-        text = self._transcribe(speech_audio)
+        text = await asyncio.to_thread(self._transcribe, speech_audio)
         if not text or not text.strip():
             logger.info("No speech detected after %s activation.", source)
             return False
@@ -253,7 +253,7 @@ class VoiceListener:
             self._capturing = False
         if audio is None:
             return ""
-        return self._transcribe(audio).strip()
+        return (await asyncio.to_thread(self._transcribe, audio)).strip()
 
     async def listen_loop(self):
         """Main listening loop: wait for wake word, record until silence, transcribe, callback."""
@@ -295,9 +295,7 @@ class VoiceListener:
                     continue
 
                 try:
-                    audio_data = self._stream.read(
-                        settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False
-                    )
+                    audio_data = await self._read_chunk()
                 except Exception:
                     await asyncio.sleep(0.01)
                     continue
@@ -451,9 +449,7 @@ class VoiceListener:
                 break
 
             try:
-                audio_data = self._stream.read(
-                    settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False
-                )
+                audio_data = await self._read_chunk()
             except Exception:
                 break
 
@@ -505,6 +501,18 @@ class VoiceListener:
             return None
 
         return combined
+
+    async def _read_chunk(self) -> bytes:
+        """Read one microphone chunk without blocking the shared event loop.
+
+        In full mode the API server and this listener share one loop; a
+        blocking PyAudio read (~80 ms per chunk, continuously) would stall
+        every HTTP and WebSocket request.
+        """
+        stream = self._stream
+        if stream is None:
+            raise RuntimeError("Audio stream is not open")
+        return await asyncio.to_thread(stream.read, settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False)
 
     def _transcribe(self, audio: np.ndarray) -> str:
         """Transcribe audio to text using the active STT engine."""
@@ -685,7 +693,7 @@ class VoiceListener:
                 self._cleanup_stream()
 
                 if speech_audio is not None:
-                    text = self._transcribe(speech_audio)
+                    text = await asyncio.to_thread(self._transcribe, speech_audio)
                     if text and text.strip():
                         logger.info("You said: '%s'", text)
                         if self._on_speech_callback:

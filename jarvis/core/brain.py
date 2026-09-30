@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import uuid
+from contextvars import ContextVar
 
 from jarvis.agent.coordinator import AgentCoordinator, AgentType
 from jarvis.agent.evolution_pipeline import EvolutionPipeline
@@ -196,6 +197,13 @@ def _select_tier(text: str) -> str:
     return "brain"
 
 
+# Per-request state. Requests from /chat, jobs, the scheduler, and each
+# WebSocket connection run in separate asyncio tasks, each with its own copy of
+# these, so one request's plan or ID can never leak into another's.
+_request_id_var: ContextVar[str] = ContextVar("jarvis_request_id", default="")
+_last_plan_var: ContextVar["TaskPlan | None"] = ContextVar("jarvis_last_plan", default=None)
+
+
 class JarvisBrain:
     """Central orchestrator for LLM, memory, agent, and response generation."""
 
@@ -216,8 +224,32 @@ class JarvisBrain:
         self._initialized = False
         self._shutdown_requested = False
         self._on_plan_progress = None  # Callback for broadcasting plan progress via WebSocket
-        self._last_plan: TaskPlan | None = None
-        self._current_request_id: str = ""  # Correlation ID for the current request
+
+    @property
+    def _current_request_id(self) -> str:
+        """Correlation ID for the request running in the current task."""
+        return _request_id_var.get()
+
+    @_current_request_id.setter
+    def _current_request_id(self, value: str) -> None:
+        _request_id_var.set(value)
+
+    @property
+    def _last_plan(self) -> TaskPlan | None:
+        """Plan executed by the request running in the current task, if any."""
+        return _last_plan_var.get()
+
+    @_last_plan.setter
+    def _last_plan(self, plan: TaskPlan | None) -> None:
+        _last_plan_var.set(plan)
+    @property
+    def _privacy_mode(self) -> bool:
+        return self.llm.privacy_mode
+
+    @_privacy_mode.setter
+    def _privacy_mode(self, enabled: bool) -> None:
+        # Kept on the LLM client so its cost logs can redact prompt previews too.
+        self.llm.privacy_mode = enabled
 
     async def initialize(self) -> bool:
         """Initialize and check all dependencies."""
@@ -291,6 +323,7 @@ class JarvisBrain:
         start_time = time.time()
         trace_id = get_trace_id()
         self._current_request_id = uuid.uuid4().hex[:12]
+        self._last_plan = None
         logger.info(
             "[req:%s] Processing: '%s'",
             self._current_request_id, user_input[:100],
@@ -403,7 +436,7 @@ class JarvisBrain:
 
         # Track experiment outcomes and suggestions for completed plans
         task_elapsed = time.time() - start_time
-        if hasattr(self, '_last_plan') and self._last_plan:
+        if self._last_plan:
             plan = self._last_plan
             failed_markers = (
                 "i encountered an error",
@@ -428,7 +461,7 @@ class JarvisBrain:
             try:
                 self.success_tracker.log_task(
                     task_type="planned",
-                    prompt=user_input[:200],
+                    prompt="" if self._privacy_mode else user_input[:200],
                     success=task_succeeded,
                     duration_seconds=task_elapsed,
                 )
@@ -513,6 +546,8 @@ class JarvisBrain:
             yield "I didn't catch that. Could you say something?"
             return
 
+        self._current_request_id = uuid.uuid4().hex[:12]
+        self._last_plan = None
         self.proactive.mark_interaction()
 
         if settings.LOCAL_FIRST_ENABLED:
@@ -754,7 +789,7 @@ class JarvisBrain:
         try:
             dispatch_id = self.dispatch.register(
                 project_name=plan.goal_summary[:100],
-                prompt=user_input[:500],
+                prompt="" if self._privacy_mode else user_input[:500],
             )
             self.dispatch.update_status(
                 dispatch_id,

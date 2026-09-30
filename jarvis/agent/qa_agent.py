@@ -32,6 +32,9 @@ class QAResult:
     issues: list[str]
     summary: str
     attempt: int
+    # False when no real verdict was obtained (timeout, error, unparseable reply).
+    # An inconclusive result must not trigger a retry.
+    conclusive: bool = True
 
 
 class QAAgent:
@@ -118,6 +121,7 @@ class QAAgent:
                 issues=["Verification timeout; retrying task"],
                 summary="Verification process exceeded time limit",
                 attempt=1,
+                conclusive=False,
             )
         except Exception as e:
             logger.error("QA verification failed: %s", e)
@@ -126,6 +130,7 @@ class QAAgent:
                 issues=[f"Verification error: {str(e)}"],
                 summary="QA system encountered an error",
                 attempt=1,
+                conclusive=False,
             )
 
         return self._parse_qa_response(response)
@@ -346,6 +351,7 @@ class QAAgent:
                 issues=["QA response was not valid JSON"],
                 summary="Verification result unclear; retry or manual review required",
                 attempt=1,
+                conclusive=False,
             )
         except Exception as e:
             logger.error("Unexpected error parsing QA response: %s", e)
@@ -354,4 +360,5 @@ class QAAgent:
                 issues=[f"Parsing error: {str(e)}"],
                 summary="Unable to parse verification result",
                 attempt=1,
+                conclusive=False,
             )

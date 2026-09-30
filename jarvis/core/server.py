@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
@@ -580,10 +581,52 @@ _tunnel_domain = os.environ.get("JARVIS_TUNNEL_DOMAIN", "")
 if _tunnel_domain:
     _cors_origins.append(f"https://{_tunnel_domain}")
 
+# Extra browser origins (e.g. a LAN address for the UI), comma-separated.
+_cors_origins.extend(
+    o.strip().rstrip("/") for o in os.environ.get("JARVIS_ALLOWED_ORIGINS", "").split(",") if o.strip()
+)
+
+_TUNNEL_ORIGIN_RE = re.compile(r"^https://[a-z0-9-]+\.trycloudflare\.com$")
+
+
+def _origin_allowed(
+    origin: str | None,
+    *,
+    local: bool,
+    allow_extension: bool = False,
+    allow_null: bool = False,
+) -> bool:
+    """Return True if a request's Origin header belongs to a JARVIS client.
+
+    Browsers always attach Origin to WebSocket handshakes and cross-origin
+    requests, and page scripts cannot forge it. Native clients (the voice
+    loop, curl, the Swift overlay's host) send none. A loopback peer address
+    alone is NOT proof of trust: any web page open in the user's browser also
+    connects from 127.0.0.1, so untrusted origins are rejected outright.
+
+    ``*.trycloudflare.com`` origins are only accepted on forwarded (tunnel)
+    connections, which must pass PIN auth anyway. Anyone can mint such a
+    subdomain, so on a local connection it would be an auth bypass.
+    """
+    if not origin:
+        return True
+    origin = origin.rstrip("/")
+    if origin in _cors_origins:
+        return True
+    if not local and _TUNNEL_ORIGIN_RE.match(origin):
+        return True
+    if allow_null and origin in ("null", "file://"):
+        return True
+    if allow_extension and origin.startswith("chrome-extension://"):
+        pinned = os.environ.get("JARVIS_EXTENSION_ID", "").strip()
+        return not pinned or origin == f"chrome-extension://{pinned}"
+    return False
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_origin_regex=r"https://.*\.trycloudflare\.com",
+    allow_origin_regex=_TUNNEL_ORIGIN_RE.pattern,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["authorization", "content-type", "x-requested-with", "x-jarvis-client", "x-trace-id"],
@@ -657,6 +700,19 @@ def _spawn_background(coro, *, name: str | None = None) -> asyncio.Task:
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     return task
+
+
+@app.middleware("http")
+async def origin_guard(request: Request, call_next):
+    """Reject browser requests from origins that are not JARVIS clients.
+
+    Without this, a page in any tab could POST to the loopback API (e.g. a
+    ``no-cors`` fetch with no Content-Type) and be treated as a trusted local
+    client. See ``_origin_allowed``.
+    """
+    if not _origin_allowed(request.headers.get("origin"), local=_client_is_local(request)):
+        return JSONResponse(status_code=403, content={"error": "Origin not allowed."})
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -2567,6 +2623,10 @@ async def websocket_chat(websocket: WebSocket):
     """WebSocket endpoint for real-time chat with token streaming."""
     is_local = _client_is_local(websocket)
 
+    if not _origin_allowed(websocket.headers.get("origin"), local=is_local):
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return
+
     if not is_local and not auth.pin_auth_enabled():
         await websocket.close(code=4001, reason="Remote access requires PIN authentication")
         return
@@ -2713,6 +2773,10 @@ async def websocket_extension(websocket: WebSocket):
     client_host = websocket.client.host if websocket.client else ""
     is_local = _client_is_local(websocket)
 
+    if not _origin_allowed(websocket.headers.get("origin"), local=is_local, allow_extension=True):
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return
+
     if not is_local and not auth.pin_auth_enabled():
         await websocket.close(code=4001, reason="Remote access requires PIN authentication")
         return
@@ -2748,7 +2812,9 @@ async def websocket_overlay(websocket: WebSocket):
     Sends JSON messages: {"state": "idle"|"listening"|"thinking"|"speaking"}
     The overlay uses these to animate the particle orb.
     """
-    if not _client_is_local(websocket):
+    if not _client_is_local(websocket) or not _origin_allowed(
+        websocket.headers.get("origin"), local=True, allow_null=True
+    ):
         await websocket.close(code=4003, reason="Overlay only available locally")
         return
 
