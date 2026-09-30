@@ -60,7 +60,7 @@ def test_http_request_without_origin_passes_guard(client):
 def test_ws_from_foreign_origin_is_closed(client):
     from starlette.websockets import WebSocketDisconnect
 
-    for path in ("/ws", "/ws/extension", "/ws/overlay"):
+    for path in ("/ws", "/ws/extension", "/ws/overlay", "/ws/live"):
         with pytest.raises(WebSocketDisconnect) as exc, client.websocket_connect(
             path, headers={"Origin": "https://evil.example"}
         ) as ws:
