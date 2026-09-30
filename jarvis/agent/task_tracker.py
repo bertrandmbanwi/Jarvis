@@ -89,8 +89,6 @@ class TaskPlan:
     created_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
     status: str = "active"  # active, completed, failed, cancelled
-    _experiment_id: str = ""
-    _experiment_template_version: str = ""
 
     @property
     def total(self) -> int:

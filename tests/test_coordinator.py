@@ -313,7 +313,7 @@ class TestAgentCoordinator:
         coord = AgentCoordinator()
         coder = coord.profiles[AgentType.CODER]
         assert "run_command" in coder.tool_names
-        assert "run_claude_code" in coder.tool_names
+        assert "run_coding_agent" in coder.tool_names
 
     def test_browser_profile_has_browser_tools(self):
         """Browser profile should have browser interaction tools."""

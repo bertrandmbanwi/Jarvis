@@ -4,9 +4,7 @@ HTTP + WebSocket API for interacting with JARVIS.
 Used by the UI and can also be used by iPhone/external clients.
 """
 import asyncio
-import json
 import logging
-import os
 import time
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
@@ -18,37 +16,62 @@ from pydantic import BaseModel
 
 from jarvis.config import settings
 from jarvis.core import (
-    anthropic_batch,
     app_lifecycle,
     auth,
-    calendar_accounts,
-    calendar_oauth,
+    batch,
     cost_tracker,
     feedback,
     jobs,
+    notify,
     pending_actions,
     routines,
-    team,
     workflow_scheduler,
-    workflows,
 )
 from jarvis.core import profile as user_profile
-from jarvis.core.brain import JarvisBrain
+from jarvis.core.api_models import (
+    BatchRequest,
+    ChatRequest,
+    ChatResponse,
+    ConfirmActionRequest,
+    CostEstimateRequest,
+    FeedbackRequest,
+    JobRequest,
+    LifecycleControlRequest,
+    LifecycleLaunchAgentRequest,
+    PinRequest,
+    PrivacyRequest,
+    ProactiveSettingsRequest,
+    RoutineRequest,
+    RoutineRunRequest,
+    SetPinRequest,
+    StatusResponse,
+)
+from jarvis.core.http_security import (
+    _TUNNEL_ORIGIN_RE,
+    _client_is_local,
+    _cors_origins,
+    _origin_allowed,
+    require_auth,
+)
+from jarvis.core.job_runners import run_chat_job, serialize_job
 from jarvis.core.permissions import TOOL_PERMISSIONS, list_tool_audit, summarize_permissions
+from jarvis.core.routes import calendar as calendar_routes
+from jarvis.core.routes import workflows as workflow_routes
+from jarvis.core.runtime import brain, spawn_background
 from jarvis.core.savings import savings_tracker
 from jarvis.core.settings_api import settings_router
-from jarvis.core.tracing import get_trace_id, record_event, reset_trace_id, set_trace_id, trace_span
+from jarvis.core.tracing import get_trace_id, reset_trace_id, set_trace_id, trace_span
 from jarvis.tools import chrome_extension, public_data
 
 logger = logging.getLogger("jarvis.server")
 EMPTY_CHUNK = ""
 
 # Global brain instance
-brain = JarvisBrain()
 
 # Voice components set by run_full for browser TTS triggering
 _speaker = None
 _listener = None
+_mcp_manager: Any = None
 
 # Desktop overlay WebSocket clients (lightweight, no auth required for localhost)
 _overlay_clients: list[WebSocket] = []
@@ -543,18 +566,42 @@ async def lifespan(app: FastAPI):
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
     # Let the executor ask connected clients to approve high-risk tool calls.
     pending_actions.add_notifier(ws_manager.broadcast_json)
+    from jarvis.core.mcp_client import MCPManager
+
+    global _mcp_manager
+    _mcp_manager = MCPManager()
+    try:
+        await _mcp_manager.start()
+    except Exception as exc:
+        logger.warning("MCP startup failed: %s", exc)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
+    routine_task = asyncio.create_task(_routine_scheduler_loop())
+    telegram_task = None
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ALLOWED_USER_IDS:
+        from jarvis.channels.telegram import TelegramBridge
+
+        telegram_task = asyncio.create_task(
+            TelegramBridge(settings.TELEGRAM_BOT_TOKEN, runner=brain.process).run(), name="telegram"
+        )
 
     yield
 
     pending_actions.remove_notifier(ws_manager.broadcast_json)
     cleanup_task.cancel()
     scheduler_task.cancel()
+    routine_task.cancel()
+    if telegram_task is not None:
+        telegram_task.cancel()
     with suppress(asyncio.CancelledError):
         await cleanup_task
     with suppress(asyncio.CancelledError):
         await scheduler_task
+    with suppress(asyncio.CancelledError):
+        await routine_task
+    if _mcp_manager is not None:
+        with suppress(Exception):
+            await _mcp_manager.close()
     with suppress(Exception):
         await asyncio.wait_for(brain.shutdown(), timeout=5)
     logger.info("JARVIS server shut down.")
@@ -567,23 +614,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_cors_origins = [
-    "http://localhost:3000",
-    "http://localhost:3741",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3741",
-    f"http://localhost:{settings.API_PORT}",
-    f"http://127.0.0.1:{settings.API_PORT}",
-]
-
-_tunnel_domain = os.environ.get("JARVIS_TUNNEL_DOMAIN", "")
-if _tunnel_domain:
-    _cors_origins.append(f"https://{_tunnel_domain}")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_origin_regex=r"https://.*\.trycloudflare\.com",
+    allow_origin_regex=_TUNNEL_ORIGIN_RE.pattern,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["authorization", "content-type", "x-requested-with", "x-jarvis-client", "x-trace-id"],
@@ -627,36 +661,17 @@ async def security_headers(request: Request, call_next):
 
 _CSRF_EXEMPT_PATHS = {"/auth/login", "/auth/status", "/auth/logout", "/voice/transcribe"}
 
-# Presence of any of these means a reverse proxy/tunnel relayed the request, so
-# the loopback peer address is the proxy — not the real (remote) client.
-_FORWARDING_HEADERS = (
-    "x-forwarded-for", "x-real-ip", "x-forwarded-host",
-    "forwarded", "cf-connecting-ip", "true-client-ip",
-)
+@app.middleware("http")
+async def origin_guard(request: Request, call_next):
+    """Reject browser requests from origins that are not JARVIS clients.
 
-
-def _client_is_local(conn) -> bool:
-    """Return True only for a genuine loopback client with no proxy in front.
-
-    Accepts a Request or WebSocket (both expose ``.client`` and ``.headers``).
+    Without this, a page in any tab could POST to the loopback API (e.g. a
+    ``no-cors`` fetch with no Content-Type) and be treated as a trusted local
+    client. See ``_origin_allowed``.
     """
-    client_host = conn.client.host if conn.client else ""
-    forwarded = any(name in conn.headers for name in _FORWARDING_HEADERS)
-    return auth.is_local_request(client_host, forwarded=forwarded)
-
-
-# Strong references to fire-and-forget background tasks. Without this, asyncio
-# only holds a weak reference, so a running job can be garbage-collected mid-flight
-# and silently cancelled (leaving its status stuck at "running").
-_background_tasks: set[asyncio.Task] = set()
-
-
-def _spawn_background(coro, *, name: str | None = None) -> asyncio.Task:
-    """Schedule a background task and keep a strong reference until it finishes."""
-    task = asyncio.create_task(coro, name=name)
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-    return task
+    if not _origin_allowed(request.headers.get("origin"), local=_client_is_local(request)):
+        return JSONResponse(status_code=403, content={"error": "Origin not allowed."})
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -678,57 +693,11 @@ async def csrf_protection(request: Request, call_next):
 _startup_pin = auth.initialize_pin()
 
 
-class PinRequest(BaseModel):
-    pin: str
-
-
-class SetPinRequest(BaseModel):
-    current_pin: str
-    new_pin: str
-
-
-async def require_auth(request: Request) -> bool:
-    """FastAPI dependency for local-bypass / remote-required auth.
-
-    Local connections bypass auth. Remote connections always require PIN auth to
-    be enabled and a valid session token via header, cookie, or query param.
-    """
-    if _client_is_local(request):
-        return True
-
-    from fastapi import HTTPException
-
-    if not auth.pin_auth_enabled():
-        raise HTTPException(
-            status_code=403,
-            detail="Remote access requires PIN authentication. Set JARVIS_PIN_AUTH_ENABLED=true.",
-        )
-
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        if auth.validate_token(token):
-            return True
-
-    token = request.cookies.get("jarvis_token", "")
-    if token and auth.validate_token(token):
-        return True
-
-    # Query-string tokens leak via access logs, browser history, and Referer
-    # headers, so they are refused by default. Opt in with JARVIS_ALLOW_QUERY_TOKEN
-    # for clients that cannot set an Authorization header or cookie.
-    if os.getenv("JARVIS_ALLOW_QUERY_TOKEN", "").strip().lower() in {"1", "true", "yes"}:
-        token = request.query_params.get("token", "")
-        if token and auth.validate_token(token):
-            logger.warning("Auth via query param token (less secure; enabled by JARVIS_ALLOW_QUERY_TOKEN).")
-            return True
-
-    raise HTTPException(status_code=401, detail="Authentication required. Please log in with your PIN.")
-
-
 # Mount settings API router after auth is defined so configuration reads/writes
 # use the same local-bypass / remote-token policy as the rest of the API.
 app.include_router(settings_router, dependencies=[Depends(require_auth)])
+app.include_router(workflow_routes.router)
+app.include_router(calendar_routes.router)
 
 
 @app.post("/auth/login")
@@ -872,296 +841,38 @@ async def _workflow_scheduler_loop():
             logger.error("Workflow scheduler tick failed: %s", exc)
 
 
+async def run_scheduled_routine(routine: dict) -> str:
+    """Run one scheduled routine and deliver the result to the UI, voice, and channels."""
+    routines.mark_routine_run(routine["id"])
+    logger.info("Running scheduled routine: %s", routine.get("name"))
+    response = await brain.process(str(routine.get("prompt", "")))
+    await ws_manager.broadcast_json({
+        "routine_result": {"id": routine["id"], "name": routine.get("name"), "response": response}
+    })
+    await notify.notify(f"{routine.get('name')}: {response}")
+    if routine.get("speak") and _speaker:
+        try:
+            await _speaker.speak(response)
+        except Exception as exc:
+            logger.warning("Speaking routine result failed: %s", exc)
+    return response
+
+
+async def _routine_scheduler_loop():
+    while True:
+        await asyncio.sleep(30)
+        if not settings.ROUTINE_SCHEDULER_ENABLED:
+            continue
+        try:
+            for routine in routines.due_routines():
+                await run_scheduled_routine(routine)
+        except Exception as exc:
+            logger.error("Routine scheduler tick failed: %s", exc)
+
+
 # ============================================================
 # Request/Response Models
 # ============================================================
-class ChatRequest(BaseModel):
-    message: str
-    tier: str = ""
-
-
-class JobRequest(BaseModel):
-    message: str
-    kind: str = "chat"
-
-
-class ConfirmActionRequest(BaseModel):
-    action_id: str
-    approved: bool
-
-
-class CostEstimateRequest(BaseModel):
-    message: str
-    tier: str = "brain"
-
-
-class RoutineRequest(BaseModel):
-    name: str
-    prompt: str
-    enabled: bool = True
-    tags: list[str] = []
-
-
-class RoutineRunRequest(BaseModel):
-    background: bool = False
-
-
-class FeedbackRequest(BaseModel):
-    text: str
-    category: str = "correction"
-
-
-class BatchRequest(BaseModel):
-    prompts: list[str]
-    tier: str = "brain"
-
-
-class PrivacyRequest(BaseModel):
-    enabled: bool
-
-
-class WorkflowRequest(BaseModel):
-    name: str
-    description: str = ""
-    trigger: dict[str, Any] = {}
-    actions: list[dict[str, Any]] = []
-    assertions: list[dict[str, Any]] = []
-    budget: dict[str, Any] = {}
-    enabled: bool = True
-    tags: list[str] = []
-    owner_id: str = "local-owner"
-    visibility: str = "private"
-    permissions: list[str] = []
-    actor_id: str = "local-owner"
-    version_note: str = ""
-    active_release_channel: str | None = None
-    base_version: int | None = None
-    edit_session_id: str = ""
-    conflict_strategy: str = "reject"
-
-
-class WorkflowTemplateRequest(BaseModel):
-    template_id: str
-    owner_id: str = "local-owner"
-    actor_id: str = "local-owner"
-
-
-class WorkflowPackageImportRequest(BaseModel):
-    package: dict[str, Any]
-    owner_id: str = "local-owner"
-    actor_id: str = "local-owner"
-    name: str = ""
-
-
-class WorkflowRunRequest(BaseModel):
-    background: bool = False
-    dry_run: bool = False
-    release_channel: str | None = None
-
-
-class WorkflowReplayRequest(BaseModel):
-    dry_run: bool = True
-
-
-class WorkflowEditPresenceRequest(BaseModel):
-    actor_id: str = "local-owner"
-    actor_name: str = ""
-    session_id: str = ""
-    ttl_seconds: int = 90
-
-
-class WorkflowAssertionRunRequest(BaseModel):
-    run_id: str = ""
-
-
-class WorkflowApprovalRequest(BaseModel):
-    actor: str = "local-owner"
-    note: str = ""
-
-
-class WorkflowVersionRestoreRequest(BaseModel):
-    actor_id: str = "local-owner"
-    note: str = ""
-
-
-class WorkflowPublishRequest(BaseModel):
-    channel: str = "stable"
-    actor_id: str = "local-owner"
-    note: str = ""
-    activate: bool = True
-    require_approval: bool | None = None
-
-
-class SchedulerRunRequest(BaseModel):
-    dry_run: bool = True
-
-
-class LifecycleLaunchAgentRequest(BaseModel):
-    load: bool = False
-    unload: bool = False
-    dry_run: bool = False
-
-
-class LifecycleControlRequest(BaseModel):
-    mode: str = "full"
-    dry_run: bool = False
-    delay_seconds: float = 0.75
-    force_after_seconds: float = 8.0
-
-
-class TeamMemberRequest(BaseModel):
-    name: str
-    email: str = ""
-    role: str = "member"
-    member_id: str = ""
-    status: str = "active"
-
-
-class CalendarConnectionRequest(BaseModel):
-    provider: str
-    account_label: str = ""
-    enabled: bool = False
-    status: str = "not_connected"
-    scopes: list[str] = []
-
-
-class CalendarOAuthCredentialsRequest(BaseModel):
-    client_id: str
-    client_secret: str = ""
-
-
-class CalendarOAuthStartRequest(BaseModel):
-    redirect_uri: str = ""
-
-
-class CalendarProviderEventsRequest(BaseModel):
-    title: str
-    start: str
-    end: str
-    timezone: str = "UTC"
-    location: str = ""
-    notes: str = ""
-    calendar_id: str = ""
-    attendees: list[str] = []
-
-
-class CalendarPolicyRequest(BaseModel):
-    timezone: str | None = None
-    working_hours: dict[str, Any] | None = None
-    default_duration_minutes: int | None = None
-    conflict_strategy: str | None = None
-    auto_create_events: bool | None = None
-    require_confirmation_for_guests: bool | None = None
-    buffer_minutes: int | None = None
-
-
-class ScheduleAssessmentRequest(BaseModel):
-    title: str
-    start: str = ""
-    end: str = ""
-    attendees: list[str] = []
-    provider: str = ""
-
-
-class ChatResponse(BaseModel):
-    response: str
-    elapsed_ms: float
-    tier_used: str
-    backend: str
-    local_savings: dict
-
-
-class StatusResponse(BaseModel):
-    status: str
-    version: str
-    uptime_seconds: float
-    active_backend: str
-    active_model: str
-    memory_stats: dict
-    conversation_turns: int
-    session_cost: dict
-    local_savings: dict
-
-
-def _serialize_job(job: jobs.JobRecord) -> dict:
-    return {
-        "id": job.id,
-        "kind": job.kind,
-        "status": job.status,
-        "payload": job.payload,
-        "result": job.result,
-        "error": job.error,
-        "trace_id": job.trace_id,
-        "created_at": job.created_at,
-        "updated_at": job.updated_at,
-        "started_at": job.started_at,
-        "completed_at": job.completed_at,
-    }
-
-
-async def _run_chat_job(job_id: str, message: str) -> None:
-    job = jobs.get_job(job_id)
-    if job is None or job.status == jobs.JobStatus.CANCELLED.value:
-        return
-
-    token = set_trace_id(job.trace_id)
-    try:
-        jobs.mark_running(job_id)
-        record_event("job.started", job_id=job_id, kind=job.kind)
-        with trace_span("job.chat", job_id=job_id):
-            result = await brain.process(message)
-        latest = jobs.get_job(job_id)
-        if latest is not None and latest.status == jobs.JobStatus.CANCELLED.value:
-            record_event("job.cancelled", job_id=job_id)
-            return
-        jobs.mark_completed(job_id, result)
-        record_event("job.completed", job_id=job_id)
-    except Exception as exc:
-        logger.exception("Background job %s failed", job_id)
-        jobs.mark_failed(job_id, str(exc))
-        record_event("job.failed", job_id=job_id, error=str(exc))
-    finally:
-        reset_trace_id(token)
-
-
-async def _run_workflow_job(
-    job_id: str,
-    workflow_id: str,
-    dry_run: bool = False,
-    release_channel: str | None = None,
-) -> None:
-    job = jobs.get_job(job_id)
-    if job is None or job.status == jobs.JobStatus.CANCELLED.value:
-        return
-
-    token = set_trace_id(job.trace_id)
-    try:
-        jobs.mark_running(job_id)
-        record_event("job.started", job_id=job_id, kind=job.kind, workflow_id=workflow_id)
-        run = await workflows.run_workflow(
-            workflow_id,
-            runner=brain.process if not dry_run else None,
-            triggered_by="background",
-            dry_run=dry_run,
-            release_channel=release_channel,
-        )
-        latest = jobs.get_job(job_id)
-        if latest is not None and latest.status == jobs.JobStatus.CANCELLED.value:
-            record_event("job.cancelled", job_id=job_id)
-            return
-        if run is None:
-            jobs.mark_failed(job_id, "Workflow not found.")
-            return
-        jobs.mark_completed(job_id, json.dumps(run, sort_keys=True, default=str))
-        record_event("job.completed", job_id=job_id, workflow_id=workflow_id)
-    except Exception as exc:
-        logger.exception("Workflow job %s failed", job_id)
-        jobs.mark_failed(job_id, str(exc))
-        record_event("job.failed", job_id=job_id, error=str(exc))
-    finally:
-        reset_trace_id(token)
-
-
 _start_time = time.time()
 
 
@@ -1262,15 +973,15 @@ async def create_background_job(request: JobRequest):
             content={"error": "Message too long (max 50,000 characters)."},
         )
     job = jobs.create_job(request.kind, {"message": request.message}, trace_id=get_trace_id())
-    _spawn_background(_run_chat_job(job.id, request.message), name=f"chat-job-{job.id}")
-    return _serialize_job(job)
+    spawn_background(run_chat_job(job.id, request.message), name=f"chat-job-{job.id}")
+    return serialize_job(job)
 
 
 @app.get("/jobs", dependencies=[Depends(require_auth)])
 async def list_background_jobs(limit: int = 50, status: str = ""):
     """List durable background jobs."""
     records = jobs.list_jobs(limit=limit, status=status)
-    return {"jobs": [_serialize_job(job) for job in records], "count": len(records)}
+    return {"jobs": [serialize_job(job) for job in records], "count": len(records)}
 
 
 @app.get("/tools/pending", dependencies=[Depends(require_auth)])
@@ -1296,7 +1007,7 @@ async def get_background_job(job_id: str):
     job = jobs.get_job(job_id)
     if job is None:
         return JSONResponse(status_code=404, content={"error": "Job not found."})
-    return _serialize_job(job)
+    return serialize_job(job)
 
 
 @app.post("/jobs/{job_id}/cancel", dependencies=[Depends(require_auth)])
@@ -1305,7 +1016,7 @@ async def cancel_background_job(job_id: str):
     job = jobs.cancel_job(job_id)
     if job is None:
         return JSONResponse(status_code=404, content={"error": "Job not found."})
-    return _serialize_job(job)
+    return serialize_job(job)
 
 
 @app.get("/routines", dependencies=[Depends(require_auth)])
@@ -1319,12 +1030,19 @@ async def create_routine(request: RoutineRequest):
     """Create a repeatable routine."""
     if not request.name.strip() or not request.prompt.strip():
         return JSONResponse(status_code=400, content={"error": "Name and prompt are required."})
-    return routines.create_routine(request.name, request.prompt, request.enabled, request.tags)
+    if not routines.valid_schedule(request.schedule_time, request.schedule_days):
+        return JSONResponse(status_code=400, content={"error": "schedule_time must be HH:MM; days mon..sun."})
+    return routines.create_routine(
+        request.name, request.prompt, request.enabled, request.tags,
+        request.schedule_time, request.schedule_days, request.speak,
+    )
 
 
 @app.put("/routines/{routine_id}", dependencies=[Depends(require_auth)])
 async def update_routine(routine_id: str, request: RoutineRequest):
     """Update a routine."""
+    if not routines.valid_schedule(request.schedule_time, request.schedule_days):
+        return JSONResponse(status_code=400, content={"error": "schedule_time must be HH:MM; days mon..sun."})
     routine = routines.update_routine(
         routine_id,
         {
@@ -1332,6 +1050,9 @@ async def update_routine(routine_id: str, request: RoutineRequest):
             "prompt": request.prompt.strip(),
             "enabled": request.enabled,
             "tags": request.tags,
+            "schedule_time": request.schedule_time,
+            "schedule_days": request.schedule_days,
+            "speak": request.speak,
         },
     )
     if routine is None:
@@ -1357,8 +1078,8 @@ async def run_routine(routine_id: str, request: RoutineRunRequest):
     prompt = str(routine.get("prompt", ""))
     if request.background:
         job = jobs.create_job("routine", {"message": prompt, "routine_id": routine_id}, trace_id=get_trace_id())
-        _spawn_background(_run_chat_job(job.id, prompt), name=f"routine-job-{job.id}")
-        return {"routine": routines.get_routine(routine_id), "job": _serialize_job(job)}
+        spawn_background(run_chat_job(job.id, prompt), name=f"routine-job-{job.id}")
+        return {"routine": routines.get_routine(routine_id), "job": serialize_job(job)}
     start = time.time()
     response = await brain.process(prompt)
     return {
@@ -1366,491 +1087,6 @@ async def run_routine(routine_id: str, request: RoutineRunRequest):
         "response": response,
         "elapsed_ms": round((time.time() - start) * 1000, 1),
     }
-
-
-@app.get("/workflows/overview", dependencies=[Depends(require_auth)])
-async def workflow_overview():
-    """Get workflow-builder foundation status."""
-    return {
-        **workflows.get_overview(),
-        "scheduler": workflow_scheduler.get_scheduler_status(),
-    }
-
-
-@app.get("/product/overview", dependencies=[Depends(require_auth)])
-async def product_overview(status: str = "", dry_run: bool | None = None):
-    """Return the product console's common data in one low-chatter payload."""
-    runs = workflows.list_runs(status=status, dry_run=dry_run, limit=8)
-    workflow_items = workflows.list_workflows(include_disabled=True)
-    approvals = workflows.list_approvals(status="pending", limit=8)
-    return {
-        "templates": workflows.list_templates(),
-        "workflows": workflow_items,
-        "workflow_count": len(workflow_items),
-        "runs": runs,
-        "run_count": len(runs),
-        "analytics": workflows.get_run_analytics(limit=200),
-        "team": team.get_team(),
-        "calendar": calendar_accounts.get_state(),
-        "scheduler": workflow_scheduler.get_scheduler_status(),
-        "approvals": approvals,
-        "approval_count": len(approvals),
-        "lifecycle": app_lifecycle.get_status(),
-    }
-
-
-@app.get("/workflows/scheduler/status", dependencies=[Depends(require_auth)])
-async def workflow_scheduler_status():
-    """Get scheduled workflow runner status."""
-    return workflow_scheduler.get_scheduler_status()
-
-
-@app.post("/workflows/scheduler/run-due", dependencies=[Depends(require_auth)])
-async def run_due_workflows(request: SchedulerRunRequest):
-    """Run workflows due in the current minute.
-
-    Defaults to dry-run so the UI can preview due work without spending API
-    budget. Pass dry_run=false for an explicit manual execution.
-    """
-    runs = await workflow_scheduler.run_due_workflows(
-        runner=brain.process if not request.dry_run else None,
-        dry_run=request.dry_run,
-    )
-    return {"runs": runs, "count": len(runs)}
-
-
-@app.get("/workflows/templates", dependencies=[Depends(require_auth)])
-async def workflow_templates():
-    """List starter workflow templates."""
-    return {"templates": workflows.list_templates()}
-
-
-@app.get("/workflows", dependencies=[Depends(require_auth)])
-async def list_workflows(include_disabled: bool = True):
-    """List saved workflows."""
-    items = workflows.list_workflows(include_disabled=include_disabled)
-    return {"workflows": items, "count": len(items)}
-
-
-@app.post("/workflows", dependencies=[Depends(require_auth)])
-async def create_workflow(request: WorkflowRequest):
-    """Create a workflow definition for the workflow builder."""
-    if not request.name.strip():
-        return JSONResponse(status_code=400, content={"error": "Workflow name is required."})
-    workflow = workflows.create_workflow(
-        name=request.name,
-        description=request.description,
-        trigger=request.trigger,
-        actions=request.actions,
-        assertions=request.assertions,
-        budget=request.budget,
-        enabled=request.enabled,
-        tags=request.tags,
-        owner_id=request.owner_id,
-        visibility=request.visibility,
-        permissions=request.permissions,
-        actor_id=request.actor_id,
-        note=request.version_note,
-    )
-    return workflow
-
-
-@app.post("/workflows/from-template", dependencies=[Depends(require_auth)])
-async def create_workflow_from_template(request: WorkflowTemplateRequest):
-    """Create a workflow from a starter template."""
-    workflow = workflows.create_workflow_from_template(
-        request.template_id,
-        owner_id=request.owner_id,
-        actor_id=request.actor_id,
-    )
-    if workflow is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow template not found."})
-    return workflow
-
-
-@app.get("/workflows/templates/{template_id}/package", dependencies=[Depends(require_auth)])
-async def export_workflow_template_package(template_id: str):
-    """Export a starter workflow template as a portable workflow package."""
-    package = workflows.export_template_package(template_id)
-    if package is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow template not found."})
-    return {"package": package}
-
-
-@app.post("/workflows/import-package", dependencies=[Depends(require_auth)])
-async def import_workflow_package(request: WorkflowPackageImportRequest):
-    """Import a portable workflow package as a new workflow."""
-    result = workflows.import_workflow_package(
-        request.package,
-        owner_id=request.owner_id,
-        actor_id=request.actor_id,
-        name=request.name,
-    )
-    if result["status"] == "invalid":
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": "; ".join(result.get("validation", {}).get("errors", [])) or "Invalid workflow package.",
-                **result,
-            },
-        )
-    return result
-
-
-@app.get("/workflows/runs", dependencies=[Depends(require_auth)])
-async def list_workflow_runs(
-    workflow_id: str = "",
-    limit: int = 50,
-    status: str = "",
-    dry_run: bool | None = None,
-    release_channel: str = "",
-    workflow_version_id: str = "",
-    workflow_version: int | None = None,
-    started_after: float | None = None,
-    started_before: float | None = None,
-):
-    """List workflow execution history."""
-    runs = workflows.list_runs(
-        workflow_id=workflow_id,
-        limit=limit,
-        status=status,
-        dry_run=dry_run,
-        release_channel=release_channel,
-        workflow_version_id=workflow_version_id,
-        workflow_version=workflow_version,
-        started_after=started_after,
-        started_before=started_before,
-    )
-    return {"runs": runs, "count": len(runs)}
-
-
-@app.get("/workflows/analytics", dependencies=[Depends(require_auth)])
-async def workflow_run_analytics(
-    workflow_id: str = "",
-    started_after: float | None = None,
-    started_before: float | None = None,
-    limit: int = 500,
-):
-    """Summarize workflow run health, latency, and failure patterns."""
-    return workflows.get_run_analytics(
-        workflow_id=workflow_id,
-        started_after=started_after,
-        started_before=started_before,
-        limit=limit,
-    )
-
-
-@app.get("/workflows/runs/{run_id}", dependencies=[Depends(require_auth)])
-async def get_workflow_run(run_id: str):
-    """Get one workflow run with its timeline/audit trace."""
-    run = workflows.get_run(run_id)
-    if run is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow run not found."})
-    return run
-
-
-@app.post("/workflows/runs/{run_id}/replay", dependencies=[Depends(require_auth)])
-async def replay_workflow_run(run_id: str, request: WorkflowReplayRequest):
-    """Replay a previous workflow run, preferring its original version snapshot."""
-    result = await workflows.replay_run(
-        run_id,
-        runner=brain.process if not request.dry_run else None,
-        dry_run=request.dry_run,
-    )
-    if result is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow run not found."})
-    if result.get("replay_run") is None:
-        return JSONResponse(status_code=400, content={"error": "; ".join(result.get("warnings", [])), **result})
-    return result
-
-
-@app.get("/workflows/approvals", dependencies=[Depends(require_auth)])
-async def list_workflow_approvals(status: str = "pending", limit: int = 50):
-    """List workflow approvals waiting for a user decision."""
-    approvals = workflows.list_approvals(status=status, limit=limit)
-    return {"approvals": approvals, "count": len(approvals)}
-
-
-@app.post("/workflows/approvals/{approval_id}/approve", dependencies=[Depends(require_auth)])
-async def approve_workflow_approval(approval_id: str, request: WorkflowApprovalRequest):
-    """Approve a pending workflow action and execute supported actions."""
-    approval = await workflows.approve_approval(approval_id, actor=request.actor, note=request.note)
-    if approval is None:
-        return JSONResponse(status_code=404, content={"error": "Approval not found."})
-    return approval
-
-
-@app.post("/workflows/approvals/{approval_id}/reject", dependencies=[Depends(require_auth)])
-async def reject_workflow_approval(approval_id: str, request: WorkflowApprovalRequest):
-    """Reject a pending workflow action."""
-    approval = workflows.reject_approval(approval_id, actor=request.actor, note=request.note)
-    if approval is None:
-        return JSONResponse(status_code=404, content={"error": "Approval not found."})
-    return approval
-
-
-@app.get("/workflows/releases", dependencies=[Depends(require_auth)])
-async def list_workflow_releases(workflow_id: str = "", channel: str = "", limit: int = 50):
-    """List workflow release channel history."""
-    releases = workflows.list_workflow_releases(workflow_id=workflow_id, channel=channel, limit=limit)
-    return {"releases": releases, "count": len(releases)}
-
-
-@app.get("/workflows/release-policies", dependencies=[Depends(require_auth)])
-async def workflow_release_policies():
-    """List workflow release promotion policies."""
-    return {"policies": workflows.get_release_policies()}
-
-
-@app.get("/workflows/{workflow_id}/versions", dependencies=[Depends(require_auth)])
-async def list_workflow_versions(workflow_id: str, limit: int = 50):
-    """List version history for one workflow."""
-    workflow = workflows.get_workflow(workflow_id)
-    versions = workflows.list_workflow_versions(workflow_id, limit=limit)
-    if workflow is None and not versions:
-        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
-    versions = [
-        {
-            **version,
-            "release_readiness": workflows.get_release_readiness(
-                workflow_id,
-                str(version.get("id") or ""),
-                channel="stable",
-                note="Promoted from workflow history.",
-            ),
-        }
-        for version in versions
-    ]
-    return {"versions": versions, "count": len(versions)}
-
-
-@app.get("/workflows/{workflow_id}/versions/{version_id}", dependencies=[Depends(require_auth)])
-async def get_workflow_version(workflow_id: str, version_id: str):
-    """Get one workflow version snapshot."""
-    version = workflows.get_workflow_version(workflow_id, version_id)
-    if version is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
-    return version
-
-
-@app.get("/workflows/{workflow_id}/versions/{version_id}/readiness", dependencies=[Depends(require_auth)])
-async def get_workflow_version_readiness(workflow_id: str, version_id: str, channel: str = "stable", note: str = ""):
-    """Get release gate readiness for one workflow version."""
-    readiness = workflows.get_release_readiness(workflow_id, version_id, channel=channel, note=note)
-    if readiness["status"] == "missing_version":
-        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
-    return readiness
-
-
-@app.post("/workflows/{workflow_id}/versions/{version_id}/dry-run", dependencies=[Depends(require_auth)])
-async def dry_run_workflow_version(workflow_id: str, version_id: str):
-    """Dry-run a specific workflow version as release gate evidence."""
-    run = await workflows.run_workflow_version(workflow_id, version_id, dry_run=True)
-    if run is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
-    return {"run": run}
-
-
-@app.post("/workflows/{workflow_id}/versions/{version_id}/assertions/run", dependencies=[Depends(require_auth)])
-async def run_workflow_version_assertions(
-    workflow_id: str,
-    version_id: str,
-    request: WorkflowAssertionRunRequest,
-):
-    """Run release assertions against a workflow version's latest dry run."""
-    result = workflows.run_workflow_assertion_suite(workflow_id, version_id, run_id=request.run_id)
-    if result is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
-    if not result.get("passed") and result.get("status") in {"missing_run", "wrong_workflow"}:
-        return JSONResponse(status_code=400, content={"error": result.get("message", "Assertions could not run."), "result": result})
-    return {"result": result}
-
-
-@app.get("/workflows/{workflow_id}/presence", dependencies=[Depends(require_auth)])
-async def get_workflow_presence(workflow_id: str, actor_id: str = "", session_id: str = ""):
-    """Get active edit presence for one workflow."""
-    presence = workflows.get_workflow_presence(
-        workflow_id,
-        actor_id=actor_id,
-        current_session_id=session_id,
-    )
-    if presence is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
-    return presence
-
-
-@app.post("/workflows/{workflow_id}/presence", dependencies=[Depends(require_auth)])
-async def start_workflow_edit_presence(workflow_id: str, request: WorkflowEditPresenceRequest):
-    """Start or refresh an advisory workflow edit session."""
-    result = workflows.start_workflow_edit(
-        workflow_id,
-        actor_id=request.actor_id,
-        actor_name=request.actor_name,
-        session_id=request.session_id,
-        ttl_seconds=request.ttl_seconds,
-    )
-    if result is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
-    return result
-
-
-@app.post("/workflows/{workflow_id}/presence/{session_id}/heartbeat", dependencies=[Depends(require_auth)])
-async def heartbeat_workflow_edit_presence(workflow_id: str, session_id: str, request: WorkflowEditPresenceRequest):
-    """Refresh a workflow edit session lease."""
-    result = workflows.heartbeat_workflow_edit(
-        workflow_id,
-        session_id,
-        actor_id=request.actor_id,
-        ttl_seconds=request.ttl_seconds,
-    )
-    if result is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow edit session not found."})
-    return result
-
-
-@app.delete("/workflows/{workflow_id}/presence/{session_id}", dependencies=[Depends(require_auth)])
-async def end_workflow_edit_presence(workflow_id: str, session_id: str, actor_id: str = ""):
-    """End an advisory workflow edit session."""
-    if not workflows.end_workflow_edit(workflow_id, session_id, actor_id=actor_id):
-        return JSONResponse(status_code=404, content={"error": "Workflow edit session not found."})
-    presence = workflows.get_workflow_presence(workflow_id, actor_id=actor_id)
-    return {"status": "ended", "presence": presence}
-
-
-@app.post("/workflows/{workflow_id}/versions/{version_id}/restore", dependencies=[Depends(require_auth)])
-async def restore_workflow_version(workflow_id: str, version_id: str, request: WorkflowVersionRestoreRequest):
-    """Restore a workflow from a version snapshot."""
-    workflow = workflows.restore_workflow_version(
-        workflow_id,
-        version_id,
-        actor_id=request.actor_id,
-        note=request.note,
-    )
-    if workflow is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow version not found."})
-    return workflow
-
-
-@app.post("/workflows/{workflow_id}/versions/{version_id}/publish", dependencies=[Depends(require_auth)])
-async def publish_workflow_version(workflow_id: str, version_id: str, request: WorkflowPublishRequest):
-    """Request or execute a workflow version release promotion."""
-    result = workflows.request_workflow_release_approval(
-        workflow_id,
-        version_id,
-        channel=request.channel,
-        actor_id=request.actor_id,
-        note=request.note,
-        activate=request.activate,
-        require_approval=request.require_approval,
-    )
-    if result is None:
-        assessment = workflows.assess_release_request(
-            workflow_id,
-            version_id,
-            channel=request.channel,
-            note=request.note,
-        )
-        blockers = assessment.get("blockers", [])
-        status_code = 400 if blockers else 404
-        return JSONResponse(
-            status_code=status_code,
-            content={"error": "; ".join(blockers) or "Workflow version not found."},
-        )
-    return result
-
-
-@app.get("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
-async def get_workflow(workflow_id: str):
-    """Get one workflow definition."""
-    workflow = workflows.get_workflow(workflow_id)
-    if workflow is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
-    return workflow
-
-
-@app.get("/workflows/{workflow_id}/package", dependencies=[Depends(require_auth)])
-async def export_workflow_package(workflow_id: str, version_id: str = ""):
-    """Export a saved workflow or version as a portable workflow package."""
-    package = workflows.export_workflow_package(workflow_id, version_id=version_id)
-    if package is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow or workflow version not found."})
-    return {"package": package}
-
-
-@app.put("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
-async def update_workflow(workflow_id: str, request: WorkflowRequest):
-    """Update a workflow definition."""
-    updates = {
-        "name": request.name,
-        "description": request.description,
-        "trigger": request.trigger,
-        "actions": request.actions,
-        "assertions": request.assertions,
-        "budget": request.budget,
-        "enabled": request.enabled,
-        "tags": request.tags,
-        "visibility": request.visibility,
-        "permissions": request.permissions,
-    }
-    if request.active_release_channel is not None:
-        updates["active_release_channel"] = request.active_release_channel
-    result = workflows.update_workflow_with_conflict_check(
-        workflow_id,
-        updates,
-        actor_id=request.actor_id,
-        note=request.version_note,
-        base_version=request.base_version,
-        edit_session_id=request.edit_session_id,
-        conflict_strategy=request.conflict_strategy,
-    )
-    if result["status"] == "conflict":
-        conflict = dict(result.get("conflict") or {})
-        return JSONResponse(
-            status_code=409,
-            content={
-                "error": conflict.get("message") or "Workflow edit conflict.",
-                "conflict": conflict,
-            },
-        )
-    workflow = result.get("workflow")
-    if workflow is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
-    return workflow
-
-
-@app.delete("/workflows/{workflow_id}", dependencies=[Depends(require_auth)])
-async def delete_workflow(workflow_id: str, actor_id: str = "local-owner", note: str = ""):
-    """Delete a workflow definition."""
-    if not workflows.delete_workflow(workflow_id, actor_id=actor_id, note=note):
-        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
-    return {"status": "deleted"}
-
-
-@app.post("/workflows/{workflow_id}/run", dependencies=[Depends(require_auth)])
-async def run_workflow(workflow_id: str, request: WorkflowRunRequest):
-    """Run a workflow now, either inline or in a durable background job."""
-    workflow = workflows.get_workflow(workflow_id)
-    if workflow is None:
-        return JSONResponse(status_code=404, content={"error": "Workflow not found."})
-    if request.background:
-        job = jobs.create_job(
-            "workflow",
-            {"workflow_id": workflow_id, "dry_run": request.dry_run, "release_channel": request.release_channel},
-            trace_id=get_trace_id(),
-        )
-        _spawn_background(
-            _run_workflow_job(job.id, workflow_id, request.dry_run, request.release_channel),
-            name=f"workflow-job-{job.id}",
-        )
-        return {"workflow": workflow, "job": _serialize_job(job)}
-    run = await workflows.run_workflow(
-        workflow_id,
-        runner=brain.process if not request.dry_run else None,
-        triggered_by="manual",
-        dry_run=request.dry_run,
-        release_channel=request.release_channel,
-    )
-    return {"workflow": workflows.get_workflow(workflow_id), "run": run}
 
 
 @app.get("/feedback", dependencies=[Depends(require_auth)])
@@ -1875,32 +1111,35 @@ async def delete_feedback(feedback_id: str):
     return {"status": "deleted"}
 
 
-@app.post("/anthropic/batches", dependencies=[Depends(require_auth)])
-async def create_anthropic_batch(request: BatchRequest):
-    """Create an Anthropic Message Batch for non-urgent work."""
+@app.post("/batches", dependencies=[Depends(require_auth)])
+@app.post("/anthropic/batches", dependencies=[Depends(require_auth)], include_in_schema=False)
+async def create_batch(request: BatchRequest):
+    """Create a Batch API job (50% cheaper) on the active provider for non-urgent work."""
     if not request.prompts:
         return JSONResponse(status_code=400, content={"error": "At least one prompt is required."})
     try:
-        return await anthropic_batch.create_batch(request.prompts, tier=request.tier)
+        return await batch.create_batch(request.prompts, tier=request.tier)
     except Exception as exc:
         logger.warning("Batch creation failed: %s", exc)
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
-@app.get("/anthropic/batches/{batch_id}", dependencies=[Depends(require_auth)])
-async def get_anthropic_batch(batch_id: str):
-    """Get Anthropic Message Batch status."""
+@app.get("/batches/{batch_id}", dependencies=[Depends(require_auth)])
+@app.get("/anthropic/batches/{batch_id}", dependencies=[Depends(require_auth)], include_in_schema=False)
+async def get_batch(batch_id: str):
+    """Get batch status."""
     try:
-        return await anthropic_batch.get_batch(batch_id)
+        return await batch.get_batch(batch_id)
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
-@app.post("/anthropic/batches/{batch_id}/cancel", dependencies=[Depends(require_auth)])
-async def cancel_anthropic_batch(batch_id: str):
-    """Cancel an Anthropic Message Batch."""
+@app.post("/batches/{batch_id}/cancel", dependencies=[Depends(require_auth)])
+@app.post("/anthropic/batches/{batch_id}/cancel", dependencies=[Depends(require_auth)], include_in_schema=False)
+async def cancel_batch(batch_id: str):
+    """Cancel a batch."""
     try:
-        return await anthropic_batch.cancel_batch(batch_id)
+        return await batch.cancel_batch(batch_id)
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -2043,21 +1282,33 @@ async def set_privacy_mode(request: PrivacyRequest):
     return {"enabled": brain._privacy_mode}
 
 
+@app.get("/mcp/status", dependencies=[Depends(require_auth)])
+async def mcp_status():
+    """Connected MCP servers and the tools they contributed."""
+    if _mcp_manager is None:
+        return {"servers": [], "tools": [], "errors": {}}
+    return _mcp_manager.status()
+
+
 @app.get("/models", dependencies=[Depends(require_auth)])
 async def models():
     """Get available model tiers and their configuration."""
-    from jarvis.core.llm import TIER_CONFIG
+    from jarvis.core.providers import tier_specs
+
     return {
         "active_backend": brain.llm.active_backend,
+        "provider": settings.LLM_PROVIDER,
         "tiers": {
             tier: {
-                "model": config["model"],
-                "max_tokens": config["max_tokens"],
-                "temperature": config["temperature"],
+                "model": spec.model,
+                "max_tokens": spec.max_output_tokens,
+                "effort": spec.effort,
+                "temperature": spec.temperature,
             }
-            for tier, config in TIER_CONFIG.items()
+            for tier, spec in tier_specs().items()
         },
         "ollama_model": settings.OLLAMA_MODEL,
+        "prefer_cloud": settings.PREFER_CLAUDE,
         "prefer_claude": settings.PREFER_CLAUDE,
     }
 
@@ -2171,218 +1422,6 @@ async def get_failure_patterns():
         "patterns": brain.learning.get_common_failure_patterns(limit=10),
         "plan_stats": brain.learning.get_plan_success_rate(),
     }
-
-
-@app.get("/team", dependencies=[Depends(require_auth)])
-async def get_team():
-    """Get local team mode, members, and role capability matrix."""
-    return team.get_team()
-
-
-@app.get("/team/members", dependencies=[Depends(require_auth)])
-async def list_team_members():
-    """List team members."""
-    members = team.list_members()
-    return {"members": members, "count": len(members)}
-
-
-@app.put("/team/members", dependencies=[Depends(require_auth)])
-async def upsert_team_member(request: TeamMemberRequest):
-    """Create or update a team member record."""
-    if not request.name.strip():
-        return JSONResponse(status_code=400, content={"error": "Member name is required."})
-    member = team.upsert_member(
-        name=request.name,
-        email=request.email,
-        role=request.role,
-        member_id=request.member_id,
-        status=request.status,
-    )
-    return member
-
-
-@app.delete("/team/members/{member_id}", dependencies=[Depends(require_auth)])
-async def delete_team_member(member_id: str):
-    """Delete a team member, except the local owner."""
-    if not team.delete_member(member_id):
-        return JSONResponse(status_code=404, content={"error": "Member not found or cannot be deleted."})
-    return {"status": "deleted"}
-
-
-@app.get("/team/permissions", dependencies=[Depends(require_auth)])
-async def team_permissions():
-    """Get role capability mappings."""
-    return {"roles": team.permission_matrix()}
-
-
-@app.get("/calendar/connections", dependencies=[Depends(require_auth)])
-async def get_calendar_connections():
-    """Get calendar provider connection metadata and scheduling policy."""
-    return calendar_accounts.get_state()
-
-
-@app.put("/calendar/connections", dependencies=[Depends(require_auth)])
-async def upsert_calendar_connection(request: CalendarConnectionRequest):
-    """Create or update calendar provider connection metadata."""
-    connection = calendar_accounts.upsert_connection(
-        provider=request.provider,
-        account_label=request.account_label,
-        enabled=request.enabled,
-        status=request.status,
-        scopes=request.scopes,
-    )
-    if connection is None:
-        return JSONResponse(status_code=400, content={"error": "Unsupported calendar provider."})
-    return connection
-
-
-@app.delete("/calendar/connections/{provider}", dependencies=[Depends(require_auth)])
-async def delete_calendar_connection(provider: str):
-    """Remove calendar provider connection metadata."""
-    if not calendar_accounts.remove_connection(provider):
-        return JSONResponse(status_code=404, content={"error": "Calendar connection not found."})
-    return {"status": "deleted"}
-
-
-@app.get("/calendar/oauth/{provider}/status", dependencies=[Depends(require_auth)])
-async def get_calendar_oauth_status(provider: str):
-    """Get OAuth configuration and token status for a provider."""
-    try:
-        return calendar_oauth.get_provider_status(provider)
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.put("/calendar/oauth/{provider}/credentials", dependencies=[Depends(require_auth)])
-async def save_calendar_oauth_credentials(provider: str, request: CalendarOAuthCredentialsRequest):
-    """Save OAuth app credentials for Google or Outlook Calendar."""
-    try:
-        return calendar_oauth.save_credentials(provider, request.client_id, request.client_secret)
-    except Exception as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.delete("/calendar/oauth/{provider}/credentials", dependencies=[Depends(require_auth)])
-async def delete_calendar_oauth_credentials(provider: str):
-    """Remove OAuth app credentials for a provider."""
-    try:
-        return calendar_oauth.delete_credentials(provider)
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.post("/calendar/oauth/{provider}/start", dependencies=[Depends(require_auth)])
-async def start_calendar_oauth(provider: str, request: CalendarOAuthStartRequest):
-    """Build a provider OAuth authorization URL."""
-    try:
-        return calendar_oauth.build_authorization_url(provider, redirect_uri=request.redirect_uri)
-    except Exception as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.get("/calendar/oauth/{provider}/callback", dependencies=[Depends(require_auth)])
-async def calendar_oauth_callback(provider: str, code: str = "", state: str = "", error: str = ""):
-    """OAuth redirect callback for Google or Outlook Calendar."""
-    if error:
-        calendar_accounts.mark_connection_error(provider, error)
-        return JSONResponse(status_code=400, content={"error": error})
-    if not code or not state:
-        return JSONResponse(status_code=400, content={"error": "OAuth callback requires code and state."})
-    try:
-        status = await calendar_oauth.exchange_code(provider, code=code, state=state)
-        return {"status": "connected", "provider": provider, "connection": status}
-    except Exception as exc:
-        calendar_accounts.mark_connection_error(provider, str(exc))
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.post("/calendar/oauth/{provider}/disconnect", dependencies=[Depends(require_auth)])
-async def disconnect_calendar_oauth(provider: str):
-    """Disconnect a provider calendar account."""
-    try:
-        return calendar_oauth.disconnect(provider)
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.get("/calendar/providers/{provider}/events", dependencies=[Depends(require_auth)])
-async def list_provider_events(provider: str, days: int = 1, limit: int = 20, calendar_id: str = ""):
-    """List events from an OAuth-backed calendar provider."""
-    try:
-        return await calendar_oauth.list_events(provider, days=days, limit=limit, calendar_id=calendar_id)
-    except Exception as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.post("/calendar/providers/{provider}/events", dependencies=[Depends(require_auth)])
-async def create_provider_event(provider: str, request: CalendarProviderEventsRequest):
-    """Create an event through an OAuth-backed calendar provider."""
-    assessment = calendar_accounts.assess_scheduling_request(
-        title=request.title,
-        start=request.start,
-        end=request.end,
-        attendees=request.attendees,
-        provider=provider,
-    )
-    if assessment["requires_confirmation"]:
-        return JSONResponse(status_code=409, content={"error": "Scheduling requires confirmation.", "assessment": assessment})
-    try:
-        return await calendar_oauth.create_event(
-            provider,
-            title=request.title,
-            start=request.start,
-            end=request.end,
-            timezone=request.timezone,
-            location=request.location,
-            notes=request.notes,
-            attendees=request.attendees,
-            calendar_id=request.calendar_id,
-        )
-    except Exception as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.put("/calendar/policy", dependencies=[Depends(require_auth)])
-async def update_calendar_policy(request: CalendarPolicyRequest):
-    """Update safe scheduling policy."""
-    updates = request.model_dump(exclude_none=True)
-    return calendar_accounts.update_policy(updates)
-
-
-@app.post("/calendar/scheduling/assess", dependencies=[Depends(require_auth)])
-async def assess_calendar_scheduling(request: ScheduleAssessmentRequest):
-    """Assess whether a calendar event can be safely auto-scheduled."""
-    if not request.title.strip():
-        return JSONResponse(status_code=400, content={"error": "Event title is required."})
-    return calendar_accounts.assess_scheduling_request(
-        title=request.title,
-        start=request.start,
-        end=request.end,
-        attendees=request.attendees,
-        provider=request.provider,
-    )
-
-
-@app.get("/calendar", dependencies=[Depends(require_auth)])
-async def get_calendar_today():
-    """Quick access to today's calendar events."""
-    from jarvis.tools.calendar_email import get_upcoming_events
-    events = await get_upcoming_events(days=1)
-    return {"events": events}
-
-
-@app.get("/mail/unread", dependencies=[Depends(require_auth)])
-async def get_mail_unread():
-    """Quick access to unread email count."""
-    from jarvis.tools.calendar_email import get_unread_count
-    count = await get_unread_count()
-    return {"unread": count}
-
-
-class ProactiveSettingsRequest(BaseModel):
-    enabled: bool | None = None
-    category: str | None = None
-    category_enabled: bool | None = None
 
 
 @app.get("/proactive", dependencies=[Depends(require_auth)])
@@ -2567,6 +1606,10 @@ async def websocket_chat(websocket: WebSocket):
     """WebSocket endpoint for real-time chat with token streaming."""
     is_local = _client_is_local(websocket)
 
+    if not _origin_allowed(websocket.headers.get("origin"), local=is_local):
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return
+
     if not is_local and not auth.pin_auth_enabled():
         await websocket.close(code=4001, reason="Remote access requires PIN authentication")
         return
@@ -2707,11 +1750,77 @@ async def websocket_chat(websocket: WebSocket):
         ws_manager.disconnect(websocket)
 
 
+async def _authorize_websocket(websocket: WebSocket) -> bool:
+    """Apply the /ws origin and remote-auth rules; close the socket and return False on failure."""
+    is_local = _client_is_local(websocket)
+    if not _origin_allowed(websocket.headers.get("origin"), local=is_local):
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return False
+    if not is_local and not auth.pin_auth_enabled():
+        await websocket.close(code=4001, reason="Remote access requires PIN authentication")
+        return False
+    if not is_local:
+        ws_token = websocket.cookies.get("jarvis_token", "") or websocket.query_params.get("token", "")
+        if not ws_token or not auth.validate_token(ws_token):
+            await websocket.close(code=4001, reason="Authentication required")
+            return False
+    return True
+
+
+@app.websocket("/ws/live")
+async def websocket_live(websocket: WebSocket):
+    """Cloud voice mode: relay browser audio to GPT-Live and delegated work to the brain.
+
+    Client sends {"audio": <base64 PCM16 24 kHz mono>} or {"stop": true};
+    server sends {"type": "audio" | "user_transcript" | "assistant_transcript" |
+    "working" | "result" | "ready" | "error" | "closed", ...}.
+    """
+    if not await _authorize_websocket(websocket):
+        return
+    await websocket.accept()
+    if settings.OFFLINE_MODE:
+        await websocket.send_json({"type": "error", "message": "Live voice is off in offline mode."})
+        await websocket.close(code=1008)
+        return
+
+    from jarvis.voice.live_session import LiveSession
+
+    session = LiveSession(runner=brain.process, client_sink=websocket.send_json)
+    try:
+        await session.open()
+    except Exception as exc:
+        logger.warning("GPT-Live session failed to open: %s", exc)
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close(code=1011)
+        return
+
+    pump = asyncio.create_task(session.run(), name="gpt-live-pump")
+    try:
+        while not pump.done():
+            data = await websocket.receive_json()
+            if data.get("stop"):
+                break
+            if isinstance(data.get("audio"), str):
+                await session.send_audio(data["audio"])
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.warning("GPT-Live relay error: %s", exc)
+    finally:
+        pump.cancel()
+        with suppress(Exception):
+            await session.close()
+
+
 @app.websocket("/ws/extension")
 async def websocket_extension(websocket: WebSocket):
     """WebSocket endpoint for JARVIS Chrome Extension browser automation."""
     client_host = websocket.client.host if websocket.client else ""
     is_local = _client_is_local(websocket)
+
+    if not _origin_allowed(websocket.headers.get("origin"), local=is_local, allow_extension=True):
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return
 
     if not is_local and not auth.pin_auth_enabled():
         await websocket.close(code=4001, reason="Remote access requires PIN authentication")
@@ -2748,7 +1857,9 @@ async def websocket_overlay(websocket: WebSocket):
     Sends JSON messages: {"state": "idle"|"listening"|"thinking"|"speaking"}
     The overlay uses these to animate the particle orb.
     """
-    if not _client_is_local(websocket):
+    if not _client_is_local(websocket) or not _origin_allowed(
+        websocket.headers.get("origin"), local=True, allow_null=True
+    ):
         await websocket.close(code=4003, reason="Overlay only available locally")
         return
 

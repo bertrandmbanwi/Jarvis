@@ -11,6 +11,7 @@ import numpy as np
 from jarvis.config import settings
 from jarvis.core import profile
 from jarvis.core.local_router import is_probable_noise
+from jarvis.voice.vad import SpeechDetector
 
 logger = logging.getLogger("jarvis.voice.listener")
 
@@ -70,6 +71,10 @@ class VoiceListener:
         self._stt_engine: str = "none"  # "moonshine", "faster-whisper", "whisper", "none"
         self._is_listening = False
         self._is_speaking = False
+        self._vad = SpeechDetector()
+        self._barge_in_frames = 0
+        # Called when the user talks over JARVIS (set to the speaker's stop_speaking).
+        self.on_barge_in: Callable[[], None] | None = None
         self._in_followup_window = False
         self._followup_start = 0.0
         self._last_wake_time = 0.0
@@ -220,7 +225,7 @@ class VoiceListener:
             logger.info("Recording too short or empty (%s).", source)
             return False
 
-        text = self._transcribe(speech_audio)
+        text = await asyncio.to_thread(self._transcribe, speech_audio)
         if not text or not text.strip():
             logger.info("No speech detected after %s activation.", source)
             return False
@@ -253,7 +258,7 @@ class VoiceListener:
             self._capturing = False
         if audio is None:
             return ""
-        return self._transcribe(audio).strip()
+        return (await asyncio.to_thread(self._transcribe, audio)).strip()
 
     async def listen_loop(self):
         """Main listening loop: wait for wake word, record until silence, transcribe, callback."""
@@ -295,9 +300,7 @@ class VoiceListener:
                     continue
 
                 try:
-                    audio_data = self._stream.read(
-                        settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False
-                    )
+                    audio_data = await self._read_chunk()
                 except Exception:
                     await asyncio.sleep(0.01)
                     continue
@@ -305,6 +308,8 @@ class VoiceListener:
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
 
                 if self._is_speaking:
+                    if await self._check_barge_in(audio_array):
+                        await self._capture_and_dispatch_speech("barge-in")
                     await asyncio.sleep(0.01)
                     continue
 
@@ -317,7 +322,7 @@ class VoiceListener:
 
                     amplitude = np.abs(audio_array).mean()
 
-                    if amplitude > settings.FOLLOWUP_SPEECH_SPIKE_THRESHOLD:
+                    if self._vad.is_speech(audio_array, settings.FOLLOWUP_SPEECH_SPIKE_THRESHOLD):
                         self._followup_sustained_frames += 1
                         self._followup_max_amplitude = max(self._followup_max_amplitude, amplitude)
                     else:
@@ -408,6 +413,22 @@ class VoiceListener:
             logger.warning("Failed to build transcription hints: %s", e)
             return None, None
 
+    async def _check_barge_in(self, audio_chunk: np.ndarray) -> bool:
+        """While JARVIS speaks, stop playback when the user starts talking (opt-in)."""
+        if not settings.BARGE_IN_ENABLED or self.on_barge_in is None:
+            return False
+        if not self._vad.is_speech(audio_chunk, settings.FOLLOWUP_SPEECH_SPIKE_THRESHOLD):
+            self._barge_in_frames = 0
+            return False
+        self._barge_in_frames += 1
+        if self._barge_in_frames < settings.BARGE_IN_FRAMES:
+            return False
+        self._barge_in_frames = 0
+        logger.info("Barge-in: user started talking; stopping playback.")
+        self.on_barge_in()
+        self._is_speaking = False
+        return True
+
     def _check_wake_word(self, audio_chunk: np.ndarray) -> bool:
         """Check if the audio chunk contains the wake word."""
         if self._wake_model is None:
@@ -451,9 +472,7 @@ class VoiceListener:
                 break
 
             try:
-                audio_data = self._stream.read(
-                    settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False
-                )
+                audio_data = await self._read_chunk()
             except Exception:
                 break
 
@@ -471,7 +490,7 @@ class VoiceListener:
                     "yes" if has_heard_speech else "no"
                 )
 
-            if amplitude > settings.SILENCE_THRESHOLD:
+            if self._vad.is_speech(audio_array, settings.SILENCE_THRESHOLD):
                 has_heard_speech = True
                 silence_start = None
             else:
@@ -506,10 +525,28 @@ class VoiceListener:
 
         return combined
 
+    async def _read_chunk(self) -> bytes:
+        """Read one microphone chunk without blocking the shared event loop.
+
+        In full mode the API server and this listener share one loop; a
+        blocking PyAudio read (~80 ms per chunk, continuously) would stall
+        every HTTP and WebSocket request.
+        """
+        stream = self._stream
+        if stream is None:
+            raise RuntimeError("Audio stream is not open")
+        return await asyncio.to_thread(stream.read, settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False)
+
     def _transcribe(self, audio: np.ndarray) -> str:
-        """Transcribe audio to text using the active STT engine."""
+        """Transcribe audio with the local STT engine, then the opt-in cloud fallback."""
+        text = self._transcribe_local(audio)
+        if not text.strip() and settings.STT_CLOUD_FALLBACK:
+            text = self._transcribe_cloud(audio)
+        return text
+
+    def _transcribe_local(self, audio: np.ndarray) -> str:
         if self._stt_engine == "none":
-            logger.error("No STT engine available.")
+            logger.error("No local STT engine available.")
             return ""
 
         try:
@@ -527,6 +564,34 @@ class VoiceListener:
         except Exception as e:
             logger.error("Transcription error (%s): %s", self._stt_engine, e)
             return ""
+
+    def _transcribe_cloud(self, audio: np.ndarray) -> str:
+        """Transcribe with OpenAI (STT_CLOUD_FALLBACK=true): sends the audio to OpenAI."""
+        if not settings.OPENAI_API_KEY:
+            return ""
+        import io
+        import wave
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(settings.AUDIO_SAMPLE_RATE)
+            wav.writeframes(audio.astype(np.int16).tobytes())
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=settings.OPENAI_API_KEY, max_retries=1, timeout=30.0)
+            result = client.audio.transcriptions.create(
+                model=settings.OPENAI_TRANSCRIBE_MODEL,
+                file=("speech.wav", buffer.getvalue(), "audio/wav"),
+            )
+        except Exception as e:
+            logger.error("Cloud transcription failed: %s", e)
+            return ""
+        text = str(getattr(result, "text", "") or "").strip()
+        logger.info("Cloud transcription (%s): '%s'", settings.OPENAI_TRANSCRIBE_MODEL, text[:80])
+        return text
 
     def _transcribe_moonshine(self, audio_float: np.ndarray) -> str:
         """Transcribe using Moonshine ONNX (low hallucination, real-time optimized)."""
@@ -566,7 +631,7 @@ class VoiceListener:
         transcribe_kwargs = {
             "language": settings.WHISPER_LANGUAGE,
             "beam_size": settings.WHISPER_BEAM_SIZE,
-            "vad_filter": False,
+            "vad_filter": settings.WHISPER_VAD_FILTER,
             # Prevent hallucination loops: do not feed prior text back
             "condition_on_previous_text": False,
         }
@@ -685,7 +750,7 @@ class VoiceListener:
                 self._cleanup_stream()
 
                 if speech_audio is not None:
-                    text = self._transcribe(speech_audio)
+                    text = await asyncio.to_thread(self._transcribe, speech_audio)
                     if text and text.strip():
                         logger.info("You said: '%s'", text)
                         if self._on_speech_callback:

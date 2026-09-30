@@ -3,7 +3,10 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 
+type Provider = "openai" | "anthropic" | "local";
+
 interface Settings {
+  provider: Provider;
   models: {
     fast: string;
     brain: string;
@@ -45,6 +48,8 @@ interface Settings {
 }
 
 interface SystemStatus {
+  provider: Provider;
+  openai: boolean;
   anthropic: boolean;
   ollama: boolean;
   tts: string;
@@ -71,6 +76,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] = useState<Provider>("openai");
   const [ollamaUrl, setOllamaUrl] = useState("");
   const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null);
   const [ollamaValid, setOllamaValid] = useState<boolean | null>(null);
@@ -85,6 +91,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
       }
       const data = await response.json();
       setSettings(data);
+      setProvider(data.provider === "anthropic" || data.provider === "local" ? data.provider : "openai");
       setOllamaUrl(data.integrations?.ollama_url || "");
       setError(null);
     } catch (err) {
@@ -127,7 +134,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
       const response = await fetch(settingsApiUrl("/test-api"), {
         method: "POST",
         headers: jarvisHeaders(authToken, true),
-        body: JSON.stringify({ api_key: apiKey }),
+        body: JSON.stringify({ api_key: apiKey, provider }),
       });
       const result = await response.json();
 
@@ -368,8 +375,33 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
           {currentStep === "api_keys" && (
             <div className="space-y-4">
               <div>
+                <label
+                  htmlFor="jarvis-llm-provider"
+                  className="block text-sm font-semibold text-slate-300 mb-2"
+                >
+                  Model Provider
+                </label>
+                <select
+                  id="jarvis-llm-provider"
+                  value={provider}
+                  onChange={(e) => {
+                    const next = e.target.value as Provider;
+                    setProvider(next);
+                    setApiKeyValid(null);
+                    saveSettings({ LLM_PROVIDER: next });
+                  }}
+                  className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500 transition"
+                >
+                  <option value="openai">OpenAI (GPT-6 Luna / GPT-6.1 Sol)</option>
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="local">Local (Ollama / MLX, offline)</option>
+                </select>
+              </div>
+
+              {provider !== "local" && (
+              <div>
                 <label className="block text-sm font-semibold text-slate-300 mb-2">
-                  Anthropic API Key
+                  {provider === "openai" ? "OpenAI" : "Anthropic"} API Key
                 </label>
                 <input
                   type="password"
@@ -392,13 +424,18 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   <p className="mt-2 text-red-400 text-sm">API key is invalid</p>
                 )}
                 <button
-                  onClick={() => saveSettings({ ANTHROPIC_API_KEY: apiKey })}
+                  onClick={() =>
+                    saveSettings(
+                      provider === "openai" ? { OPENAI_API_KEY: apiKey } : { ANTHROPIC_API_KEY: apiKey },
+                    )
+                  }
                   disabled={loading || !apiKey}
                   className="mt-2 w-full py-2 px-3 bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition disabled:opacity-50"
                 >
                   Save API Key
                 </button>
               </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-slate-300 mb-2">
@@ -439,11 +476,23 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   <div className="flex items-center gap-2">
                     <div
                       className={`w-2 h-2 rounded-full ${
+                        status.openai ? "bg-green-500" : "bg-red-500"
+                      }`}
+                    />
+                    <span className="text-sm text-slate-300">
+                      OpenAI: {status.openai ? "Key saved" : "No key"}
+                      {status.provider === "openai" ? " (active)" : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-2 h-2 rounded-full ${
                         status.anthropic ? "bg-green-500" : "bg-red-500"
                       }`}
                     />
                     <span className="text-sm text-slate-300">
-                      Anthropic: {status.anthropic ? "Connected" : "Disconnected"}
+                      Anthropic: {status.anthropic ? "Key saved" : "No key"}
+                      {status.provider === "anthropic" ? " (active)" : ""}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -690,7 +739,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                 }))}
               />
               <ToggleRow
-                label="Lazy Claude healthcheck"
+                label="Skip paid startup healthcheck"
                 checked={settings.cost_controls.lazy_healthcheck}
                 onChange={(checked) => updateSettingsDraft((current) => ({
                   ...current,

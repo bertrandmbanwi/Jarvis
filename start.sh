@@ -117,8 +117,17 @@ stop_listeners_on_ports() {
     local port=""
     for port in "${ports[@]}"; do
         while IFS= read -r pid; do
-            if [[ -n "${pid}" ]]; then
+            if [[ -z "${pid}" ]]; then
+                continue
+            fi
+            # Only stop processes that belong to this JARVIS checkout; never
+            # kill an unrelated app that happens to use the same port.
+            local cmd
+            cmd="$(ps -o command= -p "${pid}" 2>/dev/null || true)"
+            if [[ "${cmd}" == *"${SCRIPT_DIR}"* || "${cmd}" == *"jarvis"* ]]; then
                 pids="${pids} ${pid}"
+            else
+                echo "Port ${port} is used by a non-JARVIS process (PID ${pid}: ${cmd:0:80}); not stopping it."
             fi
         done < <(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)
     done
@@ -281,7 +290,6 @@ fi
 
 # Ensure data directories exist for SQLite databases
 mkdir -p "${SCRIPT_DIR}/data"
-mkdir -p "${SCRIPT_DIR}/templates/prompts"
 write_lifecycle_state "starting"
 
 # Build and launch desktop overlay (macOS only, optional)

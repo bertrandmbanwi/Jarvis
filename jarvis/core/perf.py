@@ -234,14 +234,11 @@ def estimate_request_cost(
 ) -> float:
     """Estimate LLM request cost in USD for tier routing decisions."""
     from jarvis.config import settings
+    from jarvis.core.providers import tier_specs
 
-    tier_to_model = {
-        "fast": settings.CLAUDE_FAST_MODEL,
-        "brain": settings.CLAUDE_BRAIN_MODEL,
-        "deep": settings.CLAUDE_DEEP_MODEL,
-    }
-    model = tier_to_model.get(tier, settings.CLAUDE_BRAIN_MODEL)
-    pricing = settings.CLAUDE_PRICING.get(model, {})
+    specs = tier_specs()
+    model = specs.get(tier, specs["brain"]).model
+    pricing = settings.MODEL_PRICING.get(model, {})
     if not pricing:
         return 0.0
 

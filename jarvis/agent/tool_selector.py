@@ -1,4 +1,4 @@
-"""Request-aware tool schema pruning to reduce Claude input tokens."""
+"""Tool schema preparation: native tool search (OpenAI) or keyword pruning (fallback)."""
 from __future__ import annotations
 
 import re
@@ -12,6 +12,7 @@ COMMON_TOOLS = {
     "open_application",
     "open_url",
     "get_user_profile",
+    "use_skill",
 }
 
 TOOL_GROUPS: dict[str, set[str]] = {
@@ -62,11 +63,13 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "get_cache_stats", "clear_cache",
     },
     "development": {
-        "run_claude_code", "run_terminal_command_smart", "scaffold_project",
+        "run_coding_agent", "run_terminal_command_smart", "scaffold_project",
         "run_command", "list_directory", "read_file", "write_file",
         "search_files", "get_file_info", "search_web", "fetch_page_text",
     },
     "screen": {"capture_screen", "read_screen_text", "analyze_screen"},
+    "proactive": {"get_proactive_status", "set_proactive_setting"},
+    "skills": {"use_skill", "read_skill_file"},
 }
 
 KEYWORD_GROUPS: list[tuple[set[str], str]] = [
@@ -92,20 +95,54 @@ KEYWORD_GROUPS: list[tuple[set[str], str]] = [
     ({"plan", "agent", "learning", "cache", "performance", "health"}, "planning"),
     ({"code", "build", "debug", "repo", "repository", "test", "implement", "fix"}, "development"),
     ({"screen", "display", "look at", "visible"}, "screen"),
+    ({"proactive", "suggestion", "suggestions", "check-in", "check in", "nudge"}, "proactive"),
+    ({"skill", "skills", "briefing", "prep"}, "skills"),
 ]
 
 
-def select_tools_for_request(text: str, all_schemas: list[dict]) -> list[dict]:
-    """Return only likely-needed tool schemas for a request."""
+# How many recent conversation turns inform tool selection, so a follow-up like
+# "yes, send it" still gets the email tools offered for the draft before it.
+HISTORY_TURNS_FOR_SELECTION = 2
+
+
+def _keyword_pattern(keywords: set[str]) -> re.Pattern[str]:
+    # Whole words only: "sol" must not match "solve", nor "eth" match "method".
+    alternatives = "|".join(sorted((re.escape(k) for k in keywords), key=len, reverse=True))
+    return re.compile(rf"\b(?:{alternatives})\b")
+
+
+_KEYWORD_PATTERNS = [(_keyword_pattern(keywords), group) for keywords, group in KEYWORD_GROUPS]
+
+
+def _selection_text(text: str, history: list[dict] | None) -> str:
+    recent = (history or [])[-HISTORY_TURNS_FOR_SELECTION * 2:]
+    parts = [str(msg.get("content", "")) for msg in recent]
+    parts.append(text)
+    return " ".join(parts).lower()
+
+
+def select_tools_for_request(
+    text: str,
+    all_schemas: list[dict],
+    history: list[dict] | None = None,
+) -> list[dict]:
+    """Return only likely-needed tool schemas for a request (keyword-based)."""
     lowered = text.lower()
 
     if re.search(r"\b(?:all tools|full toolset|everything you can|any tool)\b", lowered):
         return all_schemas
 
+    context = _selection_text(text, history)
     selected: set[str] = set(COMMON_TOOLS)
-    for keywords, group in KEYWORD_GROUPS:
-        if any(keyword in lowered for keyword in keywords):
+    for pattern, group in _KEYWORD_PATTERNS:
+        if pattern.search(context):
             selected.update(TOOL_GROUPS[group])
+
+    # MCP tools join when their server is mentioned ("search my notion for ...").
+    for schema in all_schemas:
+        server = schema.get("mcp_server")
+        if server and re.search(rf"\b{re.escape(server.lower())}\b", context):
+            selected.add(schema["name"])
 
     if len(selected) <= len(COMMON_TOOLS) and len(lowered) > 160:
         selected.update(TOOL_GROUPS["web"])
@@ -113,3 +150,17 @@ def select_tools_for_request(text: str, all_schemas: list[dict]) -> list[dict]:
 
     ordered = [schema for schema in all_schemas if schema.get("name") in selected]
     return ordered or all_schemas[: min(12, len(all_schemas))]
+
+
+def with_deferred_loading(schemas: list[dict]) -> list[dict]:
+    """Mark every non-core tool ``defer_loading`` for native tool search.
+
+    The model sees each deferred tool's name and description and loads the
+    full schema only when it needs it. The same schemas are sent in the same
+    order on every request, which keeps the prompt cache valid (the keyword
+    selector changed the tool set per request and invalidated it).
+    """
+    core = [s for s in schemas if s.get("name") in COMMON_TOOLS]
+    # At least one tool must stay loaded or the API rejects the request.
+    keep = {s["name"] for s in core} if core else {s["name"] for s in schemas[:3]}
+    return [s if s.get("name") in keep else {**s, "defer_loading": True} for s in schemas]

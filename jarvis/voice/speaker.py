@@ -5,7 +5,6 @@ import contextlib
 import importlib.util
 import logging
 import shutil
-import subprocess  # nosec B404
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -39,6 +38,10 @@ class VoiceSpeaker:
         self._kokoro_pipeline = None
         self._last_amplitude_envelope: list[float] = []
         self._last_audio_duration: float = 0.0
+        # Playback processes JARVIS started; stop_speaking() ends only these.
+        self._playback_procs: set[asyncio.subprocess.Process] = set()
+        # Set by stop_speaking() so queued audio chunks are dropped, not played.
+        self._stop_requested = False
 
     def initialize(self) -> bool:
         """Initialize the best available TTS engine."""
@@ -217,6 +220,7 @@ class VoiceSpeaker:
         self._on_audio_ready = on_audio_ready
         self._on_audio_chunk = on_audio_chunk
         self._skip_local_playback = skip_local_playback
+        self._stop_requested = False
 
         try:
             if self._backend == "kokoro":
@@ -268,6 +272,11 @@ class VoiceSpeaker:
 
         gen_task = loop.run_in_executor(None, generate)
 
+        # Play each chunk locally as soon as it is generated instead of waiting
+        # for the whole utterance (the browser already got chunked audio).
+        play_queue: asyncio.Queue = asyncio.Queue()
+        player = None if self._skip_local_playback else asyncio.create_task(self._play_chunks(play_queue))
+
         all_chunks = []
         chunk_index = 0
         accumulated_samples = []
@@ -281,6 +290,8 @@ class VoiceSpeaker:
                     break
 
                 all_chunks.append(audio_chunk)
+                if player is not None:
+                    play_queue.put_nowait(audio_chunk)
                 accumulated_samples.append(audio_chunk)
                 accumulated_count += len(audio_chunk)
 
@@ -307,6 +318,8 @@ class VoiceSpeaker:
             logger.error("Kokoro chunk streaming error: %s", e)
 
         await gen_task
+        if player is not None:
+            play_queue.put_nowait(None)
 
         if self._on_audio_chunk and accumulated_samples:
             remaining_audio = np.concatenate(accumulated_samples)
@@ -331,6 +344,8 @@ class VoiceSpeaker:
 
         if not all_chunks:
             logger.warning("Kokoro produced no audio for: '%s'", text[:80])
+            if player is not None:
+                await player
             return
 
         audio = np.concatenate(all_chunks)
@@ -340,10 +355,6 @@ class VoiceSpeaker:
 
         self._last_audio_duration = duration
         self._last_amplitude_envelope = self._compute_amplitude_envelope(audio, 24000, fps=60)
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            temp_path = tmp.name
-        sf.write(temp_path, audio, 24000)
 
         wav_buffer = io.BytesIO()
         sf.write(wav_buffer, audio, 24000, format="WAV")
@@ -357,13 +368,26 @@ class VoiceSpeaker:
             except Exception as e:
                 logger.warning("on_audio_ready callback failed: %s", e)
 
-        if self._skip_local_playback:
+        if player is None:
             logger.info("Skipping local playback (browser-originated request)")
         else:
-            await self._play_audio(temp_path)
+            await player
 
-        with contextlib.suppress(Exception):
-            Path(temp_path).unlink()
+    async def _play_chunks(self, queue: asyncio.Queue) -> None:
+        """Play queued Kokoro chunks in order until None; drop them after stop_speaking()."""
+        import soundfile as sf
+
+        while (chunk := await queue.get()) is not None:
+            if self._stop_requested:
+                continue
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                path = tmp.name
+            try:
+                sf.write(path, chunk, 24000)
+                await self._play_audio(path)
+            finally:
+                with contextlib.suppress(OSError):
+                    Path(path).unlink()
 
     async def _speak_edge(self, text: str):
         """Generate Edge TTS (Microsoft free voices) with browser streaming."""  # MP3 to WAV conversion
@@ -471,51 +495,42 @@ class VoiceSpeaker:
         elif Path(temp_aiff).exists():
             await self._play_audio(temp_aiff)
         else:
-            process = await asyncio.create_subprocess_exec(
-                "say", "-v", "Daniel", "-r", "190", text,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await process.wait()
+            await self._run_playback("say", "-v", "Daniel", "-r", "190", text)
 
         for p in [temp_aiff, wav_path]:
             with contextlib.suppress(Exception):
                 Path(p).unlink()
 
+    async def _run_playback(self, *cmd: str) -> None:
+        """Run a playback command, tracked so stop_speaking() can end it."""
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        self._playback_procs.add(process)
+        try:
+            await process.wait()
+        finally:
+            self._playback_procs.discard(process)
+
     async def _play_audio(self, filepath: str):
         """Play audio file using afplay or ffplay."""
         try:
-            process = await asyncio.create_subprocess_exec(
-                "afplay", filepath,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await process.wait()
+            await self._run_playback("afplay", filepath)
         except FileNotFoundError:
             try:
-                process = await asyncio.create_subprocess_exec(
-                    "ffplay", "-nodisp", "-autoexit", filepath,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await process.wait()
+                await self._run_playback("ffplay", "-nodisp", "-autoexit", filepath)
             except FileNotFoundError:
                 logger.error("No audio player found (afplay or ffplay).")
 
     def stop_speaking(self):
-        """Stop any current speech output."""
-        try:
-            killall = shutil.which("killall")
-            if not killall:
-                return
-            subprocess.run(  # nosec B603
-                [killall, "say"], capture_output=True, timeout=2
-            )
-            subprocess.run(  # nosec B603
-                [killall, "afplay"], capture_output=True, timeout=2
-            )
-        except Exception as e:
-            logger.debug("Failed to stop speech playback: %s", e)
+        """Stop JARVIS's own speech output (never other apps' audio)."""
+        self._stop_requested = True
+        for process in list(self._playback_procs):
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
 
     @staticmethod
     async def _encode_for_browser(wav_bytes: bytes) -> tuple[str, str]:
