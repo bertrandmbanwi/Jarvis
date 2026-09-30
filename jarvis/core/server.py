@@ -585,8 +585,16 @@ async def lifespan(app: FastAPI):
             TelegramBridge(settings.TELEGRAM_BOT_TOKEN, runner=brain.process).run(), name="telegram"
         )
 
+    imessage_task = None
+    if settings.IMESSAGE_ALLOWED_HANDLES:
+        from jarvis.channels.imessage import IMessageBridge
+
+        imessage_task = asyncio.create_task(IMessageBridge(runner=brain.process).run(), name="imessage")
+
     yield
 
+    if imessage_task is not None:
+        imessage_task.cancel()
     pending_actions.remove_notifier(ws_manager.broadcast_json)
     cleanup_task.cancel()
     scheduler_task.cancel()
