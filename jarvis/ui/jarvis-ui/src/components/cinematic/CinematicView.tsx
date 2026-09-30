@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { ChatMessage, OrbState } from "@/lib/types";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { useLiveVoice } from "@/hooks/useLiveVoice";
 import { unlockAudio } from "@/hooks/useJarvisWebSocket";
 
 const ArcReactorGL = dynamic(
@@ -89,6 +90,14 @@ export default function CinematicView({
       if (onAutoStopRef) onAutoStopRef.current = null;
     };
   }, [onAutoStopRef, onSendMessage]);
+
+  const live = useLiveVoice(authToken);
+  const liveActive = live.status !== "idle" && live.status !== "error";
+
+  const handleLiveToggle = useCallback(() => {
+    if (liveActive) live.stop();
+    else live.start();
+  }, [live, liveActive]);
 
   const handleMicToggle = useCallback(async () => {
     unlockAudio();
@@ -329,9 +338,46 @@ export default function CinematicView({
             </span>
           )}
 
+          {(liveActive || live.error) && (
+            <span
+              role="status"
+              className={`text-3xs font-mono uppercase tracking-[0.15em] animate-fade-in ${
+                live.error ? "text-red-400/70" : "text-jarvis-gold/60"
+              }`}
+            >
+              {live.error
+                ? live.error
+                : live.status === "connecting"
+                  ? "Connecting live voice..."
+                  : live.status === "working"
+                    ? "Working on it..."
+                    : live.userText || live.assistantText || "Live — just talk"}
+            </span>
+          )}
+
+          <div className="flex items-center gap-3">
+          <button
+            onClick={handleLiveToggle}
+            disabled={disabled || isRecording || isTranscribing}
+            className={`
+              h-10 px-3 rounded-xl text-3xs font-mono uppercase tracking-[0.15em]
+              transition-all duration-300 border backdrop-blur-md
+              ${liveActive
+                ? "bg-jarvis-gold/12 border-jarvis-gold/40 text-jarvis-gold"
+                : "bg-white/[0.03] border-white/[0.08] text-jarvis-text-dim/50 hover:text-jarvis-gold hover:border-jarvis-gold/30"
+              }
+              disabled:opacity-15 disabled:cursor-not-allowed
+            `}
+            title="Hands-free conversation with GPT-Live (cloud, needs an OpenAI key)"
+            aria-label={liveActive ? "End live voice conversation" : "Start live voice conversation"}
+            aria-pressed={liveActive}
+          >
+            {liveActive ? "End live" : "Live"}
+          </button>
+
           <button
             onClick={handleMicToggle}
-            disabled={disabled || isProcessing || isTranscribing}
+            disabled={disabled || isProcessing || isTranscribing || liveActive}
             className={`
               relative w-14 h-14 rounded-2xl flex items-center justify-center
               transition-all duration-300 border-2 backdrop-blur-md
@@ -377,6 +423,7 @@ export default function CinematicView({
               </svg>
             )}
           </button>
+          </div>
         </div>
       )}
     </div>

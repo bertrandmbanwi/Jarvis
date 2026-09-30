@@ -49,6 +49,13 @@ OPENAI_FAST_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_FAST_MAX_OUTPUT_TOKENS", "
 OPENAI_BRAIN_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_BRAIN_MAX_OUTPUT_TOKENS", "8192"))
 OPENAI_DEEP_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DEEP_MAX_OUTPUT_TOKENS", "16000"))
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", OPENAI_FAST_MODEL)
+# Cloud voice mode (GPT-Live, full-duplex speech; $0.05/min plus delegated work)
+OPENAI_LIVE_MODEL = os.getenv("OPENAI_LIVE_MODEL", "gpt-live-1")
+OPENAI_LIVE_VOICE = os.getenv("OPENAI_LIVE_VOICE", "marin")
+# Cloud speech-to-text fallback when local Moonshine/Whisper is unavailable or
+# returns nothing. Off by default: it sends microphone audio to OpenAI.
+STT_CLOUD_FALLBACK = os.getenv("STT_CLOUD_FALLBACK", "false").lower() in {"1", "true", "yes", "on"}
+OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-transcribe")
 OPENAI_COMPUTER_USE_MODEL = os.getenv("OPENAI_COMPUTER_USE_MODEL", "gpt-6.1-sol")
 
 # Coding agent for run_coding_agent: "codex", "claude", or "auto".
@@ -426,6 +433,16 @@ SILENCE_DURATION = 1.5
 MAX_RECORDING_DURATION = 30
 FOLLOWUP_SPEECH_SPIKE_THRESHOLD = 150
 FOLLOWUP_SUSTAINED_FRAMES = 3
+# Silero voice activity detection (bundled with faster-whisper). When it is
+# unavailable, the amplitude thresholds above are used instead.
+VAD_ENABLED = os.getenv("VAD_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.5"))
+WHISPER_VAD_FILTER = os.getenv("WHISPER_VAD_FILTER", "true").lower() in {"1", "true", "yes", "on"}
+# Barge-in: interrupt JARVIS by talking while it speaks. Off by default because
+# the local microphone has no echo cancellation, so JARVIS's own voice from the
+# speakers can trigger it. Enable with headphones or an echo-cancelling mic.
+BARGE_IN_ENABLED = os.getenv("BARGE_IN_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+BARGE_IN_FRAMES = int(os.getenv("BARGE_IN_FRAMES", "4"))  # consecutive 80 ms speech chunks
 
 API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("API_PORT", "8741"))

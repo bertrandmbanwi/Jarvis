@@ -36,6 +36,11 @@ const nextConfig = {
         source: "/jarvis-ws",
         destination: `http://127.0.0.1:${apiPort}/ws`,
       },
+      {
+        // Cloud voice mode (GPT-Live relay).
+        source: "/jarvis-ws-live",
+        destination: `http://127.0.0.1:${apiPort}/ws/live`,
+      },
     ];
   },
 };
