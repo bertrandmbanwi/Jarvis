@@ -1,0 +1,51 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start with `./start.sh full`
+        2. Say "Hey JARVIS, ..."
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Voice (wake word, speech-to-text, text-to-speech)
+        - Chat / web UI
+        - Tools (macOS, files, browser, email, calendar)
+        - Chrome extension
+        - Desktop overlay
+        - Setup / install
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Model provider
+      placeholder: OpenAI / Anthropic / Ollama only
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: macOS 27.0, Apple M3
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: From `data/logs/jarvis.log`. Remove any personal data or keys before pasting.
+      render: shell
