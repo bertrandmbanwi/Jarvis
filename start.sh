@@ -114,8 +114,10 @@ port_in_use() {
     [[ -n "$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1)" ]]
 }
 
-# The UI's other allowed origin (see _cors_origins in jarvis/core/http_security.py).
-ALT_UI_PORT=3741
+# Ask the OS for a port nothing is listening on.
+free_port() {
+    python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
 
 stop_listeners_on_ports() {
     local ports=("$@")
@@ -361,20 +363,22 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
         # Give the OS a moment to release the port
         sleep 1
 
-        # Another app still owns the port: use the alternate UI port rather
-        # than failing to bind and opening that app's page.
+        # Another app still owns the port: move the JARVIS UI to a free port
+        # rather than failing to bind and opening that app's page. The backend
+        # reads UI_PORT to decide which browser origin to trust.
         UI_AVAILABLE="true"
         if port_in_use "${UI_PORT}"; then
-            if [[ "${UI_PORT}" != "${ALT_UI_PORT}" ]] && ! port_in_use "${ALT_UI_PORT}"; then
-                echo "Port ${UI_PORT} is taken by another app. Starting the JARVIS UI on port ${ALT_UI_PORT} instead."
-                UI_PORT="${ALT_UI_PORT}"
+            BUSY_PORT="${UI_PORT}"
+            UI_PORT="$(free_port || true)"
+            if [[ -n "${UI_PORT}" ]]; then
+                echo "Port ${BUSY_PORT} is taken by another app. Starting the JARVIS UI on port ${UI_PORT} instead."
             else
-                echo "Error: ports ${UI_PORT} and ${ALT_UI_PORT} are both in use by other apps."
-                echo "       Free one, or choose another with UI_PORT=<port> plus"
-                echo "       JARVIS_ALLOWED_ORIGINS=http://localhost:<port> in .env. Starting without the web UI."
+                echo "Error: port ${BUSY_PORT} is taken and no free port could be found. Starting without the web UI."
+                UI_PORT="${BUSY_PORT}"
                 UI_AVAILABLE="false"
             fi
         fi
+        export UI_PORT
 
         if [[ "${UI_AVAILABLE}" == "true" ]]; then
             if [[ "${JARVIS_UI_MODE}" == "dev" ]]; then
