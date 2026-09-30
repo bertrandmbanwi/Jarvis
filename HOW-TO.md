@@ -205,6 +205,28 @@ cloudflared tunnel create jarvis
 cloudflared tunnel route dns jarvis jarvis.yourdomain.com
 ```
 
+## Offline Mode (Local Models)
+
+`OFFLINE_MODE=true` switches JARVIS to local models only, so no request goes to a cloud model:
+
+| Job | Model |
+|-----|-------|
+| Tool use, planning, structured decisions | Your local server model (`LOCAL_LLM_MODEL`, default `llama3.1:8b`) |
+| Quick replies (fast tier) | Apple's on-device Foundation Model on macOS 26+ with Apple Intelligence on (`LOCAL_FAST_MODEL=apple`); otherwise the local server model |
+| Speech | Moonshine/Whisper and Kokoro (local, as always) |
+| Coding agent | Codex CLI with `--oss` (Ollama) |
+
+```bash
+ollama pull qwen3:8b            # or gpt-oss:20b if you have 16 GB+ of RAM; any tool-capable model works
+echo 'OFFLINE_MODE=true' >> .env
+echo 'LOCAL_LLM_MODEL=qwen3:8b' >> .env
+./start.sh full
+```
+
+For MLX on Apple silicon, run `mlx_lm.server --model <model>` and set `LOCAL_LLM_BASE_URL=http://localhost:8080/v1`. LM Studio and llama.cpp servers work the same way. The Apple helper (`jarvis/native/apple_fm.swift`) is compiled with `swiftc` the first time it's needed.
+
+Without offline mode, you can still pick `LLM_PROVIDER=local` to use local models while keeping cloud features like Live voice available. Web tools (search, weather, public data) still use the internet in offline mode; only model calls stay on your Mac.
+
 ## MCP Servers
 
 ### Use MCP servers from JARVIS

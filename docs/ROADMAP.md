@@ -110,10 +110,12 @@ Notes:
 
 ## Phase 5 — Offline and Apple
 
+**Status:** shipped in the Phase 5 PR, and verified on this Mac against a running Ollama (llama3.1:8b tool call) and Apple's on-device model (replies, streaming).
+
 | # | Item | Verify |
 |---|---|---|
-| 5.1 | "Offline mode" preset: MLX (`mlx-lm` OpenAI-compatible server) or Ollama with `gpt-oss:20b`, local STT/TTS, zero cloud calls | Test with network disabled |
-| 5.2 | Apple Foundation Models provider via a small Swift helper (macOS 27+) | Manual |
+| 5.1 | `OFFLINE_MODE`: a local provider with tool calling over any OpenAI-compatible server (Ollama, MLX, LM Studio); no cloud model calls; Live voice and cloud STT off; Codex runs with `--oss` | Unit tests + live Ollama tool call |
+| 5.2 | Apple Foundation Model (macOS 26+) for fast-tier replies via a Swift helper built on first use; structured decisions stay on the local server model (the on-device model misclassified simple requests in testing) | Live test on macOS 27 |
 
 ## Phase 6 — Frontend and infrastructure
 
