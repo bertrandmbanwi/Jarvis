@@ -76,6 +76,9 @@ if not TELEGRAM_BOT_TOKEN and _secret_lookup is not None:
     TELEGRAM_BOT_TOKEN = _secret_lookup("TELEGRAM_BOT_TOKEN")
 TELEGRAM_ALLOWED_USER_IDS = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
 
+# iMessage channel (see jarvis/channels/imessage.py). Disabled unless set.
+IMESSAGE_ALLOWED_HANDLES = os.getenv("IMESSAGE_ALLOWED_HANDLES", "")
+
 # Coding agent for run_coding_agent: "codex", "claude", or "auto".
 CODING_AGENT = os.getenv("JARVIS_CODING_AGENT", "auto").strip().lower()
 CODEX_MODEL = os.getenv("CODEX_MODEL", "")
