@@ -581,6 +581,10 @@ JARVIS stores persistent data in the `data/` directory:
 
 ## Troubleshooting
 
+### The dashboard shows a 404 or another app
+
+Something else is using port 3000. `start.sh` now notices this and starts the JARVIS UI on port 3741 instead (it says so in the terminal and opens the right address). To pick a port yourself, set `UI_PORT=<port>` and add `JARVIS_ALLOWED_ORIGINS=http://localhost:<port>` to `.env`.
+
 **JARVIS won't start:**
 Check that Ollama is running (`ollama serve`) and your `.env` (or Keychain) has a valid `OPENAI_API_KEY`.
 
