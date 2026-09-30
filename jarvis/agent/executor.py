@@ -79,6 +79,16 @@ def _accepted_kwargs(fn: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str
     return {k: v for k, v in kwargs.items() if k in accepted}
 
 
+SIMPLE_LOOKUP_MAX_TOOL_CALLS = 2
+
+
+def _is_simple_lookup(tool_calls: list[dict]) -> bool:
+    """A couple of read-only calls: a QA pass costs seconds and guards nothing."""
+    return len(tool_calls) <= SIMPLE_LOOKUP_MAX_TOOL_CALLS and all(
+        is_side_effect_free(tc["name"]) for tc in tool_calls
+    )
+
+
 class AgentExecutor:
     """Executes user requests using Claude's native tool_use agentic loop."""
 
@@ -126,7 +136,7 @@ class AgentExecutor:
             )
 
             # QA verification for tool-based responses
-            if self._qa_enabled and tool_calls:
+            if self._qa_enabled and not _is_simple_lookup(tool_calls):
                 try:
                     qa_result = await self._qa_agent.verify(
                         task_prompt=user_input,
