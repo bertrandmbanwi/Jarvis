@@ -7,6 +7,7 @@ os.environ["JARVIS_REGEN_PIN"] = "false"
 import pytest
 from fastapi.testclient import TestClient
 
+from jarvis.config import settings
 from jarvis.core import server
 
 
@@ -15,8 +16,10 @@ from jarvis.core import server
     [
         (None, True, {}, True),  # native client (voice loop, curl)
         ("", True, {}, True),
-        ("http://localhost:3000", True, {}, True),
-        ("http://127.0.0.1:3741/", True, {}, True),
+        (f"http://localhost:{settings.UI_PORT}", True, {}, True),
+        (f"http://127.0.0.1:{settings.UI_PORT}/", True, {}, True),
+        # Only JARVIS's own UI port is trusted, not any app on a well-known port.
+        (f"http://localhost:{settings.UI_PORT + 1}", True, {}, False),
         ("https://evil.example", True, {}, False),
         ("http://localhost.evil.example", True, {}, False),
         # Anyone can mint a trycloudflare subdomain: never trusted on loopback.

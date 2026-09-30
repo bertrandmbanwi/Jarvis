@@ -110,6 +110,15 @@ path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 PY
 }
 
+port_in_use() {
+    [[ -n "$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1)" ]]
+}
+
+# Ask the OS for a port nothing is listening on.
+free_port() {
+    python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
+
 stop_listeners_on_ports() {
     local ports=("$@")
     local pids=""
@@ -121,13 +130,16 @@ stop_listeners_on_ports() {
                 continue
             fi
             # Only stop processes that belong to this JARVIS checkout; never
-            # kill an unrelated app that happens to use the same port.
-            local cmd
+            # kill an unrelated app that happens to use the same port. A Next.js
+            # server's command line is just "next-server (vX)", so also check
+            # the directory it runs from.
+            local cmd cwd
             cmd="$(ps -o command= -p "${pid}" 2>/dev/null || true)"
-            if [[ "${cmd}" == *"${SCRIPT_DIR}"* || "${cmd}" == *"jarvis"* ]]; then
+            cwd="$(lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+            if [[ "${cmd}" == *"${SCRIPT_DIR}"* || "${cmd}" == *"jarvis"* || "${cwd}" == "${SCRIPT_DIR}"* ]]; then
                 pids="${pids} ${pid}"
             else
-                echo "Port ${port} is used by a non-JARVIS process (PID ${pid}: ${cmd:0:80}); not stopping it."
+                echo "Port ${port} is used by a non-JARVIS process (PID ${pid}: ${cmd:0:60}, in ${cwd:-unknown}); not stopping it."
             fi
         done < <(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)
     done
@@ -339,10 +351,11 @@ cd "${SCRIPT_DIR}"
 # Start the Next.js UI for modes that need it
 if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
     if [[ -d "${UI_DIR}" ]] && [[ -f "${UI_DIR}/package.json" ]]; then
-        # Check if node_modules exist
-        if [[ ! -d "${UI_DIR}/node_modules" ]]; then
+        # Install UI dependencies when they are missing or older than the
+        # lockfile (e.g. after pulling a dependency or security update).
+        if [[ ! -d "${UI_DIR}/node_modules" || "${UI_DIR}/package-lock.json" -nt "${UI_DIR}/node_modules/.package-lock.json" ]]; then
             echo "Installing UI dependencies..."
-            (cd "${UI_DIR}" && npm install)
+            (cd "${UI_DIR}" && npm ci --no-audit --no-fund)
         fi
 
         # Kill stale listeners on the configured UI ports from a previous run.
@@ -350,55 +363,74 @@ if [[ "${MODE}" == "full" || "${MODE}" == "server" ]]; then
         # Give the OS a moment to release the port
         sleep 1
 
-        if [[ "${JARVIS_UI_MODE}" == "dev" ]]; then
-            UI_COMMAND=(npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}")
-        else
-            UI_BUILD_MARKER="${UI_DIR}/.next/BUILD_ID"
-            UI_REBUILD_REQUIRED="false"
-            if [[ ! -f "${UI_BUILD_MARKER}" ]]; then
-                UI_REBUILD_REQUIRED="true"
-            elif find \
-                "${UI_DIR}/src" \
-                "${UI_DIR}/public" \
-                "${UI_DIR}/next.config.js" \
-                "${UI_DIR}/package.json" \
-                "${UI_DIR}/package-lock.json" \
-                "${UI_DIR}/postcss.config.js" \
-                "${UI_DIR}/tailwind.config.js" \
-                "${UI_DIR}/tsconfig.json" \
-                -newer "${UI_BUILD_MARKER}" \
-                -print -quit | grep -q .; then
-                UI_REBUILD_REQUIRED="true"
+        # Another app still owns the port: move the JARVIS UI to a free port
+        # rather than failing to bind and opening that app's page. The backend
+        # reads UI_PORT to decide which browser origin to trust.
+        UI_AVAILABLE="true"
+        if port_in_use "${UI_PORT}"; then
+            BUSY_PORT="${UI_PORT}"
+            UI_PORT="$(free_port || true)"
+            if [[ -n "${UI_PORT}" ]]; then
+                echo "Port ${BUSY_PORT} is taken by another app. Starting the JARVIS UI on port ${UI_PORT} instead."
+            else
+                echo "Error: port ${BUSY_PORT} is taken and no free port could be found. Starting without the web UI."
+                UI_PORT="${BUSY_PORT}"
+                UI_AVAILABLE="false"
             fi
-
-            if [[ "${UI_REBUILD_REQUIRED}" == "true" ]]; then
-                echo "Building JARVIS UI for production..."
-                (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run build)
-            fi
-            UI_COMMAND=(npm run start)
         fi
+        export UI_PORT
 
-        echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} (${JARVIS_UI_MODE}) ..."
-        (cd "${UI_DIR}" && UI_PORT="${UI_PORT}" JARVIS_API_PORT="${API_PORT}" "${UI_COMMAND[@]}") &
-        UI_PID=$!
-        if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
-            echo "Warning: UI did not become ready on port ${UI_PORT}. Retrying once..."
-            if kill -0 "${UI_PID}" 2>/dev/null; then
-                kill "${UI_PID}" 2>/dev/null || true
-                wait "${UI_PID}" 2>/dev/null || true
+        if [[ "${UI_AVAILABLE}" == "true" ]]; then
+            if [[ "${JARVIS_UI_MODE}" == "dev" ]]; then
+                UI_COMMAND=(npm run dev -- --hostname 0.0.0.0 --port "${UI_PORT}")
+            else
+                UI_BUILD_MARKER="${UI_DIR}/.next/BUILD_ID"
+                UI_REBUILD_REQUIRED="false"
+                if [[ ! -f "${UI_BUILD_MARKER}" ]]; then
+                    UI_REBUILD_REQUIRED="true"
+                elif find \
+                    "${UI_DIR}/src" \
+                    "${UI_DIR}/public" \
+                    "${UI_DIR}/next.config.js" \
+                    "${UI_DIR}/package.json" \
+                    "${UI_DIR}/package-lock.json" \
+                    "${UI_DIR}/postcss.config.js" \
+                    "${UI_DIR}/tailwind.config.js" \
+                    "${UI_DIR}/tsconfig.json" \
+                    -newer "${UI_BUILD_MARKER}" \
+                    -print -quit | grep -q .; then
+                    UI_REBUILD_REQUIRED="true"
+                fi
+
+                if [[ "${UI_REBUILD_REQUIRED}" == "true" ]]; then
+                    echo "Building JARVIS UI for production..."
+                    (cd "${UI_DIR}" && JARVIS_API_PORT="${API_PORT}" npm run build)
+                fi
+                UI_COMMAND=(npm run start)
             fi
-            stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
-            sleep 1
+
+            echo "Starting JARVIS UI on http://0.0.0.0:${UI_PORT} (${JARVIS_UI_MODE}) ..."
             (cd "${UI_DIR}" && UI_PORT="${UI_PORT}" JARVIS_API_PORT="${API_PORT}" "${UI_COMMAND[@]}") &
             UI_PID=$!
             if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
-                echo "Warning: JARVIS UI is still not responding at http://localhost:${UI_PORT}."
-                echo "         Check the UI error above or rerun ./start.sh after freeing port ${UI_PORT}."
+                echo "Warning: UI did not become ready on port ${UI_PORT}. Retrying once..."
+                if kill -0 "${UI_PID}" 2>/dev/null; then
+                    kill "${UI_PID}" 2>/dev/null || true
+                    wait "${UI_PID}" 2>/dev/null || true
+                fi
+                stop_listeners_on_ports "${UI_PORT}" "${NEXT_FALLBACK_PORT}"
+                sleep 1
+                (cd "${UI_DIR}" && UI_PORT="${UI_PORT}" JARVIS_API_PORT="${API_PORT}" "${UI_COMMAND[@]}") &
+                UI_PID=$!
+                if ! wait_for_http "http://127.0.0.1:${UI_PORT}" 24; then
+                    echo "Warning: JARVIS UI is still not responding at http://localhost:${UI_PORT}."
+                    echo "         Check the UI error above or rerun ./start.sh after freeing port ${UI_PORT}."
+                fi
             fi
-        fi
-        if [[ "${JARVIS_OPEN_DASHBOARD}" != "false" && "${JARVIS_OPEN_DASHBOARD}" != "0" ]] && command -v open &>/dev/null; then
-            echo "Opening JARVIS Dashboard at http://localhost:${UI_PORT} ..."
-            open "http://localhost:${UI_PORT}" >/dev/null 2>&1 || true
+            if [[ "${JARVIS_OPEN_DASHBOARD}" != "false" && "${JARVIS_OPEN_DASHBOARD}" != "0" ]] && command -v open &>/dev/null; then
+                echo "Opening JARVIS Dashboard at http://localhost:${UI_PORT} ..."
+                open "http://localhost:${UI_PORT}" >/dev/null 2>&1 || true
+            fi
         fi
     else
         echo "Warning: UI directory not found at ${UI_DIR}. Skipping UI."
