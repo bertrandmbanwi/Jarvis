@@ -58,6 +58,12 @@ STT_CLOUD_FALLBACK = os.getenv("STT_CLOUD_FALLBACK", "false").lower() in {"1", "
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-transcribe")
 OPENAI_COMPUTER_USE_MODEL = os.getenv("OPENAI_COMPUTER_USE_MODEL", "gpt-6.1-sol")
 
+# Telegram channel (see jarvis/channels/telegram.py). Disabled unless both are set.
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+if not TELEGRAM_BOT_TOKEN and _secret_lookup is not None:
+    TELEGRAM_BOT_TOKEN = _secret_lookup("TELEGRAM_BOT_TOKEN")
+TELEGRAM_ALLOWED_USER_IDS = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
+
 # Coding agent for run_coding_agent: "codex", "claude", or "auto".
 CODING_AGENT = os.getenv("JARVIS_CODING_AGENT", "auto").strip().lower()
 CODEX_MODEL = os.getenv("CODEX_MODEL", "")
