@@ -19,9 +19,9 @@ from pydantic import BaseModel
 
 from jarvis.config import settings
 from jarvis.core import (
-    anthropic_batch,
     app_lifecycle,
     auth,
+    batch,
     calendar_accounts,
     calendar_oauth,
     cost_tracker,
@@ -1931,32 +1931,35 @@ async def delete_feedback(feedback_id: str):
     return {"status": "deleted"}
 
 
-@app.post("/anthropic/batches", dependencies=[Depends(require_auth)])
-async def create_anthropic_batch(request: BatchRequest):
-    """Create an Anthropic Message Batch for non-urgent work."""
+@app.post("/batches", dependencies=[Depends(require_auth)])
+@app.post("/anthropic/batches", dependencies=[Depends(require_auth)], include_in_schema=False)
+async def create_batch(request: BatchRequest):
+    """Create a Batch API job (50% cheaper) on the active provider for non-urgent work."""
     if not request.prompts:
         return JSONResponse(status_code=400, content={"error": "At least one prompt is required."})
     try:
-        return await anthropic_batch.create_batch(request.prompts, tier=request.tier)
+        return await batch.create_batch(request.prompts, tier=request.tier)
     except Exception as exc:
         logger.warning("Batch creation failed: %s", exc)
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
-@app.get("/anthropic/batches/{batch_id}", dependencies=[Depends(require_auth)])
-async def get_anthropic_batch(batch_id: str):
-    """Get Anthropic Message Batch status."""
+@app.get("/batches/{batch_id}", dependencies=[Depends(require_auth)])
+@app.get("/anthropic/batches/{batch_id}", dependencies=[Depends(require_auth)], include_in_schema=False)
+async def get_batch(batch_id: str):
+    """Get batch status."""
     try:
-        return await anthropic_batch.get_batch(batch_id)
+        return await batch.get_batch(batch_id)
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
-@app.post("/anthropic/batches/{batch_id}/cancel", dependencies=[Depends(require_auth)])
-async def cancel_anthropic_batch(batch_id: str):
-    """Cancel an Anthropic Message Batch."""
+@app.post("/batches/{batch_id}/cancel", dependencies=[Depends(require_auth)])
+@app.post("/anthropic/batches/{batch_id}/cancel", dependencies=[Depends(require_auth)], include_in_schema=False)
+async def cancel_batch(batch_id: str):
+    """Cancel a batch."""
     try:
-        return await anthropic_batch.cancel_batch(batch_id)
+        return await batch.cancel_batch(batch_id)
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -2102,18 +2105,22 @@ async def set_privacy_mode(request: PrivacyRequest):
 @app.get("/models", dependencies=[Depends(require_auth)])
 async def models():
     """Get available model tiers and their configuration."""
-    from jarvis.core.llm import TIER_CONFIG
+    from jarvis.core.providers import tier_specs
+
     return {
         "active_backend": brain.llm.active_backend,
+        "provider": settings.LLM_PROVIDER,
         "tiers": {
             tier: {
-                "model": config["model"],
-                "max_tokens": config["max_tokens"],
-                "temperature": config["temperature"],
+                "model": spec.model,
+                "max_tokens": spec.max_output_tokens,
+                "effort": spec.effort,
+                "temperature": spec.temperature,
             }
-            for tier, config in TIER_CONFIG.items()
+            for tier, spec in tier_specs().items()
         },
         "ollama_model": settings.OLLAMA_MODEL,
+        "prefer_cloud": settings.PREFER_CLAUDE,
         "prefer_claude": settings.PREFER_CLAUDE,
     }
 
