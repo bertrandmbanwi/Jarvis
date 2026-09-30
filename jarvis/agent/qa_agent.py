@@ -11,11 +11,10 @@ Architecture:
     verify_and_retry combines both for a full verification/retry flow
 """
 import asyncio
-import json
 import logging
-import re
 from dataclasses import dataclass
 
+from jarvis.agent.schemas import QA_SCHEMA
 from jarvis.core.llm import JarvisLLM
 
 logger = logging.getLogger("jarvis.qa")
@@ -32,6 +31,9 @@ class QAResult:
     issues: list[str]
     summary: str
     attempt: int
+    # False when no real verdict was obtained (timeout, error, unparseable reply).
+    # An inconclusive result must not trigger a retry.
+    conclusive: bool = True
 
 
 class QAAgent:
@@ -51,8 +53,7 @@ class QAAgent:
             "because JARVIS outputs are read aloud.\n"
             "</instructions>\n"
             "<response_format>\n"
-            "Respond in JSON format only:\n"
-            '{"passed": true/false, "issues": ["issue1", "issue2"], "summary": "brief verdict"}\n'
+            "Set passed, list any issues, and give a brief summary verdict.\n"
             "</response_format>"
         )
 
@@ -96,18 +97,16 @@ class QAAgent:
             f"Task requirement:\n{task_prompt}\n\n"
             f"Task output:\n{task_result}\n\n"
             f"Please verify if this output fully satisfies the requirement. "
-            f"Check for completeness, correctness, and quality. "
-            f"Respond with JSON only."
+            f"Check for completeness, correctness, and quality."
         )
 
         try:
-            response = await asyncio.wait_for(
-                llm.chat(
-                    user_message=verification_prompt,
-                    system_prompt_override=self.verification_system_prompt,
+            data = await asyncio.wait_for(
+                llm.chat_json(
+                    verification_prompt,
+                    QA_SCHEMA,
                     tier=qa_tier,
-                    max_tokens_override=500,
-                    temperature_override=0.1,
+                    system_prompt_override=self.verification_system_prompt,
                 ),
                 timeout=VERIFY_TIMEOUT,
             )
@@ -118,6 +117,7 @@ class QAAgent:
                 issues=["Verification timeout; retrying task"],
                 summary="Verification process exceeded time limit",
                 attempt=1,
+                conclusive=False,
             )
         except Exception as e:
             logger.error("QA verification failed: %s", e)
@@ -126,9 +126,10 @@ class QAAgent:
                 issues=[f"Verification error: {str(e)}"],
                 summary="QA system encountered an error",
                 attempt=1,
+                conclusive=False,
             )
 
-        return self._parse_qa_response(response)
+        return self._result_from(data)
 
     async def auto_retry(
         self,
@@ -306,52 +307,22 @@ class QAAgent:
             f"This is attempt {attempt} of {MAX_RETRIES}."
         )
 
-    def _parse_qa_response(self, response: str) -> QAResult:
-        """
-        Parse Claude's JSON verification response.
-
-        Args:
-            response: Raw response from Claude
-
-        Returns:
-            QAResult dataclass
-
-        Handles markdown code fences and JSON parsing errors gracefully.
-        """
-        try:
-            cleaned = response.strip()
-
-            if "```json" in cleaned:
-                match = re.search(r"```json\s*(.*?)\s*```", cleaned, re.DOTALL)
-                if match:
-                    cleaned = match.group(1)
-            elif "```" in cleaned:
-                match = re.search(r"```\s*(.*?)\s*```", cleaned, re.DOTALL)
-                if match:
-                    cleaned = match.group(1)
-
-            data = json.loads(cleaned)
-
-            return QAResult(
-                passed=bool(data.get("passed", False)),
-                issues=data.get("issues", []),
-                summary=data.get("summary", "No summary provided"),
-                attempt=1,
-            )
-
-        except json.JSONDecodeError as e:
-            logger.warning("Failed to parse QA JSON response: %s. Raw: %s", e, response[:200])
+    @staticmethod
+    def _result_from(data: dict | None) -> QAResult:
+        """Build a QAResult from the structured verdict; None means no verdict was obtained."""
+        if not data:
+            logger.warning("QA verification returned no valid verdict.")
             return QAResult(
                 passed=False,
                 issues=["QA response was not valid JSON"],
                 summary="Verification result unclear; retry or manual review required",
                 attempt=1,
+                conclusive=False,
             )
-        except Exception as e:
-            logger.error("Unexpected error parsing QA response: %s", e)
-            return QAResult(
-                passed=False,
-                issues=[f"Parsing error: {str(e)}"],
-                summary="Unable to parse verification result",
-                attempt=1,
-            )
+        issues = data.get("issues", [])
+        return QAResult(
+            passed=bool(data.get("passed", False)),
+            issues=[str(i) for i in issues] if isinstance(issues, list) else [],
+            summary=str(data.get("summary", "No summary provided")),
+            attempt=1,
+        )

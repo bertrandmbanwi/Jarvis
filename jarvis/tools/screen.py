@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 from jarvis.config import settings
@@ -147,7 +148,7 @@ async def _ocr_with_tesseract(image_path: str) -> str | None:
 async def analyze_screen(question: str | None = None) -> str:
     """Capture the screen and analyze it with Claude's vision API.
 
-    Takes a screenshot, sends it to Claude with the optional question,
+    Takes a screenshot, sends it to the vision model with the optional question,
     and returns a natural language description of what's on screen.
     If no question is provided, gives a general summary.
     """
@@ -164,56 +165,27 @@ async def analyze_screen(question: str | None = None) -> str:
 
         prompt = question or "Describe what you see on the screen. Focus on the active application, any important content, and what the user appears to be working on."
 
-        if not settings.ANTHROPIC_API_KEY:
-            return "Vision analysis unavailable: Claude API not configured."
+        from jarvis.core.hardening import cloud_circuit
+        from jarvis.core.providers import build_provider, vision_spec
 
-        from jarvis.core.hardening import API_RETRY_POLICY, claude_circuit, retry_with_backoff
-        from jarvis.core.llm import _get_anthropic_client
+        provider = build_provider()
+        if not provider.is_configured():
+            return "Vision analysis unavailable: no cloud model API key is configured."
+        if not cloud_circuit.allow_request():
+            return "Vision analysis unavailable: the cloud model is temporarily unavailable."
 
-        if not claude_circuit.allow_request():
-            return "Vision analysis unavailable: Claude API is temporarily unavailable."
-
-        client = _get_anthropic_client()
-        if client is None:
-            return "Vision analysis unavailable: Claude API not configured."
-
-        async def _make_request():
-            return await client.messages.create(
-                model=settings.CLAUDE_FAST_MODEL,
-                max_tokens=300,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "image/png",
-                                    "data": image_b64,
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": prompt,
-                            },
-                        ],
-                    }
-                ],
-            )
-
+        spec = vision_spec()
+        start = time.time()
         try:
-            response = await retry_with_backoff(
-                _make_request, policy=API_RETRY_POLICY, context="screen analysis"
+            text, usage = await provider.describe_image(
+                image_b64=image_b64, media_type="image/png", prompt=prompt, spec=spec
             )
-            claude_circuit.record_success()
+            cloud_circuit.record_success()
         except Exception:
-            claude_circuit.record_failure()
+            cloud_circuit.record_failure()
             raise
-
-        if response.content and len(response.content) > 0:
-            return str(getattr(response.content[0], "text", ""))
-        return "I captured the screen but couldn't analyze it."
+        _log_vision_cost(usage, time.time() - start)
+        return text or "I captured the screen but couldn't analyze it."
 
     except Exception as e:
         logger.error("Screen analysis failed: %s", e)
@@ -221,6 +193,21 @@ async def analyze_screen(question: str | None = None) -> str:
     finally:
         with contextlib.suppress(Exception):
             Path(screenshot_path).unlink()
+
+
+def _log_vision_cost(usage, elapsed: float) -> None:
+    try:
+        from jarvis.core.cost_tracker import log_request
+
+        log_request(
+            model=usage.model, tier="vision",
+            input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+            cache_read_tokens=usage.cache_read_tokens, cache_creation_tokens=usage.cache_write_tokens,
+            cost_usd=usage.cost(settings.MODEL_PRICING.get(usage.model, {})),
+            elapsed_seconds=elapsed, user_input_preview="",
+        )
+    except Exception as exc:
+        logger.debug("Vision cost log failed: %s", exc)
 
 
 async def get_screen_size() -> str:

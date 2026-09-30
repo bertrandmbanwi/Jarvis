@@ -11,7 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from jarvis.agent import coordinator, tool_selector  # noqa: E402
 from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS  # noqa: E402
+from jarvis.core import cache, hardening  # noqa: E402
 from jarvis.core.permissions import TOOL_PERMISSIONS, get_tool_permission  # noqa: E402
 
 
@@ -71,6 +73,32 @@ def validate_tool_contracts() -> list[str]:
     if missing_explicit_permissions:
         errors.append("missing explicit permissions: " + ", ".join(missing_explicit_permissions))
 
+    errors.extend(_referenced_tool_errors())
+    return errors
+
+
+def _referenced_tool_errors() -> list[str]:
+    """Every tool named in a side table must exist, and every tool must be selectable."""
+    known = set(TOOL_REGISTRY)
+    references = {
+        "cache.TOOL_CACHE_TTLS": set(cache.TOOL_CACHE_TTLS),
+        "cache.UNCACHEABLE_TOOLS": set(cache.UNCACHEABLE_TOOLS),
+        "cache.INVALIDATION_MAP": set(cache.INVALIDATION_MAP)
+        | {t for targets in cache.INVALIDATION_MAP.values() for t in targets},
+        "hardening.TOOL_TIMEOUTS": set(hardening.TOOL_TIMEOUTS),
+        "permissions.TOOL_PERMISSIONS": set(TOOL_PERMISSIONS),
+        "coordinator._AGENT_TOOLS": {t for tools in coordinator._AGENT_TOOLS.values() for t in tools},
+        "tool_selector.TOOL_GROUPS": {t for tools in tool_selector.TOOL_GROUPS.values() for t in tools},
+        "tool_selector.COMMON_TOOLS": set(tool_selector.COMMON_TOOLS),
+    }
+    errors = [
+        f"{table} names unknown tool(s): {', '.join(sorted(names - known))}"
+        for table, names in references.items()
+        if names - known
+    ]
+    selectable = references["tool_selector.TOOL_GROUPS"] | references["tool_selector.COMMON_TOOLS"]
+    if known - selectable:
+        errors.append("tools no keyword group can select: " + ", ".join(sorted(known - selectable)))
     return errors
 
 

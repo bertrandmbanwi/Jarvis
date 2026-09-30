@@ -18,6 +18,7 @@ def mock_llm():
     """Create a mock LLM for testing."""
     llm = AsyncMock()
     llm.chat = AsyncMock(return_value='{"needs_decomposition": false}')
+    llm.chat_json = AsyncMock(return_value={"needs_decomposition": False, "reason": "", "goal_summary": "", "subtasks": []})
     return llm
 
 

@@ -18,14 +18,13 @@ Complexity heuristics (checked BEFORE calling the LLM):
 If heuristics are ambiguous, the planner asks Claude (fast tier) to decide.
 This keeps costs low: simple requests never touch the planner LLM at all.
 """
-import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
-from jarvis.agent.ab_testing import ABTester
 from jarvis.agent.planning_session import PlanningSession, detect_planning_mode
+from jarvis.agent.schemas import COMPLEXITY_SCHEMA, PLAN_SCHEMA
 from jarvis.agent.task_tracker import TaskPlan, TaskTracker
 from jarvis.agent.templates import fill_template, get_template
 
@@ -94,22 +93,8 @@ Do NOT include greeting or sign-off subtasks. Focus on actions only.
 </mistakes_to_avoid>
 
 <response_format>
-Respond ONLY with valid JSON (no markdown, no code fences).
-
-Simple request:
-{{"needs_decomposition": false, "reason": "Single action request"}}
-
-Complex request:
-{{
-  "needs_decomposition": true,
-  "goal_summary": "Brief description of the overall goal",
-  "subtasks": [
-    {{
-      "title": "Short action title",
-      "description": "What to do in this step, including any context needed"
-    }}
-  ]
-}}
+For a simple request, set needs_decomposition to false, explain why in reason, and leave goal_summary empty and subtasks empty.
+For a complex request, set needs_decomposition to true, give a brief goal_summary, and list the subtasks in order.
 </response_format>
 """
 
@@ -119,7 +104,7 @@ or is it a single action? Consider whether different tools or actions are needed
 
 Request: "{request}"
 
-Respond with ONLY "simple" or "complex". Nothing else.
+Answer with the verdict "simple" or "complex".
 """
 
 
@@ -139,14 +124,6 @@ def _infer_template_task_type(text: str) -> str:
     if any(word in text_lower for word in ("feature", "add", "implement", "create")):
         return "feature"
     return "feature"
-
-
-def _ab_task_type_for(template_task_type: str) -> str:
-    """Map in-memory template names to versioned YAML template filenames."""
-    return {
-        "bug_fix": "fix",
-        "fullstack_app": "build",
-    }.get(template_task_type, template_task_type)
 
 
 def _has_sequence_markers(text: str) -> bool:
@@ -213,12 +190,6 @@ class TaskPlanner:
         self.llm = llm
         self.tracker: TaskTracker = TaskTracker()
         self._get_learning_context: Callable[[], str] | None = None
-        self._ab_tester: ABTester | None = None
-        try:
-            self._ab_tester = ABTester()
-            logger.info("A/B testing framework initialized for planner.")
-        except Exception as e:
-            logger.warning("A/B testing init failed (non-critical): %s", e)
         self._active_planning_session: PlanningSession | None = None
 
     async def should_decompose(self, user_input: str) -> bool:
@@ -237,8 +208,8 @@ class TaskPlanner:
 
         try:
             prompt = _COMPLEXITY_CHECK_PROMPT.format(request=user_input[:500])
-            response = await self.llm.chat(prompt, tier="fast")
-            is_complex = "complex" in response.lower()
+            data = await self.llm.chat_json(prompt, COMPLEXITY_SCHEMA, tier="fast")
+            is_complex = bool(data) and data.get("verdict") == "complex"
             logger.info(
                 "Decomposition LLM check: %s (input: '%s')",
                 "complex" if is_complex else "simple",
@@ -294,33 +265,15 @@ class TaskPlanner:
             except Exception as e:
                 logger.debug("Template selection failed (non-critical): %s", e)
 
-            # A/B testing: select template if available
-            experiment_id = None
-            experiment_template_version = ""
-            if self._ab_tester:
-                try:
-                    ab_task_type = _ab_task_type_for(_infer_template_task_type(user_input))
-                    template, selected_experiment_id = self._ab_tester.select_template(ab_task_type)
-                    if template:
-                        template_context = "\n\nTemplate guidance for this task:\n"
-                        for section in template.sections:
-                            heading = section.get("heading") or section.get("name") or "Section"
-                            template_context += f"\n## {heading}\n{section.get('content', '')}\n"
-                        system_prompt = system_prompt + template_context
-                        experiment_id = selected_experiment_id
-                        experiment_template_version = template.version
-                except Exception as e:
-                    logger.debug("Template selection failed (non-critical): %s", e)
-
-            response = await self.llm.chat(
-                user_message=user_input,
-                conversation_history=conversation_history,
-                system_prompt_override=system_prompt,
+            plan_data = await self.llm.chat_json(
+                user_input,
+                PLAN_SCHEMA,
                 tier="brain",
+                system_prompt_override=system_prompt,
+                conversation_history=conversation_history,
             )
-
-            plan_data = self._parse_plan_response(response)
             if not plan_data:
+                logger.warning("Planner returned no valid plan.")
                 return None
 
             if not plan_data.get("needs_decomposition", False):
@@ -350,10 +303,6 @@ class TaskPlanner:
                 subtasks=subtasks,
             )
 
-            if experiment_id:
-                plan._experiment_id = experiment_id
-                plan._experiment_template_version = experiment_template_version
-
             logger.info(
                 "Plan created: '%s' with %d subtasks.",
                 goal_summary, len(plan.subtasks),
@@ -363,30 +312,6 @@ class TaskPlanner:
         except Exception as e:
             logger.error("Planning failed: %s", e)
             return None
-
-    def _parse_plan_response(self, response: str) -> dict | None:
-        """Parse the planner's JSON response, handling markdown code fences."""
-        text = response.strip()
-
-        if text.startswith("```"):
-            text = re.sub(r'^```(?:json)?\s*\n?', '', text)
-            text = re.sub(r'\n?```\s*$', '', text)
-            text = text.strip()
-
-        try:
-            return cast(dict[str, Any], json.loads(text))
-        except json.JSONDecodeError:
-            pass
-
-        match = re.search(r'\{[\s\S]*\}', text)
-        if match:
-            try:
-                return cast(dict[str, Any], json.loads(match.group()))
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning("Could not parse planner response as JSON: %s", text[:200])
-        return None
 
     def get_active_plan(self) -> TaskPlan | None:
         """Get the currently active plan, if any."""
@@ -411,14 +336,3 @@ class TaskPlanner:
             logger.debug("Planning mode detection failed: %s", e)
         return None
 
-    def record_experiment_outcome(self, plan, success: bool):
-        """Record the outcome of an A/B tested plan."""
-        if self._ab_tester and hasattr(plan, '_experiment_id') and plan._experiment_id:
-            try:
-                self._ab_tester.record_result(
-                    plan._experiment_id,
-                    getattr(plan, "_experiment_template_version", ""),
-                    success,
-                )
-            except Exception as e:
-                logger.debug("A/B result recording failed: %s", e)

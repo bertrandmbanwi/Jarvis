@@ -8,8 +8,15 @@ import {
 import { getApiBaseUrl, getWsUrl, jarvisHeaders } from "@/lib/apiBase";
 
 const JARVIS_WS_URL = getWsUrl();
-const RECONNECT_DELAY_MS = 3000;
+const RECONNECT_DELAY_MS = 1000;
+const MAX_RECONNECT_DELAY_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+
+/** Exponential backoff with jitter: 1s, 2s, 4s ... capped at 30s, randomized by up to 50%. */
+export function reconnectDelay(attempt: number): number {
+  const base = Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS * 2 ** Math.max(0, attempt - 1));
+  return Math.round(base * (0.5 + Math.random() * 0.5));
+}
 
 let _audioCtx: AudioContext | null = null;
 let _audioEl: HTMLAudioElement | null = null;
@@ -207,9 +214,16 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
   const reconnectAttempts = useRef(0);
   const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
   const currentStreamRef = useRef<string>("");
+  // Messages typed while disconnected; sent once the socket opens.
+  const outboxRef = useRef<string[]>([]);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    const current = wsRef.current;
+    if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+    if (reconnectTimeout.current) {
+      clearTimeout(reconnectTimeout.current);
+      reconnectTimeout.current = null;
+    }
 
     setStatus("connecting");
 
@@ -238,6 +252,10 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
           },
         }));
         console.log("[JARVIS WS] Sent client registration:", deviceInfo);
+
+        for (const queued of outboxRef.current.splice(0)) {
+          ws.send(JSON.stringify({ message: queued }));
+        }
       };
 
       ws.onmessage = (event) => {
@@ -712,14 +730,16 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
       };
 
       ws.onclose = () => {
+        // A replaced or deliberately closed socket must not reconnect: with a
+        // stale closure it would open a second socket with an old token.
+        if (wsRef.current !== ws) return;
         setStatus("disconnected");
         wsRef.current = null;
         console.log("[JARVIS WS] Disconnected");
 
-        // Auto-reconnect
         if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
           reconnectAttempts.current += 1;
-          const delay = RECONNECT_DELAY_MS * Math.min(reconnectAttempts.current, 5);
+          const delay = reconnectDelay(reconnectAttempts.current);
           console.log(`[JARVIS WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current})`);
           reconnectTimeout.current = setTimeout(connect, delay);
         }
@@ -739,21 +759,30 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
   useEffect(() => {
     connect();
 
+    // After giving up, try again when the network returns or the tab is shown.
+    const retry = () => {
+      if (document.visibilityState === "hidden") return;
+      reconnectAttempts.current = 0;
+      connect();
+    };
+    window.addEventListener("online", retry);
+    document.addEventListener("visibilitychange", retry);
+
     return () => {
+      window.removeEventListener("online", retry);
+      document.removeEventListener("visibilitychange", retry);
       if (reconnectTimeout.current) {
         clearTimeout(reconnectTimeout.current);
+        reconnectTimeout.current = null;
       }
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      const ws = wsRef.current;
+      wsRef.current = null; // makes this socket's onclose a no-op
+      ws?.close();
     };
   }, [connect]);
 
   const sendMessage = useCallback((text: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.error("[JARVIS WS] Cannot send: not connected");
-      return;
-    }
+    const connected = wsRef.current?.readyState === WebSocket.OPEN;
 
     // Add user message
     const userMsg: ChatMessage = {
@@ -777,8 +806,15 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
     setIsStreaming(false);
     currentStreamRef.current = "";
 
-    wsRef.current.send(JSON.stringify({ message: text }));
-  }, []);
+    if (connected && wsRef.current) {
+      wsRef.current.send(JSON.stringify({ message: text }));
+    } else {
+      // Queue it and reconnect now instead of silently dropping the message.
+      outboxRef.current.push(text);
+      reconnectAttempts.current = 0;
+      connect();
+    }
+  }, [connect]);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
@@ -819,15 +855,33 @@ export function useJarvisWebSocket(authToken?: string | null): UseJarvisWebSocke
   }, []);
 
   const respondToConfirmation = useCallback((id: string, approved: boolean) => {
-    // Remove the prompt optimistically; the server is the source of truth.
-    setPendingConfirmations((prev) => prev.filter((c) => c.id !== id));
+    // Remove the prompt optimistically, but put it back if the answer didn't
+    // reach the server, so the user can try again before it times out.
+    let removed: PendingConfirmation | undefined;
+    setPendingConfirmations((prev) => {
+      removed = prev.find((c) => c.id === id);
+      return prev.filter((c) => c.id !== id);
+    });
+    const restore = () => {
+      if (removed) {
+        const item = removed;
+        setPendingConfirmations((prev) => (prev.some((c) => c.id === id) ? prev : [...prev, item]));
+      }
+    };
     const url = `${getApiBaseUrl()}/tools/confirm`;
     const headers = jarvisHeaders(authToken, true);
     fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify({ action_id: id, approved }),
-    }).catch((e) => console.warn("[JARVIS WS] Confirmation response failed:", e));
+    })
+      .then((res) => {
+        if (!res.ok) restore();
+      })
+      .catch((e) => {
+        console.warn("[JARVIS WS] Confirmation response failed:", e);
+        restore();
+      });
   }, [authToken]);
 
   return {

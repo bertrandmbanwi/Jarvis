@@ -162,7 +162,7 @@ TOOL_PERMISSIONS: dict[str, ToolPermission] = {
         requires_confirmation=True,
         reason="Delegates shell execution to Claude Code.",
     ),
-    "run_claude_code": _perm(Capability.SHELL, Capability.WRITE_LOCAL, risk=RiskLevel.CRITICAL),
+    "run_coding_agent": _perm(Capability.SHELL, Capability.WRITE_LOCAL, risk=RiskLevel.CRITICAL),
     "scaffold_project": _perm(Capability.SHELL, Capability.WRITE_LOCAL, risk=RiskLevel.HIGH),
     # Web and external APIs
     "search_web": _perm(Capability.EXTERNAL_NETWORK),
@@ -184,6 +184,8 @@ TOOL_PERMISSIONS: dict[str, ToolPermission] = {
     "fetch_page_links": _perm(Capability.EXTERNAL_NETWORK),
     # Profile, memory, learning
     "get_user_profile": _perm(Capability.MEMORY, Capability.READ_LOCAL),
+    "use_skill": _perm(Capability.READ_LOCAL),
+    "read_skill_file": _perm(Capability.READ_LOCAL),
     "update_user_profile": _perm(Capability.MEMORY, Capability.WRITE_LOCAL, risk=RiskLevel.MEDIUM),
     "get_user_preference": _perm(Capability.MEMORY, Capability.READ_LOCAL),
     "add_user_note": _perm(Capability.MEMORY, Capability.WRITE_LOCAL, risk=RiskLevel.MEDIUM),
@@ -240,6 +242,28 @@ def get_tool_permission(tool_name: str) -> ToolPermission:
     if tool_name.startswith("get_") or tool_name.startswith("search_") or tool_name.startswith("read_"):
         return _perm(Capability.READ_LOCAL)
     return _perm(Capability.OBSERVATION, risk=RiskLevel.MEDIUM, reason="Permission inferred from tool name.")
+
+
+_SIDE_EFFECT_CAPABILITIES = frozenset({
+    Capability.WRITE_LOCAL,
+    Capability.SYSTEM_CONTROL,
+    Capability.SHELL,
+    Capability.BROWSER,
+    Capability.MEMORY,
+})
+
+
+def is_side_effect_free(tool_name: str) -> bool:
+    """True if running the tool again cannot change anything (safe to repeat).
+
+    Communication tools only qualify when they read (``READ_LOCAL``); a bare
+    ``COMMUNICATION`` capability means sending.
+    """
+    permission = get_tool_permission(tool_name)
+    caps = permission.capabilities
+    if permission.requires_confirmation or caps & _SIDE_EFFECT_CAPABILITIES:
+        return False
+    return Capability.COMMUNICATION not in caps or Capability.READ_LOCAL in caps
 
 
 def _permission_mode() -> str:

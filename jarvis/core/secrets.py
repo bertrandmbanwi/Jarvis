@@ -10,6 +10,8 @@ logger = logging.getLogger("jarvis.secrets")
 SERVICE_NAME = "com.jarvis.assistant"
 SUPPORTED_SECRETS = {
     "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
     "GOOGLE_CALENDAR_CLIENT_SECRET",
     "GOOGLE_CALENDAR_TOKEN",
     "OUTLOOK_CALENDAR_CLIENT_SECRET",
