@@ -7,7 +7,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from jarvis.core import (
     cost_tracker,
     feedback,
     jobs,
+    notify,
     pending_actions,
     routines,
     workflow_scheduler,
@@ -70,6 +71,7 @@ EMPTY_CHUNK = ""
 # Voice components set by run_full for browser TTS triggering
 _speaker = None
 _listener = None
+_mcp_manager: Any = None
 
 # Desktop overlay WebSocket clients (lightweight, no auth required for localhost)
 _overlay_clients: list[WebSocket] = []
@@ -564,18 +566,42 @@ async def lifespan(app: FastAPI):
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
     # Let the executor ask connected clients to approve high-risk tool calls.
     pending_actions.add_notifier(ws_manager.broadcast_json)
+    from jarvis.core.mcp_client import MCPManager
+
+    global _mcp_manager
+    _mcp_manager = MCPManager()
+    try:
+        await _mcp_manager.start()
+    except Exception as exc:
+        logger.warning("MCP startup failed: %s", exc)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
+    routine_task = asyncio.create_task(_routine_scheduler_loop())
+    telegram_task = None
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ALLOWED_USER_IDS:
+        from jarvis.channels.telegram import TelegramBridge
+
+        telegram_task = asyncio.create_task(
+            TelegramBridge(settings.TELEGRAM_BOT_TOKEN, runner=brain.process).run(), name="telegram"
+        )
 
     yield
 
     pending_actions.remove_notifier(ws_manager.broadcast_json)
     cleanup_task.cancel()
     scheduler_task.cancel()
+    routine_task.cancel()
+    if telegram_task is not None:
+        telegram_task.cancel()
     with suppress(asyncio.CancelledError):
         await cleanup_task
     with suppress(asyncio.CancelledError):
         await scheduler_task
+    with suppress(asyncio.CancelledError):
+        await routine_task
+    if _mcp_manager is not None:
+        with suppress(Exception):
+            await _mcp_manager.close()
     with suppress(Exception):
         await asyncio.wait_for(brain.shutdown(), timeout=5)
     logger.info("JARVIS server shut down.")
@@ -815,6 +841,35 @@ async def _workflow_scheduler_loop():
             logger.error("Workflow scheduler tick failed: %s", exc)
 
 
+async def run_scheduled_routine(routine: dict) -> str:
+    """Run one scheduled routine and deliver the result to the UI, voice, and channels."""
+    routines.mark_routine_run(routine["id"])
+    logger.info("Running scheduled routine: %s", routine.get("name"))
+    response = await brain.process(str(routine.get("prompt", "")))
+    await ws_manager.broadcast_json({
+        "routine_result": {"id": routine["id"], "name": routine.get("name"), "response": response}
+    })
+    await notify.notify(f"{routine.get('name')}: {response}")
+    if routine.get("speak") and _speaker:
+        try:
+            await _speaker.speak(response)
+        except Exception as exc:
+            logger.warning("Speaking routine result failed: %s", exc)
+    return response
+
+
+async def _routine_scheduler_loop():
+    while True:
+        await asyncio.sleep(30)
+        if not settings.ROUTINE_SCHEDULER_ENABLED:
+            continue
+        try:
+            for routine in routines.due_routines():
+                await run_scheduled_routine(routine)
+        except Exception as exc:
+            logger.error("Routine scheduler tick failed: %s", exc)
+
+
 # ============================================================
 # Request/Response Models
 # ============================================================
@@ -975,12 +1030,19 @@ async def create_routine(request: RoutineRequest):
     """Create a repeatable routine."""
     if not request.name.strip() or not request.prompt.strip():
         return JSONResponse(status_code=400, content={"error": "Name and prompt are required."})
-    return routines.create_routine(request.name, request.prompt, request.enabled, request.tags)
+    if not routines.valid_schedule(request.schedule_time, request.schedule_days):
+        return JSONResponse(status_code=400, content={"error": "schedule_time must be HH:MM; days mon..sun."})
+    return routines.create_routine(
+        request.name, request.prompt, request.enabled, request.tags,
+        request.schedule_time, request.schedule_days, request.speak,
+    )
 
 
 @app.put("/routines/{routine_id}", dependencies=[Depends(require_auth)])
 async def update_routine(routine_id: str, request: RoutineRequest):
     """Update a routine."""
+    if not routines.valid_schedule(request.schedule_time, request.schedule_days):
+        return JSONResponse(status_code=400, content={"error": "schedule_time must be HH:MM; days mon..sun."})
     routine = routines.update_routine(
         routine_id,
         {
@@ -988,6 +1050,9 @@ async def update_routine(routine_id: str, request: RoutineRequest):
             "prompt": request.prompt.strip(),
             "enabled": request.enabled,
             "tags": request.tags,
+            "schedule_time": request.schedule_time,
+            "schedule_days": request.schedule_days,
+            "speak": request.speak,
         },
     )
     if routine is None:
@@ -1215,6 +1280,14 @@ async def set_privacy_mode(request: PrivacyRequest):
     """Enable or disable runtime privacy mode."""
     brain._privacy_mode = request.enabled
     return {"enabled": brain._privacy_mode}
+
+
+@app.get("/mcp/status", dependencies=[Depends(require_auth)])
+async def mcp_status():
+    """Connected MCP servers and the tools they contributed."""
+    if _mcp_manager is None:
+        return {"servers": [], "tools": [], "errors": {}}
+    return _mcp_manager.status()
 
 
 @app.get("/models", dependencies=[Depends(require_auth)])

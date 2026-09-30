@@ -13,7 +13,7 @@ from jarvis.agent import coordinator as _coordinator_module
 from jarvis.agent import learning as _learning_module
 from jarvis.agent import planner as _planner_module
 from jarvis.core import proactive as _proactive_module
-from jarvis.core import profile
+from jarvis.core import profile, skills
 from jarvis.tools import (
     browser_agent,
     calendar_email,
@@ -2381,6 +2381,31 @@ TOOL_SCHEMAS = [
             "required": [],
         },
     },
+    # ---- Agent Skills ----
+    {
+        "name": "use_skill",
+        "description": (
+            "Load the full instructions of a skill listed in <skills> in your instructions. "
+            "Call this before starting a task that a skill covers, then follow the instructions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "Skill name exactly as listed."}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "read_skill_file",
+        "description": "Read a reference file bundled with a skill (names are listed by use_skill).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Skill name."},
+                "path": {"type": "string", "description": "File path relative to the skill folder."},
+            },
+            "required": ["name", "path"],
+        },
+    },
 ]
 
 
@@ -2465,6 +2490,8 @@ TOOL_REGISTRY = {
     "chrome_extension_status": _chrome_extension_status,
     # User Profile
     "get_user_profile": profile.get_user_profile,
+    "use_skill": skills.use_skill,
+    "read_skill_file": skills.read_skill_file,
     "update_user_profile": profile.update_user_profile,
     "get_user_preference": profile.get_user_preference,
     "add_user_note": profile.add_user_note,
