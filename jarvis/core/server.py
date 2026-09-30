@@ -577,6 +577,13 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
     routine_task = asyncio.create_task(_routine_scheduler_loop())
+    telegram_task = None
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ALLOWED_USER_IDS:
+        from jarvis.channels.telegram import TelegramBridge
+
+        telegram_task = asyncio.create_task(
+            TelegramBridge(settings.TELEGRAM_BOT_TOKEN, runner=brain.process).run(), name="telegram"
+        )
 
     yield
 
@@ -584,6 +591,8 @@ async def lifespan(app: FastAPI):
     cleanup_task.cancel()
     scheduler_task.cancel()
     routine_task.cancel()
+    if telegram_task is not None:
+        telegram_task.cancel()
     with suppress(asyncio.CancelledError):
         await cleanup_task
     with suppress(asyncio.CancelledError):
