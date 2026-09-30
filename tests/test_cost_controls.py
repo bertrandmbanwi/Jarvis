@@ -195,3 +195,31 @@ def test_track_usage_redacts_preview_in_privacy_mode(monkeypatch):
     llm.privacy_mode = True
     llm._track_usage(Usage(model="gpt-6-luna", input_tokens=1, output_tokens=1), "brain", 0.1, "my secret prompt")
     assert logged["user_input_preview"] == ""
+
+
+def test_tool_selector_uses_recent_history_for_follow_ups():
+    history = [
+        {"role": "user", "content": "Draft an email to Sam about Friday"},
+        {"role": "assistant", "content": "Here is the draft email. Should I send it?"},
+    ]
+    names = {t["name"] for t in select_tools_for_request("yes, send it", TOOL_SCHEMAS, history)}
+    assert "send_email" in names
+
+
+def test_tool_selector_matches_whole_words_only():
+    names = {t["name"] for t in select_tools_for_request("help me solve this method", TOOL_SCHEMAS)}
+    assert "get_crypto_price" not in names
+
+
+def test_deferred_loading_is_stable_and_keeps_core_tools_loaded():
+    from jarvis.agent.tool_selector import COMMON_TOOLS, with_deferred_loading
+
+    first = with_deferred_loading(TOOL_SCHEMAS)
+    assert first == with_deferred_loading(TOOL_SCHEMAS)  # identical every request -> cacheable
+    assert [t["name"] for t in first] == [t["name"] for t in TOOL_SCHEMAS]
+    loaded = {t["name"] for t in first if not t.get("defer_loading")}
+    assert loaded == COMMON_TOOLS & {t["name"] for t in TOOL_SCHEMAS}
+    assert "defer_loading" not in TOOL_SCHEMAS[0]  # input not mutated
+
+    subset = [t for t in TOOL_SCHEMAS if t["name"] not in COMMON_TOOLS][:5]
+    assert any(not t.get("defer_loading") for t in with_deferred_loading(subset))
