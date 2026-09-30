@@ -170,6 +170,31 @@ class AgentExecutor:
 
         return response_text
 
+    async def execute_stream(
+        self,
+        user_input: str,
+        conversation_history: list[dict] | None = None,
+        tier: str = "brain",
+        tools: list[dict] | None = None,
+        system_prompt_override: str | None = None,
+    ):
+        """Like execute(), but yields the answer as it is written.
+
+        There is no QA pass here: text already shown can't be replaced by a
+        corrected answer. Voice and background requests use execute().
+        """
+        logger.info("Agent executing (streaming, tier=%s): '%s'", tier, user_input[:100])
+        async for token in self.llm.chat_with_tools_stream(
+            user_message=user_input,
+            tools=self._tools_for(user_input, conversation_history, tools),
+            tool_executor=self._execute_tool,
+            conversation_history=conversation_history,
+            tier=tier,
+            max_iterations=10,
+            system_prompt_override=system_prompt_override,
+        ):
+            yield token
+
     async def execute_subtask(
         self,
         subtask_description: str,

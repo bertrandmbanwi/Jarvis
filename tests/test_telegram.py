@@ -55,10 +55,9 @@ async def test_approval_buttons_resolve_pending_actions(bridge, monkeypatch):
     b, fake, _ = bridge
     resolved = []
     monkeypatch.setattr(pending_actions, "resolve", lambda action_id, approved: resolved.append((action_id, approved)) or True)
-    await b.confirmation_notifier({
-        "type": "confirmation_required",
-        "confirmation": {"id": "a1", "tool_name": "send_email", "risk": "high", "summary": "Email Sam"},
-    })
+    # Build the payload the way pending_actions does, so field names can't drift.
+    action = pending_actions.PendingAction(id="a1", tool_name="send_email", summary="Email Sam", risk="high", created_at=0.0)
+    await b.confirmation_notifier({"type": "confirmation_required", "confirmation": action.public()})
     method, params = fake.calls[-1]
     assert method == "sendMessage" and params["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "approve:a1"
 

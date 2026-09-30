@@ -100,7 +100,7 @@ class TelegramBridge:
             {"text": "Approve", "callback_data": f"approve:{action['id']}"},
             {"text": "Deny", "callback_data": f"deny:{action['id']}"},
         ]]}
-        text = f"JARVIS wants to run {action['tool_name']} ({action['risk']} risk):\n{action['summary']}"
+        text = f"JARVIS wants to run {action['tool']} ({action['risk']} risk):\n{action['summary']}"
         if self._owner is not None:
             await self.send(self._owner, text, reply_markup=keyboard)
 
