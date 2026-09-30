@@ -51,6 +51,24 @@ async def test_failed_qa_retry_only_offers_side_effect_free_tools(monkeypatch):
     assert "create_note: ok" in retry_kwargs["user_message"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("names", "qa_runs"),
+    [
+        (["get_weather"], False),
+        (["get_weather", "get_upcoming_events"], False),
+        (["get_weather", "get_weather", "get_weather"], True),
+        (["get_weather", "create_note"], True),
+    ],
+)
+async def test_qa_is_skipped_only_for_simple_read_only_lookups(monkeypatch, names, qa_runs):
+    monkeypatch.setattr("jarvis.agent.platform_tools.IS_MACOS", True)
+    executor, llm = _executor(QAResult(True, [], "", 1))
+    llm.chat_with_tools.return_value = ("Done.", [{"name": n, "input": {}, "result": "ok"} for n in names])
+    await executor.execute("what's the weather", tools=TOOLS)
+    assert executor._qa_agent.verify.await_count == (1 if qa_runs else 0)
+
+
 def test_missing_qa_verdict_is_inconclusive():
     assert QAAgent._result_from(None).conclusive is False
     result = QAAgent._result_from({"passed": False, "issues": ["x"], "summary": "bad"})
