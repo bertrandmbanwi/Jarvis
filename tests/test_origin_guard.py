@@ -66,3 +66,43 @@ def test_ws_from_foreign_origin_is_closed(client):
         ) as ws:
             ws.receive_json()
         assert exc.value.code == 4003, path
+
+
+# Headers the Next.js rewrite adds when the UI is opened on this machine.
+NEXT_PROXY_HEADERS = {"X-Forwarded-For": "127.0.0.1", "X-Forwarded-Host": "localhost:3000"}
+
+
+def test_next_proxied_local_request_is_local(client):
+    resp = client.get("/auth/status", headers={**NEXT_PROXY_HEADERS, "Origin": "http://localhost:3000"})
+    assert resp.json()["local"] is True
+
+
+def test_tunnel_request_stays_remote(client):
+    resp = client.get(
+        "/auth/status",
+        headers={
+            "X-Forwarded-For": "203.0.113.7, 127.0.0.1",
+            "CF-Connecting-IP": "203.0.113.7",
+            "X-Forwarded-Host": "my-tunnel.trycloudflare.com",
+            "Origin": "https://my-tunnel.trycloudflare.com",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["local"] is False
+
+
+def test_origin_guard_still_applies_to_next_proxied_local_request(client):
+    for origin in ("https://evil.example", "https://attacker.trycloudflare.com"):
+        resp = client.post(
+            "/chat", content=b'{"message":"hi"}', headers={**NEXT_PROXY_HEADERS, "Origin": origin}
+        )
+        assert resp.status_code == 403, origin
+        assert resp.json()["error"] == "Origin not allowed."
+
+
+def test_repeated_forwarded_for_header_cannot_hide_a_remote_hop(client):
+    resp = client.get(
+        "/auth/status",
+        headers=[("X-Forwarded-For", "127.0.0.1"), ("X-Forwarded-For", "203.0.113.7")],
+    )
+    assert resp.json()["local"] is False
