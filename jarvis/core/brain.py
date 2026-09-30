@@ -7,7 +7,6 @@ import uuid
 from contextvars import ContextVar
 
 from jarvis.agent.coordinator import AgentCoordinator, AgentType
-from jarvis.agent.evolution_pipeline import EvolutionPipeline
 from jarvis.agent.executor import AgentExecutor
 from jarvis.agent.learning import LearningLoop
 from jarvis.agent.planner import TaskPlanner
@@ -218,7 +217,6 @@ class JarvisBrain:
         self.dispatch: DispatchRegistry = DispatchRegistry()
         self.monitor: ConversationMonitor = ConversationMonitor()
         self.success_tracker: SuccessTracker = SuccessTracker()
-        self.evolution: EvolutionPipeline = EvolutionPipeline()
         self.conversation: list[ConversationTurn] = []
         self._privacy_mode = settings.PRIVACY_MODE_DEFAULT
         self._initialized = False
@@ -290,12 +288,7 @@ class JarvisBrain:
         self.learning.initialize()
         self.learning.backfill_from_plan_files()
 
-        # Success tracker and evolution pipeline are initialized in __init__
         logger.info("Success tracker ready (SQLite tables ensured).")
-        logger.info(
-            "Evolution pipeline ready (history: %d cycles).",
-            len(self.evolution._evolution_history),
-        )
 
         # Initialize SQLite conversation store (migrates legacy JSON automatically)
         init_conversation_store()
@@ -453,25 +446,14 @@ class JarvisBrain:
                 and not any(marker in response_lower for marker in failed_markers)
             )
             try:
-                self.planner.record_experiment_outcome(plan, task_succeeded)
-            except Exception as e:
-                logger.debug("Experiment tracking failed: %s", e)
-
-            # Record in success tracker and evolution pipeline
-            try:
                 self.success_tracker.log_task(
                     task_type="planned",
                     prompt="" if self._privacy_mode else user_input[:200],
                     success=task_succeeded,
                     duration_seconds=task_elapsed,
                 )
-                self.evolution.on_task_complete(
-                    task_type="planned",
-                    success=task_succeeded,
-                    duration=task_elapsed,
-                )
             except Exception as e:
-                logger.debug("Success/evolution tracking failed (non-critical): %s", e)
+                logger.debug("Success tracking failed (non-critical): %s", e)
 
             # Proactive follow-up suggestions: sync version first
             try:

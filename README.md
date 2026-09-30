@@ -53,7 +53,7 @@ A full Playwright-driven Chromium browser that JARVIS controls autonomously for 
 Complex requests are automatically decomposed into subtasks by the planner agent, then executed in parallel or sequence by specialized executor agents. The QA agent verifies task quality, and the UI shows real-time plan progress with per-subtask status.
 
 **Memory and Learning**
-SQLite-backed semantic memory with full-text search stores conversation context. JARVIS learns your implicit preferences, remembers explicit facts ("my dog's name is Max"), and improves its task planning based on past successes and failures. An evolution pipeline with A/B testing tracks performance across sessions, and a success tracker logs task outcomes for long-term analysis.
+SQLite-backed semantic memory with full-text search stores conversation context. JARVIS learns your implicit preferences, remembers explicit facts ("my dog's name is Max"), and improves its task planning based on past successes and failures. A success tracker logs task outcomes for long-term analysis.
 
 **Settings and Runtime Configuration**
 A REST API (`/api/settings`) and an in-UI Settings Panel let you adjust preferences at runtime: model tiers, cost alerts, TTS voice, and more. Non-secret changes persist to `.env`; API keys updated through the API are stored in the secure keyring backend, which maps to macOS Keychain on a normal Mac install.
@@ -68,7 +68,7 @@ Responses are automatically checked for quality issues: length limits for TTS, c
 Long-running coding sessions persist to disk and restore automatically on restart, so multi-step development tasks survive JARVIS restarts without losing context.
 
 **Structured Prompt Templates**
-Task-specific prompt templates (build, feature, fix, refactor, research) guide the planner with structured formats and safe defaults. Templates evolve over time based on task outcomes via A/B testing.
+Task-specific prompt templates (build, feature, fix, refactor, research) guide the planner with structured formats and safe defaults.
 
 **Multi-Device Audio Routing**
 Connect from your Mac, phone, and tablet simultaneously. Each device registers independently and audio is routed only to devices that want it. Interrupt JARVIS mid-sentence from any device.
@@ -140,8 +140,8 @@ For the full setup guide including environment variables, launch modes, mobile a
                                 |
                      +----------+----------+
                      |  Memory + Learning   |
-                     |  SQLite, Evolution,  |
-                     |  A/B Testing         |
+                     |  SQLite, facts,      |
+                     |  learning loop       |
                      +-----------------------+
 ```
 
