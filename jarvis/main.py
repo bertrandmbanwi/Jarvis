@@ -52,6 +52,7 @@ async def run_voice_mode():
     brain = JarvisBrain()
     listener = VoiceListener()
     speaker = VoiceSpeaker()
+    listener.on_barge_in = speaker.stop_speaking
 
     logger.info("Initializing JARVIS components...")
 
@@ -234,6 +235,7 @@ async def run_full():
         nonlocal listener_ref, speaker_ref
         listener = VoiceListener()
         speaker = VoiceSpeaker()
+        listener.on_barge_in = speaker.stop_speaking
         listener_ref = listener
         speaker_ref = speaker
 

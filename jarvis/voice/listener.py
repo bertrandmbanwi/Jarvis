@@ -11,6 +11,7 @@ import numpy as np
 from jarvis.config import settings
 from jarvis.core import profile
 from jarvis.core.local_router import is_probable_noise
+from jarvis.voice.vad import SpeechDetector
 
 logger = logging.getLogger("jarvis.voice.listener")
 
@@ -70,6 +71,10 @@ class VoiceListener:
         self._stt_engine: str = "none"  # "moonshine", "faster-whisper", "whisper", "none"
         self._is_listening = False
         self._is_speaking = False
+        self._vad = SpeechDetector()
+        self._barge_in_frames = 0
+        # Called when the user talks over JARVIS (set to the speaker's stop_speaking).
+        self.on_barge_in: Callable[[], None] | None = None
         self._in_followup_window = False
         self._followup_start = 0.0
         self._last_wake_time = 0.0
@@ -303,6 +308,8 @@ class VoiceListener:
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
 
                 if self._is_speaking:
+                    if await self._check_barge_in(audio_array):
+                        await self._capture_and_dispatch_speech("barge-in")
                     await asyncio.sleep(0.01)
                     continue
 
@@ -315,7 +322,7 @@ class VoiceListener:
 
                     amplitude = np.abs(audio_array).mean()
 
-                    if amplitude > settings.FOLLOWUP_SPEECH_SPIKE_THRESHOLD:
+                    if self._vad.is_speech(audio_array, settings.FOLLOWUP_SPEECH_SPIKE_THRESHOLD):
                         self._followup_sustained_frames += 1
                         self._followup_max_amplitude = max(self._followup_max_amplitude, amplitude)
                     else:
@@ -406,6 +413,22 @@ class VoiceListener:
             logger.warning("Failed to build transcription hints: %s", e)
             return None, None
 
+    async def _check_barge_in(self, audio_chunk: np.ndarray) -> bool:
+        """While JARVIS speaks, stop playback when the user starts talking (opt-in)."""
+        if not settings.BARGE_IN_ENABLED or self.on_barge_in is None:
+            return False
+        if not self._vad.is_speech(audio_chunk, settings.FOLLOWUP_SPEECH_SPIKE_THRESHOLD):
+            self._barge_in_frames = 0
+            return False
+        self._barge_in_frames += 1
+        if self._barge_in_frames < settings.BARGE_IN_FRAMES:
+            return False
+        self._barge_in_frames = 0
+        logger.info("Barge-in: user started talking; stopping playback.")
+        self.on_barge_in()
+        self._is_speaking = False
+        return True
+
     def _check_wake_word(self, audio_chunk: np.ndarray) -> bool:
         """Check if the audio chunk contains the wake word."""
         if self._wake_model is None:
@@ -467,7 +490,7 @@ class VoiceListener:
                     "yes" if has_heard_speech else "no"
                 )
 
-            if amplitude > settings.SILENCE_THRESHOLD:
+            if self._vad.is_speech(audio_array, settings.SILENCE_THRESHOLD):
                 has_heard_speech = True
                 silence_start = None
             else:
@@ -574,7 +597,7 @@ class VoiceListener:
         transcribe_kwargs = {
             "language": settings.WHISPER_LANGUAGE,
             "beam_size": settings.WHISPER_BEAM_SIZE,
-            "vad_filter": False,
+            "vad_filter": settings.WHISPER_VAD_FILTER,
             # Prevent hallucination loops: do not feed prior text back
             "condition_on_previous_text": False,
         }
