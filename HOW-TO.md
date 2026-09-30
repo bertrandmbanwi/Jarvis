@@ -269,6 +269,13 @@ A skill is a folder with a `SKILL.md`: YAML frontmatter with a `name` and `descr
 
 Only allow-listed users get answers. Risky actions ask the owner (the first id in the list) for approval with inline buttons, and scheduled routine results are sent to you. Telegram bot messages go through Telegram's servers and are not end-to-end encrypted.
 
+## iMessage
+
+1. Give the app that runs JARVIS (Terminal, iTerm, or the JARVIS app) **Full Disk Access** in System Settings → Privacy & Security, so it can read the Messages database.
+2. Set `IMESSAGE_ALLOWED_HANDLES=+15551234567,you@icloud.com` (the first entry is the owner) and restart JARVIS. macOS asks once for permission to control Messages.
+
+Only those handles get answers. JARVIS never reads messages that arrived before it started, and its replies begin with 🤖 so it doesn't answer itself when you text your own number. Risky actions ask the owner to reply "yes" or "no".
+
 ## Scheduled Routines
 
 Give a routine a time with the routines API, for example:
