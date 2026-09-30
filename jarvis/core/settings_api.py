@@ -158,8 +158,8 @@ def _normalize_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
             normalized[key] = mode
         elif key == "LLM_PROVIDER":
             provider = str(value).lower()
-            if provider not in {"openai", "anthropic"}:
-                raise HTTPException(status_code=400, detail="LLM_PROVIDER must be openai or anthropic.")
+            if provider not in {"openai", "anthropic", "local"}:
+                raise HTTPException(status_code=400, detail="LLM_PROVIDER must be openai, anthropic, or local.")
             normalized[key] = provider
         elif key in {"OPENAI_FAST_EFFORT", "OPENAI_BRAIN_EFFORT", "OPENAI_DEEP_EFFORT"}:
             effort = str(value).lower()

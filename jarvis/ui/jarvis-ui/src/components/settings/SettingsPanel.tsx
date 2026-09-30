@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { getApiBaseUrl, jarvisHeaders } from "@/lib/apiBase";
 
-type Provider = "openai" | "anthropic";
+type Provider = "openai" | "anthropic" | "local";
 
 interface Settings {
   provider: Provider;
@@ -91,7 +91,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
       }
       const data = await response.json();
       setSettings(data);
-      setProvider(data.provider === "anthropic" ? "anthropic" : "openai");
+      setProvider(data.provider === "anthropic" || data.provider === "local" ? data.provider : "openai");
       setOllamaUrl(data.integrations?.ollama_url || "");
       setError(null);
     } catch (err) {
@@ -394,9 +394,11 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                 >
                   <option value="openai">OpenAI (GPT-6 Luna / GPT-6.1 Sol)</option>
                   <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="local">Local (Ollama / MLX, offline)</option>
                 </select>
               </div>
 
+              {provider !== "local" && (
               <div>
                 <label className="block text-sm font-semibold text-slate-300 mb-2">
                   {provider === "openai" ? "OpenAI" : "Anthropic"} API Key
@@ -433,6 +435,7 @@ export function SettingsPanel({ authToken }: SettingsPanelProps) {
                   Save API Key
                 </button>
               </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-slate-300 mb-2">

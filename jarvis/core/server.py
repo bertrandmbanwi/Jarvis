@@ -1778,6 +1778,10 @@ async def websocket_live(websocket: WebSocket):
     if not await _authorize_websocket(websocket):
         return
     await websocket.accept()
+    if settings.OFFLINE_MODE:
+        await websocket.send_json({"type": "error", "message": "Live voice is off in offline mode."})
+        await websocket.close(code=1008)
+        return
 
     from jarvis.voice.live_session import LiveSession
 

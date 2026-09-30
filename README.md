@@ -73,6 +73,9 @@ Task-specific prompt templates (build, feature, fix, refactor, research) guide t
 **Multi-Device Audio Routing**
 Connect from your Mac, phone, and tablet simultaneously. Each device registers independently and audio is routed only to devices that want it. Interrupt JARVIS mid-sentence from any device.
 
+**Fully Offline Mode**
+Set `OFFLINE_MODE=true` and JARVIS makes no cloud model calls. Tool use runs on a local model through Ollama or MLX, quick replies use Apple's on-device Foundation Model (macOS 26+, free and private), and speech stays local. All 106 tools keep working.
+
 **MCP (Model Context Protocol)**
 Plug any MCP server into JARVIS through `~/.jarvis/mcp.json` (the same format as Claude Desktop and Cursor), and its tools become JARVIS tools, still behind the approval prompt. It works the other way too: `python -m jarvis.mcp_server` exposes JARVIS's tools to Claude Code, Cursor or Codex.
 
