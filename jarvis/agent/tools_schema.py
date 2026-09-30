@@ -18,7 +18,7 @@ from jarvis.tools import (
     browser_agent,
     calendar_email,
     chrome_extension,
-    claude_code,
+    coding_agent,
     filesystem,
     mac_control,
     notes_access,
@@ -1410,15 +1410,15 @@ TOOL_SCHEMAS = [
             "properties": {},
         },
     },
-    # ---- Claude Code (Development Tasks) ----
+    # ---- Coding agent (Codex CLI or Claude Code) ----
     {
-        "name": "run_claude_code",
+        "name": "run_coding_agent",
         "description": (
-            "Delegate a coding task to Claude Code, an AI coding agent that can read, write, "
-            "and edit files, run commands, and reason about code. Use this for complex development "
-            "tasks like: writing new code, debugging, refactoring, code review, creating scripts, "
-            "setting up configurations, or any multi-step programming work. "
-            "Claude Code has full filesystem and shell access in its working directory. "
+            "Delegate a coding task to a local AI coding agent (OpenAI Codex CLI or Claude Code) "
+            "that can read, write, and edit files, run commands, and reason about code. Use this for "
+            "complex development tasks like: writing new code, debugging, refactoring, code review, "
+            "creating scripts, setting up configurations, or any multi-step programming work. "
+            "The agent works inside its working directory. "
             "Use continue_session=true to maintain context from the previous coding interaction. "
             "For simple one-off shell commands, use run_command instead."
         ),
@@ -1440,17 +1440,23 @@ TOOL_SCHEMAS = [
                 },
                 "allowed_tools": {
                     "type": "string",
-                    "description": "Comma-separated Claude Code tools to allow (e.g., 'Bash,Read,Write,Edit'). Leave empty for defaults.",
+                    "description": "Claude Code only: comma-separated tools to allow (e.g., 'Bash,Read,Write,Edit'). Leave empty for defaults.",
                     "default": "",
                 },
                 "continue_session": {
                     "type": "boolean",
-                    "description": "Continue the previous Claude Code session for multi-turn coding work. Maintains full context.",
+                    "description": "Continue the previous coding session for multi-turn work. Maintains full context.",
                     "default": False,
+                },
+                "agent": {
+                    "type": "string",
+                    "enum": ["", "codex", "claude"],
+                    "description": "Force a specific coding agent. Leave empty to use the configured default.",
+                    "default": "",
                 },
                 "session_name": {
                     "type": "string",
-                    "description": "Named session to resume (e.g., 'my-api-project'). For persistent context across separate interactions.",
+                    "description": "Claude Code only: named session to resume (e.g., 'my-api-project'). For persistent context across separate interactions.",
                     "default": "",
                 },
             },
@@ -2442,9 +2448,9 @@ TOOL_REGISTRY = {
     "sync_browser_sessions": browser_agent.sync_browser_sessions,
     "close_browser": browser_agent.close_browser,
     # Claude Code (development tasks)
-    "run_claude_code": claude_code.run_claude_code,
-    "run_terminal_command_smart": claude_code.run_terminal_command,
-    "scaffold_project": claude_code.scaffold_project,
+    "run_coding_agent": coding_agent.run_coding_agent,
+    "run_terminal_command_smart": coding_agent.run_terminal_command,
+    "scaffold_project": coding_agent.scaffold_project,
     # Chrome Extension (direct DOM browser control)
     "chrome_navigate": chrome_extension.chrome_navigate,
     "chrome_click": chrome_extension.chrome_click,
