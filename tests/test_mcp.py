@@ -97,7 +97,9 @@ async def test_unreachable_server_is_reported_not_fatal():
     assert "gone" in mgr.status()["errors"]
 
 
-def test_jarvis_mcp_server_exposes_only_safe_tools():
+def test_jarvis_mcp_server_exposes_only_safe_tools(monkeypatch):
+    # get_upcoming_events is macOS-only; keep it eligible on Linux CI.
+    monkeypatch.setattr("jarvis.agent.platform_tools.IS_MACOS", True)
     from jarvis.mcp_server import exposed_tools
 
     names = exposed_tools(extra="")

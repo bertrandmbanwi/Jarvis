@@ -39,7 +39,9 @@ async def test_inconclusive_qa_does_not_retry():
 
 
 @pytest.mark.asyncio
-async def test_failed_qa_retry_only_offers_side_effect_free_tools():
+async def test_failed_qa_retry_only_offers_side_effect_free_tools(monkeypatch):
+    # The tool list includes a macOS-only calendar tool; keep it visible on Linux CI.
+    monkeypatch.setattr("jarvis.agent.platform_tools.IS_MACOS", True)
     executor, llm = _executor(QAResult(False, ["too vague"], "", 1))
     await executor.execute("make a note", tools=TOOLS)
     assert llm.chat_with_tools.await_count == 2
