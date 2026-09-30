@@ -349,3 +349,60 @@ async def test_llm_tool_stream_falls_back_when_provider_cannot_stream(llm):
     provider.fail = False
     provider.run_tools = AsyncMock(return_value=SimpleNamespace(text="whole answer", tool_calls=[], completed=True))
     assert [t async for t in instance.chat_with_tools_stream("x", [], AsyncMock())] == ["whole answer"]
+
+
+def test_strict_schema_makes_optional_params_nullable():
+    from jarvis.core.providers.openai_provider import to_openai_tool, to_strict_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "task": {"type": "string", "minLength": 1},
+            "agent": {"type": "string", "enum": ["", "codex"], "default": ""},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["task"],
+    }
+    strict = to_strict_schema(schema)
+    assert strict["required"] == ["task", "agent", "tags"] and strict["additionalProperties"] is False
+    assert strict["properties"]["task"] == {"type": "string"}  # required: unchanged, unsupported keyword dropped
+    assert strict["properties"]["agent"] == {"type": ["string", "null"], "enum": ["", "codex", None]}
+    assert strict["properties"]["tags"]["type"] == ["array", "null"]
+    assert "default" in schema["properties"]["agent"]  # input not mutated
+
+    assert to_openai_tool({"name": "t", "input_schema": schema}, strict=True)["strict"] is True
+    # Free-form objects and MCP tools can't be strict.
+    loose = {"type": "object", "properties": {"data": {"type": "object"}}}
+    assert to_openai_tool({"name": "t", "input_schema": loose}, strict=True)["strict"] is False
+    assert to_openai_tool({"name": "t", "input_schema": schema, "mcp_server": "x"}, strict=True)["strict"] is False
+
+
+def test_every_builtin_tool_schema_converts_or_falls_back_cleanly():
+    from jarvis.agent.tools_schema import TOOL_SCHEMAS
+    from jarvis.core.providers.openai_provider import to_openai_tool
+
+    converted = [to_openai_tool(t, strict=True) for t in TOOL_SCHEMAS]
+    strict_count = sum(1 for t in converted if t["strict"])
+    assert strict_count >= len(TOOL_SCHEMAS) * 0.9
+    for tool in converted:
+        if tool["strict"]:
+            params = tool["parameters"]
+            assert params["additionalProperties"] is False
+            assert set(params["required"]) == set(params["properties"])
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_drops_null_arguments_before_calling_the_tool():
+    null_call = Item(type="function_call", name="t", arguments='{"task": "x", "agent": null}', call_id="c1")
+    client = FakeClient([response([null_call]), response([message("ok")], text="ok")])
+    seen = []
+
+    async def executor(name, args):
+        seen.append(args)
+        return "done"
+
+    await OpenAIProvider("key", client=client, strict_tools=True).run_tools(
+        system=SYSTEM, messages=[{"role": "user", "content": "x"}], tools=[],
+        executor=executor, spec=SPEC, max_iterations=3, on_usage=lambda u: None,
+    )
+    assert seen == [{"task": "x"}]

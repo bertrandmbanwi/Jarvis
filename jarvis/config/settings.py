@@ -60,6 +60,9 @@ OPENAI_DEEP_EFFORT = os.getenv("OPENAI_DEEP_EFFORT", "high")
 OPENAI_FAST_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_FAST_MAX_OUTPUT_TOKENS", "2048"))
 OPENAI_BRAIN_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_BRAIN_MAX_OUTPUT_TOKENS", "8192"))
 OPENAI_DEEP_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DEEP_MAX_OUTPUT_TOKENS", "16000"))
+# Strict function calling: guaranteed schema-valid tool arguments. Off by
+# default until verified against the live API with all built-in tool schemas.
+OPENAI_STRICT_TOOLS = os.getenv("OPENAI_STRICT_TOOLS", "false").lower() in {"1", "true", "yes", "on"}
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", OPENAI_FAST_MODEL)
 # Cloud voice mode (GPT-Live, full-duplex speech; $0.05/min plus delegated work)
 OPENAI_LIVE_MODEL = os.getenv("OPENAI_LIVE_MODEL", "gpt-live-1")

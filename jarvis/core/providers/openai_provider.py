@@ -54,18 +54,68 @@ def _usage_from(resp_usage: Any, model: str) -> Usage:
     )
 
 
-def to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
+# Keywords strict mode may reject; they are dropped from strict schemas.
+_STRICT_UNSUPPORTED = {
+    "default", "minLength", "maxLength", "pattern", "format", "minimum", "maximum",
+    "multipleOf", "minItems", "maxItems", "uniqueItems", "examples",
+}
+
+
+def to_strict_schema(schema: dict[str, Any], *, optional: bool = False) -> dict[str, Any] | None:
+    """Rewrite a JSON schema for strict function calling, or None if it can't be.
+
+    Strict mode needs every property listed in ``required`` and
+    ``additionalProperties: false``. Optional parameters therefore become
+    nullable; the tool loop drops nulls before calling the tool, so the
+    tool's own defaults still apply.
+    """
+    out = {k: v for k, v in schema.items() if k not in _STRICT_UNSUPPORTED}
+    kind = out.get("type")
+    if kind == "object":
+        properties = out.get("properties")
+        if not isinstance(properties, dict):
+            return None  # free-form object: not expressible in strict mode
+        required = set(out.get("required") or [])
+        strict_props = {}
+        for name, prop in properties.items():
+            converted = to_strict_schema(prop, optional=name not in required) if isinstance(prop, dict) else None
+            if converted is None:
+                return None
+            strict_props[name] = converted
+        out["properties"] = strict_props
+        out["required"] = list(strict_props)
+        out["additionalProperties"] = False
+    elif kind == "array":
+        items = out.get("items")
+        if isinstance(items, dict):
+            converted = to_strict_schema(items)
+            if converted is None:
+                return None
+            out["items"] = converted
+    elif not isinstance(kind, str):
+        return None  # unions / untyped: leave the tool non-strict
+    if optional:
+        out["type"] = [kind, "null"]
+        if isinstance(out.get("enum"), list) and None not in out["enum"]:
+            out["enum"] = [*out["enum"], None]
+    return out
+
+
+def to_openai_tool(tool: dict[str, Any], *, strict: bool = False) -> dict[str, Any]:
     """Convert a JARVIS tool schema ({name, description, input_schema}) to a Responses function tool.
 
-    ``strict`` stays off: the existing schemas use optional properties, which
-    strict mode would force to be required.
+    With ``strict`` (OPENAI_STRICT_TOOLS), built-in tools whose schema can be
+    expressed strictly get guaranteed-valid arguments. MCP tools and schemas
+    that can't be converted stay non-strict.
     """
+    parameters = tool.get("input_schema") or {"type": "object", "properties": {}}
+    strict_parameters = to_strict_schema(parameters) if strict and not tool.get("mcp_server") else None
     converted: dict[str, Any] = {
         "type": "function",
         "name": tool["name"],
         "description": tool.get("description", ""),
-        "parameters": tool.get("input_schema") or {"type": "object", "properties": {}},
-        "strict": False,
+        "parameters": strict_parameters or parameters,
+        "strict": strict_parameters is not None,
     }
     if tool.get("defer_loading"):
         converted["defer_loading"] = True
@@ -123,7 +173,9 @@ class OpenAIProvider:
         timeout: float = 120.0,
         client: Any = None,
         retry: RetryFn | None = None,
+        strict_tools: bool = False,
     ):
+        self._strict_tools = strict_tools
         self._api_key = api_key
         self._timeout = timeout
         self._client = client
@@ -257,7 +309,7 @@ class OpenAIProvider:
 
     def _tool_kwargs(self, system: SystemPrompt, spec: TierSpec, tools: list[dict[str, Any]]) -> dict[str, Any]:
         kwargs = self._base_kwargs(system, spec)
-        openai_tools = [to_openai_tool(t) for t in tools]
+        openai_tools = [to_openai_tool(t, strict=self._strict_tools) for t in tools]
         if any(t.get("defer_loading") for t in openai_tools):
             openai_tools.append({"type": "tool_search"})
         if openai_tools:
@@ -288,7 +340,7 @@ class OpenAIProvider:
                 text = "I hit a processing limit. Could you simplify the request?"
             return ToolLoopResult(text=text, tool_calls=log, completed=not incomplete)
 
-        results = await asyncio.gather(*(self._run_call(call, executor) for call in calls))
+        results = await asyncio.gather(*(self._run_call(call, executor, self._strict_tools) for call in calls))
         for call, (tool_input, result) in zip(calls, results, strict=True):
             log.append({"name": call.name, "input": tool_input, "result": tool_result_text(result)[:2000]})
             input_items.append({
@@ -361,13 +413,16 @@ class OpenAIProvider:
         on_result(ToolLoopResult(text=_ITERATION_LIMIT_TEXT, tool_calls=log, completed=False))
 
     @staticmethod
-    async def _run_call(call: Any, executor: ToolExecutor) -> tuple[dict, Any]:
+    async def _run_call(call: Any, executor: ToolExecutor, drop_nulls: bool = False) -> tuple[dict, Any]:
         try:
             tool_input = json.loads(call.arguments or "{}")
             if not isinstance(tool_input, dict):
                 raise ValueError("tool arguments must be a JSON object")
         except (json.JSONDecodeError, ValueError) as exc:
             return {}, f"Error: invalid arguments for {call.name}: {exc}"
+        if drop_nulls:
+            # Strict schemas make optional arguments nullable; null means "not given".
+            tool_input = {k: v for k, v in tool_input.items() if v is not None}
         logger.info("Tool call: %s(%s)", call.name, str(tool_input)[:200])
         try:
             return tool_input, await executor(call.name, tool_input)
