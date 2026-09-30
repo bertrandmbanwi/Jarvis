@@ -245,7 +245,7 @@ A skill is a folder with a `SKILL.md`: YAML frontmatter with a `name` and `descr
 2. Find your numeric Telegram user id (for example, message @userinfobot).
 3. Set `TELEGRAM_BOT_TOKEN` (in Settings, where it is stored in Keychain, or in `.env`) and `TELEGRAM_ALLOWED_USER_IDS=123456789`, then restart JARVIS.
 
-Only allow-listed users get answers. Risky actions ask for approval with inline buttons, and scheduled routine results are sent to you. Telegram bot messages go through Telegram's servers and are not end-to-end encrypted.
+Only allow-listed users get answers. Risky actions ask the owner (the first id in the list) for approval with inline buttons, and scheduled routine results are sent to you. Telegram bot messages go through Telegram's servers and are not end-to-end encrypted.
 
 ## Scheduled Routines
 
