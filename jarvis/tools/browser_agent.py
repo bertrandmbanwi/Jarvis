@@ -536,10 +536,10 @@ class BrowserAgent:
                 items.append({
                     "type": "computer_call_output",
                     "call_id": call.call_id,
+                    # computer_screenshot takes only type + image_url/file_id (no detail).
                     "output": {
                         "type": "computer_screenshot",
                         "image_url": f"data:{SCREENSHOT_MEDIA_TYPE};base64,{shot}" if shot else _PLACEHOLDER_IMAGE,
-                        "detail": "original",
                     },
                 })
 
