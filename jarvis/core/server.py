@@ -7,7 +7,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,6 +70,7 @@ EMPTY_CHUNK = ""
 # Voice components set by run_full for browser TTS triggering
 _speaker = None
 _listener = None
+_mcp_manager: Any = None
 
 # Desktop overlay WebSocket clients (lightweight, no auth required for localhost)
 _overlay_clients: list[WebSocket] = []
@@ -564,6 +565,14 @@ async def lifespan(app: FastAPI):
     brain.proactive._on_suggestion = _deliver_proactive_suggestion
     # Let the executor ask connected clients to approve high-risk tool calls.
     pending_actions.add_notifier(ws_manager.broadcast_json)
+    from jarvis.core.mcp_client import MCPManager
+
+    global _mcp_manager
+    _mcp_manager = MCPManager()
+    try:
+        await _mcp_manager.start()
+    except Exception as exc:
+        logger.warning("MCP startup failed: %s", exc)
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     scheduler_task = asyncio.create_task(_workflow_scheduler_loop())
 
@@ -576,6 +585,9 @@ async def lifespan(app: FastAPI):
         await cleanup_task
     with suppress(asyncio.CancelledError):
         await scheduler_task
+    if _mcp_manager is not None:
+        with suppress(Exception):
+            await _mcp_manager.close()
     with suppress(Exception):
         await asyncio.wait_for(brain.shutdown(), timeout=5)
     logger.info("JARVIS server shut down.")
@@ -1215,6 +1227,14 @@ async def set_privacy_mode(request: PrivacyRequest):
     """Enable or disable runtime privacy mode."""
     brain._privacy_mode = request.enabled
     return {"enabled": brain._privacy_mode}
+
+
+@app.get("/mcp/status", dependencies=[Depends(require_auth)])
+async def mcp_status():
+    """Connected MCP servers and the tools they contributed."""
+    if _mcp_manager is None:
+        return {"servers": [], "tools": [], "errors": {}}
+    return _mcp_manager.status()
 
 
 @app.get("/models", dependencies=[Depends(require_auth)])
