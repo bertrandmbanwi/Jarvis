@@ -105,10 +105,8 @@ UNCACHEABLE_TOOLS: set[str] = {
     "move_file",
     "copy_file",
     "create_directory",
-    "delete_file",
     "set_volume",
     "set_brightness",
-    "toggle_dark_mode",
     "send_notification",
     "open_application",
     "close_application",
@@ -117,7 +115,6 @@ UNCACHEABLE_TOOLS: set[str] = {
     "browse_web",
     "browser_navigate",
     "browser_screenshot",
-    "browser_interact",
     "browser_switch_tab",
     "browser_upload_file",
     "close_browser",
@@ -136,8 +133,6 @@ UNCACHEABLE_TOOLS: set[str] = {
     "set_proactive_setting",
     "update_user_profile",
     "cancel_active_plan",
-    "copy_to_clipboard",
-    "read_clipboard",
 }
 
 
