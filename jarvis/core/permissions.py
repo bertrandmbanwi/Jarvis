@@ -184,6 +184,8 @@ TOOL_PERMISSIONS: dict[str, ToolPermission] = {
     "fetch_page_links": _perm(Capability.EXTERNAL_NETWORK),
     # Profile, memory, learning
     "get_user_profile": _perm(Capability.MEMORY, Capability.READ_LOCAL),
+    "use_skill": _perm(Capability.READ_LOCAL),
+    "read_skill_file": _perm(Capability.READ_LOCAL),
     "update_user_profile": _perm(Capability.MEMORY, Capability.WRITE_LOCAL, risk=RiskLevel.MEDIUM),
     "get_user_preference": _perm(Capability.MEMORY, Capability.READ_LOCAL),
     "add_user_note": _perm(Capability.MEMORY, Capability.WRITE_LOCAL, risk=RiskLevel.MEDIUM),

@@ -12,6 +12,7 @@ COMMON_TOOLS = {
     "open_application",
     "open_url",
     "get_user_profile",
+    "use_skill",
 }
 
 TOOL_GROUPS: dict[str, set[str]] = {
@@ -68,6 +69,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
     },
     "screen": {"capture_screen", "read_screen_text", "analyze_screen"},
     "proactive": {"get_proactive_status", "set_proactive_setting"},
+    "skills": {"use_skill", "read_skill_file"},
 }
 
 KEYWORD_GROUPS: list[tuple[set[str], str]] = [
@@ -94,6 +96,7 @@ KEYWORD_GROUPS: list[tuple[set[str], str]] = [
     ({"code", "build", "debug", "repo", "repository", "test", "implement", "fix"}, "development"),
     ({"screen", "display", "look at", "visible"}, "screen"),
     ({"proactive", "suggestion", "suggestions", "check-in", "check in", "nudge"}, "proactive"),
+    ({"skill", "skills", "briefing", "prep"}, "skills"),
 ]
 
 
