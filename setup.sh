@@ -122,43 +122,35 @@ step "Installing Python packages..."
 echo "  This may take 2-5 minutes on first run."
 echo ""
 
-# Install core packages one group at a time for better error handling
-echo "  [1/6] Installing API server packages..."
-pip install "fastapi>=0.115.0" "uvicorn[standard]>=0.34.0" "httpx>=0.28.0" "pydantic>=2.10.0" "websockets>=14.0" --quiet 2>&1 | grep -v "already satisfied" || true
-ok "API server packages"
+# Everything in requirements.txt except the packages that sometimes fail to
+# build (audio drivers, Kokoro, OpenWakeWord); those are tried one by one below
+# so a single failure does not abort the whole install.
+OPTIONAL_PKGS="kokoro|openwakeword|pyaudio"
 
-echo "  [2/6] Installing speech-to-text (faster-whisper)..."
-pip install "faster-whisper>=1.1.0" --quiet 2>&1 | grep -v "already satisfied" || true
-ok "faster-whisper"
-
-echo "  [3/6] Installing text-to-speech..."
-pip install "edge-tts>=6.1.0" "soundfile>=0.13.0" --quiet 2>&1 | grep -v "already satisfied" || true
-ok "Edge TTS (guaranteed fallback)"
-
-# Kokoro is best quality but can be tricky to install
-echo "  [4/6] Installing Kokoro TTS (best quality voice)..."
-if pip install "kokoro>=0.9.0" --quiet 2>&1; then
-    ok "Kokoro TTS"
+echo "  [1/3] Installing core packages from requirements.txt..."
+grep -vE "^(${OPTIONAL_PKGS})" "${SCRIPT_DIR}/requirements.txt" > "${VENV_DIR}/core-requirements.txt"
+if pip install -r "${VENV_DIR}/core-requirements.txt" --quiet; then
+    ok "Core packages"
 else
-    warn "Kokoro TTS failed to install. JARVIS will use Edge TTS or macOS say instead."
-    echo "  You can try installing manually later: pip install kokoro"
+    fail "Core package install failed. Re-run with: pip install -r requirements.txt"
+    exit 1
 fi
 
-echo "  [5/6] Installing audio and wake word packages..."
-pip install "pyaudio>=0.2.14" "numpy>=2.0.0" --quiet 2>&1 | grep -v "already satisfied" || true
-ok "Audio packages"
+echo "  [2/3] Installing optional voice packages..."
+for pkg in "pyaudio>=0.2.14" "kokoro>=0.9.0" "openwakeword>=0.6.0"; do
+    if pip install "${pkg}" --quiet 2>&1; then
+        ok "${pkg}"
+    else
+        warn "${pkg} failed to install. JARVIS will fall back (Edge TTS / keyboard activation)."
+    fi
+done
 
-# OpenWakeWord can also be tricky
-if pip install "openwakeword>=0.6.0" --quiet 2>&1; then
-    ok "OpenWakeWord (Hey JARVIS detection)"
+echo "  [3/3] Installing the Playwright browser..."
+if python3 -m playwright install chromium >/dev/null 2>&1; then
+    ok "Playwright Chromium"
 else
-    warn "OpenWakeWord failed. JARVIS will use keyboard activation instead."
-    echo "  You can try manually: pip install openwakeword"
+    warn "Playwright Chromium install failed. Browser automation will be unavailable."
 fi
-
-echo "  [6/6] Installing memory and utilities..."
-pip install "chromadb>=0.6.0" "python-dotenv>=1.0.0" --quiet 2>&1 | grep -v "already satisfied" || true
-ok "Memory and utilities"
 
 # ============================================================
 # Step 6: Verify everything

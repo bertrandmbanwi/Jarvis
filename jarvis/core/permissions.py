@@ -242,6 +242,28 @@ def get_tool_permission(tool_name: str) -> ToolPermission:
     return _perm(Capability.OBSERVATION, risk=RiskLevel.MEDIUM, reason="Permission inferred from tool name.")
 
 
+_SIDE_EFFECT_CAPABILITIES = frozenset({
+    Capability.WRITE_LOCAL,
+    Capability.SYSTEM_CONTROL,
+    Capability.SHELL,
+    Capability.BROWSER,
+    Capability.MEMORY,
+})
+
+
+def is_side_effect_free(tool_name: str) -> bool:
+    """True if running the tool again cannot change anything (safe to repeat).
+
+    Communication tools only qualify when they read (``READ_LOCAL``); a bare
+    ``COMMUNICATION`` capability means sending.
+    """
+    permission = get_tool_permission(tool_name)
+    caps = permission.capabilities
+    if permission.requires_confirmation or caps & _SIDE_EFFECT_CAPABILITIES:
+        return False
+    return Capability.COMMUNICATION not in caps or Capability.READ_LOCAL in caps
+
+
 def _permission_mode() -> str:
     mode = os.getenv("JARVIS_TOOL_PERMISSION_MODE", "enforce").lower().strip()
     return mode if mode in {"audit", "enforce"} else "audit"

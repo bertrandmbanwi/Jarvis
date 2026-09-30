@@ -218,7 +218,7 @@ bash scripts/package_macos_app.sh --install-user
 
 ## License
 
-MIT License. Build your own JARVIS.
+[MIT License](LICENSE). Build your own JARVIS.
 
 ## Acknowledgments
 

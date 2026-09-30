@@ -21,6 +21,15 @@ from jarvis.core.perf import perf_tracker
 
 logger = logging.getLogger("jarvis.llm")
 
+
+class ToolLoopError(RuntimeError):
+    """The tool-use loop could not complete (API failure, cost guard, or iteration cap).
+
+    Raised only when ``chat_with_tools(raise_on_failure=True)``; otherwise the
+    loop returns a user-facing message, which callers cannot tell apart from
+    a successful answer.
+    """
+
 _anthropic_client = None
 _anthropic_available = False
 
@@ -148,6 +157,8 @@ class JarvisLLM:
     ):
         self._static_system_prompt = system_prompt
         self.active_backend = "initializing"
+        # Mirrors JarvisBrain's privacy mode: when on, no prompt text is written to cost logs.
+        self.privacy_mode = False
         self._ollama_client = httpx.AsyncClient(timeout=120.0)
         self._ollama_base_url = settings.OLLAMA_BASE_URL.rstrip("/")
 
@@ -375,12 +386,19 @@ class JarvisLLM:
         tier: str = "brain",
         max_iterations: int = 10,
         system_prompt_override: str | None = None,
+        raise_on_failure: bool = False,
     ) -> tuple[str, list[dict]]:
-        """Run agentic tool-use loop and return (final_response, tool_calls_log)."""
+        """Run agentic tool-use loop and return (final_response, tool_calls_log).
+
+        With ``raise_on_failure``, failures raise ``ToolLoopError`` instead of
+        returning an apology string, so plan subtasks can retry or be marked failed.
+        """
         tier = self._apply_cost_mode(tier)
         paid_blocked, block_reason = self._paid_usage_blocked()
         if paid_blocked:
             logger.warning("Claude tool-use request blocked by %s.", block_reason)
+            if raise_on_failure:
+                raise ToolLoopError(f"Paid usage blocked by {block_reason}")
             return f"I am in cost guard mode because the {block_reason} has been reached. Try a local command or switch cost mode.", []
 
         client = _get_anthropic_client()
@@ -425,6 +443,8 @@ class JarvisLLM:
                     "Claude tool-use call failed (iteration %d, %s): %s",
                     iteration, category.value, e,
                 )
+                if raise_on_failure:
+                    raise ToolLoopError(f"Tool-use call failed ({category.value}): {e}") from e
                 # Try Ollama fallback for a simple response
                 if await self._check_ollama_health():
                     self.active_backend = "ollama"
@@ -492,6 +512,8 @@ class JarvisLLM:
                 return final_text, tool_calls_log
 
         logger.warning("Agentic loop hit max iterations (%d).", max_iterations)
+        if raise_on_failure:
+            raise ToolLoopError(f"Hit max iterations ({max_iterations})")
         return (
             "I hit my processing limit. Let me know if you would like to continue."
         ), tool_calls_log
@@ -881,7 +903,8 @@ class JarvisLLM:
 
         pricing = settings.CLAUDE_PRICING.get(model, {})
         if pricing:
-            standard_input = max(0, input_tokens - cache_read - cache_creation)
+            # Anthropic's input_tokens already excludes cache reads and writes.
+            standard_input = input_tokens
             cost = (
                 (standard_input / 1_000_000) * pricing["input"]
                 + (output_tokens / 1_000_000) * pricing["output"]
@@ -908,7 +931,7 @@ class JarvisLLM:
                 input_tokens=input_tokens, output_tokens=output_tokens,
                 cache_read_tokens=cache_read, cache_creation_tokens=cache_creation,
                 cost_usd=cost, elapsed_seconds=elapsed,
-                user_input_preview=user_preview,
+                user_input_preview="" if self.privacy_mode else user_preview,
             )
         except Exception as e:
             logger.debug("Cost log write failed (non-critical): %s", e)

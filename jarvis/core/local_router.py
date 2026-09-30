@@ -173,7 +173,13 @@ async def route_local(text: str, *, privacy_mode: bool = False) -> LocalRouteRes
             return LocalRouteResult("Privacy mode is off. I will resume normal memory handling.", "privacy_off", remember=False)
         return LocalRouteResult("Privacy mode is on. I will avoid storing this session's conversation and memories.", "privacy_on", remember=False)
 
-    if re.search(r"\b(?:that was wrong|that's wrong|you were wrong|incorrect|bad answer)\b", lowered):
+    # Only a bare correction counts as feedback. "The time is incorrect, fix it"
+    # is a real request and must reach the brain.
+    if re.fullmatch(
+        r"\s*(?:that was wrong|that's wrong|that is wrong|you were wrong|that's incorrect|"
+        r"that is incorrect|incorrect|wrong answer|bad answer)[\s.!]*",
+        lowered,
+    ):
         item = feedback.add_feedback(raw, category="correction")
         return LocalRouteResult(
             response=f"Noted. I logged that correction so I can adapt next time. Feedback id: {item['id'][:8]}.",
