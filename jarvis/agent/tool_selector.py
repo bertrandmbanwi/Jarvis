@@ -135,6 +135,12 @@ def select_tools_for_request(
         if pattern.search(context):
             selected.update(TOOL_GROUPS[group])
 
+    # MCP tools join when their server is mentioned ("search my notion for ...").
+    for schema in all_schemas:
+        server = schema.get("mcp_server")
+        if server and re.search(rf"\b{re.escape(server.lower())}\b", context):
+            selected.add(schema["name"])
+
     if len(selected) <= len(COMMON_TOOLS) and len(lowered) > 160:
         selected.update(TOOL_GROUPS["web"])
         selected.update(TOOL_GROUPS["files"])
