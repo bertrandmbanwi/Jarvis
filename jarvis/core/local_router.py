@@ -59,6 +59,17 @@ def _extract_weather_location(text: str) -> str:
     return _clean(location.strip(" ?!."))
 
 
+_WEATHER_NEEDS_AGENT = re.compile(
+    r"\b(?:weekend|week|next|days?|tonight|how much|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+)
+
+
+def _is_simple_weather_request(lowered: str, location: str) -> bool:
+    """The shortcut only covers now and tomorrow; anything else needs the agent."""
+    return not _WEATHER_NEEDS_AGENT.search(lowered) and len(location.split()) <= 4
+
+
 async def _run(action: str, fn: Callable[..., Awaitable[str]], *args) -> LocalRouteResult:
     return LocalRouteResult(response=await fn(*args), action=action)
 
@@ -197,6 +208,8 @@ async def route_local(text: str, *, privacy_mode: bool = False) -> LocalRouteRes
 
     if re.search(r"\b(weather|forecast|temperature)\b", lowered):
         location = _extract_weather_location(raw)
+        if not _is_simple_weather_request(lowered, location):
+            return None
         return await _run_cached("weather", "get_weather", {"location": location}, weather.get_weather, location)
 
     conversion = _extract_currency_conversion(raw)

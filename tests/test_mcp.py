@@ -126,5 +126,5 @@ async def test_jarvis_mcp_server_calls_go_through_the_permission_gate():
         listing = await client.list_tools()
         assert "get_weather" in {t.name for t in listing.tools}
         result = await client.call_tool("get_weather", {"location": "Paris"})
-    executor._execute_tool.assert_awaited_once_with("get_weather", {"location": "Paris"})
+    executor._execute_tool.assert_awaited_once_with("get_weather", {"location": "Paris", "days": 2})
     assert result.content[0].text == "Sunny, 21C"
