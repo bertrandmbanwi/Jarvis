@@ -992,6 +992,8 @@ TOOL_SCHEMAS = [
         "name": "get_weather",
         "description": (
             "Get current weather and tomorrow's forecast for any location. "
+            "For a weekend, a named day, or rain totals, set days high enough to reach that date; "
+            "the result then lists each day with rain chance and amount in inches. "
             "Uses Open-Meteo API (free, no API key needed). "
             "If the user asks for local weather without naming a place, omit location "
             "or pass an empty string; the tool will use the user's saved default location. "
@@ -1005,6 +1007,10 @@ TOOL_SCHEMAS = [
                 "location": {
                     "type": "string",
                     "description": "City name (e.g., 'New York', 'San Francisco') or zip code (e.g., '90210')",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Forecast days counting today (default 2, max 10).",
                 },
             },
         },
