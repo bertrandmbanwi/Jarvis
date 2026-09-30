@@ -842,6 +842,13 @@ async def _workflow_scheduler_loop():
         if not settings.WORKFLOW_SCHEDULER_ENABLED:
             continue
         try:
+            if settings.ANTHROPIC_BATCH_FOR_BACKGROUND and settings.LLM_PROVIDER != "local":
+                # Batch results can take hours; run in the background so the
+                # scheduler keeps ticking.
+                spawn_background(
+                    workflow_scheduler.run_due_workflows(runner=batch.run_prompt), name="workflow-batch"
+                )
+                continue
             runs = await workflow_scheduler.run_due_workflows(runner=brain.process)
             if runs:
                 logger.info("Scheduled workflows completed: %d", len(runs))

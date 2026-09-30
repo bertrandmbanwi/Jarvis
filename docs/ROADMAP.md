@@ -58,13 +58,13 @@ Notes:
 |---|---|---|
 | 1.1 | `openai` SDK dependency; `OPENAI_API_KEY` stored in the Keychain; settings UI and API accept it | Settings tests |
 | 1.2 | Provider layer (`jarvis/core/providers/`): `OpenAIProvider` (Responses API) and `OllamaProvider`, behind one interface covering chat, stream, tool loop, structured output and vision. `llm.py` keeps its public API so callers don't change | Existing LLM tests ported and passing |
-| 1.3 | Tool loop on Responses `function` tools, parallel tool calls run with `asyncio.gather`, errors returned as tool output. *Deferred:* strict tool schemas (the 104 schemas use optional fields) and token streaming during tool use | Tests with a mocked Responses client |
+| 1.3 | Tool loop on Responses `function` tools, parallel tool calls run with `asyncio.gather`, errors returned as tool output. Follow-up (shipped): token streaming during tool use for the chat UI, and opt-in strict tool schemas (`OPENAI_STRICT_TOOLS`) | Tests with a mocked Responses client |
 | 1.4 | Structured outputs (`text.format: json_schema, strict`) for the planner, QA verdict, complexity check and decomposition, replacing regex and fence parsing | Planner, QA and coordinator tests |
 | 1.5 | Prompt caching: stable prefix (static instructions + deterministic tool list); per-turn context goes after the cached prefix. `prompt_cache_key` is not needed: OpenAI routes caches automatically on GPT-5.6+ | Cache read/write tokens tracked per call |
 | 1.6 | Tool selection: history-aware selection with word-boundary matching; a deterministic tool order keeps the cache valid (use hosted tool search if the Responses API offers it) | Tests: "yes, send it" after a draft offers `send_email` |
 | 1.7 | Cost tracker: OpenAI pricing table and OpenAI usage rules; budget limits enforced; blocking file reads moved off the loop | Cost-tracker tests |
 | 1.8 | Vision (`screen.py`) and browser agent on the OpenAI computer-use tool; keep only the last N screenshots, as JPEG | Tests with mocked client |
-| 1.9 | Batch API endpoints (`/batches`) on the active provider. *Deferred:* routing background workflows through batches, since results can take up to 24h and workflows need a result-polling step first | Test |
+| 1.9 | Batch API endpoints (`/batches`) on the active provider. Follow-up (shipped): `BATCH_FOR_BACKGROUND=true` runs scheduled workflow prompts through Batch (half price, no tools) | Test |
 | 1.10 | Coding delegation: `codex exec` (OpenAI Codex CLI) alongside Claude Code CLI; the user picks one | Tool contract test |
 | 1.11 | Settings take effect without a restart (model and key changes rebuild the client) | Test |
 | 1.12 | Docs, README, `.env.example`, evals and CI switched to OpenAI | CI green |

@@ -51,7 +51,7 @@ def build_provider(name: str | None = None) -> CloudProvider:
         )
     from jarvis.core.providers.openai_provider import OpenAIProvider
 
-    return OpenAIProvider(settings.OPENAI_API_KEY, retry=_retry)
+    return OpenAIProvider(settings.OPENAI_API_KEY, retry=_retry, strict_tools=settings.OPENAI_STRICT_TOOLS)
 
 
 def provider_api_key(name: str | None = None) -> str:

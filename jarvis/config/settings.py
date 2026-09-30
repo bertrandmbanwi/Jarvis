@@ -60,6 +60,9 @@ OPENAI_DEEP_EFFORT = os.getenv("OPENAI_DEEP_EFFORT", "high")
 OPENAI_FAST_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_FAST_MAX_OUTPUT_TOKENS", "2048"))
 OPENAI_BRAIN_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_BRAIN_MAX_OUTPUT_TOKENS", "8192"))
 OPENAI_DEEP_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DEEP_MAX_OUTPUT_TOKENS", "16000"))
+# Strict function calling: guaranteed schema-valid tool arguments. Off by
+# default until verified against the live API with all built-in tool schemas.
+OPENAI_STRICT_TOOLS = os.getenv("OPENAI_STRICT_TOOLS", "false").lower() in {"1", "true", "yes", "on"}
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", OPENAI_FAST_MODEL)
 # Cloud voice mode (GPT-Live, full-duplex speech; $0.05/min plus delegated work)
 OPENAI_LIVE_MODEL = os.getenv("OPENAI_LIVE_MODEL", "gpt-live-1")
@@ -113,7 +116,12 @@ PIN_AUTH_ENABLED = os.getenv("JARVIS_PIN_AUTH_ENABLED", "true").lower() in {"1",
 ANTHROPIC_LAZY_HEALTHCHECK = os.getenv("ANTHROPIC_LAZY_HEALTHCHECK", "true").lower() in {"1", "true", "yes", "on"}
 ANTHROPIC_CACHE_TOOLS = os.getenv("ANTHROPIC_CACHE_TOOLS", "true").lower() in {"1", "true", "yes", "on"}
 ANTHROPIC_PROMPT_CACHE_TTL = os.getenv("ANTHROPIC_PROMPT_CACHE_TTL", "5m").strip().lower()
-ANTHROPIC_BATCH_FOR_BACKGROUND = os.getenv("ANTHROPIC_BATCH_FOR_BACKGROUND", "false").lower() in {"1", "true", "yes", "on"}
+# Scheduled workflow prompts go through the Batch API: half price, but no tools,
+# and results can take minutes to hours. (BATCH_FOR_BACKGROUND is the current
+# name; the ANTHROPIC_ one is kept for existing .env files.)
+ANTHROPIC_BATCH_FOR_BACKGROUND = os.getenv(
+    "BATCH_FOR_BACKGROUND", os.getenv("ANTHROPIC_BATCH_FOR_BACKGROUND", "false")
+).lower() in {"1", "true", "yes", "on"}
 WORKFLOW_SCHEDULER_ENABLED = os.getenv("WORKFLOW_SCHEDULER_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 # Runs routines that have a schedule_time (none do by default).
 ROUTINE_SCHEDULER_ENABLED = os.getenv("ROUTINE_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
