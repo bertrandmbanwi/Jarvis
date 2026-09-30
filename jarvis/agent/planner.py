@@ -238,7 +238,9 @@ class TaskPlanner:
         try:
             prompt = _COMPLEXITY_CHECK_PROMPT.format(request=user_input[:500])
             response = await self.llm.chat(prompt, tier="fast")
-            is_complex = "complex" in response.lower()
+            # Read the verdict word, not a substring: "not complex" must stay simple.
+            verdict = re.match(r"\W*(simple|complex)\b", response.lower())
+            is_complex = verdict is not None and verdict.group(1) == "complex"
             logger.info(
                 "Decomposition LLM check: %s (input: '%s')",
                 "complex" if is_complex else "simple",
