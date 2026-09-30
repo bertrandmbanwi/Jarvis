@@ -1,29 +1,50 @@
 <p align="center">
-  <img src="docs/screenshots/voice-orb.png" alt="JARVIS Arc Reactor Orb" width="600" />
+  <img src="docs/screenshots/jarvis-demo.gif" alt="JARVIS booting up: the arc reactor HUD resolving into the live particle orb" width="560" />
 </p>
 
 <h1 align="center">J.A.R.V.I.S.</h1>
-<h3 align="center">Just A Rather Very Intelligent System</h3>
+<h3 align="center">The open-source JARVIS for your Mac: talk to it, let it act, run it fully offline.</h3>
 
 <p align="center">
-  A personal AI assistant inspired by Tony Stark's JARVIS. Voice interaction, cinematic UI, browser automation, desktop overlay, Chrome extension, and macOS system control. Runs locally on your Mac with mobile access via Cloudflare Tunnel.
+  <a href="https://github.com/bertrandmbanwi/Jarvis/actions/workflows/ci.yml"><img src="https://github.com/bertrandmbanwi/Jarvis/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/models-OpenAI%20%7C%20Claude%20%7C%20Ollama%20%7C%20Apple-412991?style=flat-square" alt="Models: OpenAI, Claude, Ollama, Apple" />
+  <img src="https://img.shields.io/badge/MCP-client%20%2B%20server-0A7BBB?style=flat-square" alt="MCP client and server" />
+  <img src="https://img.shields.io/badge/platform-macOS-999999?style=flat-square&logo=apple&logoColor=white" alt="macOS" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js" />
-  <img src="https://img.shields.io/badge/three.js-0.183-049EF4?style=flat-square&logo=threedotjs&logoColor=white" alt="Three.js" />
-  <img src="https://img.shields.io/badge/platform-macOS-999999?style=flat-square&logo=apple&logoColor=white" alt="macOS" />
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License" />
+  <a href="#suit-up-quick-start">Quick start</a> ·
+  <a href="HOW-TO.md">Setup guide</a> ·
+  <a href="docs/ROADMAP.md">Roadmap</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
 
+Say "Hey JARVIS" and it answers in a British voice. You can ask it to check your calendar, read the screen, fill a web form, write code, or brief you every morning. It works through 106 tools on your Mac: apps, files, Chrome, email, calendar, notes, the shell and the web. Anything risky waits for your approval.
+
+| | |
+|---|---|
+| 🎙️ **Voice first** | Wake word, local speech-to-text and text-to-speech, and interruptions. Press **Live** for a full-duplex conversation on OpenAI GPT-Live. |
+| 🧠 **Your choice of models** | OpenAI (GPT-6.1 Sol / GPT-6 Luna) by default, Claude as an option, or **fully offline** on Ollama/MLX with Apple's on-device model for quick replies. |
+| 🛠️ **Acts, not just answers** | macOS control, a Chrome extension, a Playwright browser agent with computer use, and Codex or Claude Code for coding tasks. |
+| 🔌 **MCP both ways** | Use any MCP server's tools, or make JARVIS's tools available to Claude Code, Cursor and Codex. |
+| 📚 **Agent Skills** | Drop in `SKILL.md` skills (the open format used by Claude and Codex). Ships with a morning briefing and meeting prep. |
+| 📱 **Everywhere** | Cinematic web UI, desktop overlay, phone access via Cloudflare Tunnel, and Telegram with approval buttons. |
+| 🔒 **Safe by default** | Human approval for high-risk actions, local-origin checks, PIN-protected remote access, and secrets in the macOS Keychain. |
+
+```bash
+git clone https://github.com/bertrandmbanwi/Jarvis.git && cd Jarvis
+./setup.sh && echo 'OPENAI_API_KEY=sk-...' > .env     # or OFFLINE_MODE=true for local models only
+./start.sh full
+```
+
 ## "Good evening, sir. I've prepared a summary of your system."
 
-JARVIS is a fully functional AI assistant that lives on your Mac. Talk to it with your voice, type in the chat, or let it control your computer. It sees your screen, manages your files, browses the web, automates your Chrome browser, and remembers your preferences across sessions.
+JARVIS lives on your Mac. Talk to it, type in the chat, or let it operate your computer. It can see your screen, manage your files, browse the web, drive your Chrome browser, and remember your preferences across sessions.
 
-JARVIS routes each request to the right intelligence tier: a fast model for quick lookups, a mid-tier model for conversation, and a deep reasoning model for complex multi-step plans. Supports both cloud LLM APIs and local Ollama models as a free offline fallback.
+Each request goes to the right model tier: a fast model for quick lookups, a stronger one for conversation and tool use, and deep reasoning for multi-step plans. You can run it on OpenAI, on Anthropic, or entirely on local models.
 
 <p align="center">
   <img src="docs/screenshots/chat-view.png" alt="JARVIS Chat Interface" width="700" />
@@ -47,7 +68,7 @@ A Manifest V3 Chrome extension that gives JARVIS direct control over your browse
 A full Playwright-driven Chromium browser that JARVIS controls autonomously for complex multi-step workflows. Fill forms, click buttons, log into sites, apply to jobs, download files. Persistent browser profile means sessions and cookies survive restarts. The Chrome extension handles lightweight tab operations; Playwright handles deep page automation.
 
 **macOS System Control**
-104 registered tools across 16 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, query free public-data APIs, read Gmail, manage Apple Notes, and delegate coding tasks to OpenAI Codex CLI or Claude Code.
+106 built-in tools across 17 categories (plus any MCP server you connect): open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, query free public-data APIs, read Gmail, manage Apple Notes, and delegate coding tasks to OpenAI Codex CLI or Claude Code.
 
 **Multi-Agent Coordination**
 Complex requests are automatically decomposed into subtasks by the planner agent, then executed in parallel or sequence by specialized executor agents. The QA agent verifies task quality, and the UI shows real-time plan progress with per-subtask status.
@@ -99,7 +120,7 @@ Built-in Cloudflare Tunnel support is available when you set `JARVIS_ENABLE_TUNN
 
 ```bash
 # Clone
-git clone https://github.com/YOUR_USERNAME/Jarvis.git
+git clone https://github.com/bertrandmbanwi/Jarvis.git
 cd Jarvis
 
 # Setup (installs dependencies, pulls Ollama models)
@@ -148,7 +169,7 @@ For the full setup guide including environment variables, launch modes, mobile a
                        +--------+--------+
                                 |
                      +----------+----------+
-                     |  Tool Registry (104)  |
+                     |  Tool Registry (106)  |
                      |  macOS, Files, Web,   |
                      |  Public Data, ...     |
                      +----------+-----------+
@@ -170,7 +191,7 @@ For the full setup guide including environment variables, launch modes, mobile a
 | Local | Ollama (llama3.1:8b) | Free fallback, no API key needed |
 
 Prefer Claude? Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`; the same tiers map to Claude Haiku 4.5, Sonnet 5 and Opus 5.
-All 104 tools are sent with OpenAI's native tool search, so the model loads only the tool schemas it needs.
+All 106 tools are sent with OpenAI's native tool search, so the model loads only the tool schemas it needs.
 
 Cost tracking is built in. The System dashboard shows per-session spend, token counts, and requests by tier.
 
@@ -210,7 +231,7 @@ bash scripts/package_macos_app.sh --install-user
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.11, FastAPI, uvicorn, WebSockets |
-| Frontend | Next.js 15, TypeScript, Three.js 0.183, Tailwind CSS 4 |
+| Frontend | Next.js 15, React 19, TypeScript, Three.js 0.183, Tailwind CSS 4 |
 | Desktop Overlay | Swift, WKWebView, Three.js (macOS native) |
 | Chrome Extension | Manifest V3, chrome.alarms keepalive, WebSocket |
 | Intelligence | OpenAI Responses API (3 tiers; Anthropic optional) + Ollama (local fallback) |
