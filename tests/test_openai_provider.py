@@ -285,7 +285,7 @@ async def test_tool_loop_failure_raises_when_requested(llm):
 
 
 def test_browser_agent_keeps_only_recent_screenshots():
-    from jarvis.tools.browser_agent import KEEP_SCREENSHOTS, _PLACEHOLDER_IMAGE, _prune_openai_screenshots
+    from jarvis.tools.browser_agent import _PLACEHOLDER_IMAGE, KEEP_SCREENSHOTS, _prune_openai_screenshots
 
     items = [
         {"type": "computer_call_output", "call_id": str(i), "output": {"type": "computer_screenshot", "image_url": f"img{i}"}}
