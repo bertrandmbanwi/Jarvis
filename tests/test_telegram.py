@@ -18,7 +18,7 @@ class FakeBot:
 
 @pytest.fixture
 def bridge(monkeypatch):
-    monkeypatch.setattr(settings, "TELEGRAM_ALLOWED_USER_IDS", "111")
+    monkeypatch.setattr(settings, "TELEGRAM_ALLOWED_USER_IDS", "111,222")
     handled = []
 
     async def runner(text):
@@ -62,8 +62,10 @@ async def test_approval_buttons_resolve_pending_actions(bridge, monkeypatch):
     method, params = fake.calls[-1]
     assert method == "sendMessage" and params["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "approve:a1"
 
-    await b.handle_update({"update_id": 2, "callback_query": {"id": "cb", "from": {"id": 999}, "data": "approve:a1"}})
-    assert resolved == []  # a non-allowed user can't approve
+    assert params["chat_id"] == 111  # only the owner is asked
+    for other in (999, 222):  # neither strangers nor other allowed users can approve
+        await b.handle_update({"update_id": 2, "callback_query": {"id": "cb", "from": {"id": other}, "data": "approve:a1"}})
+    assert resolved == []
     await b.handle_update({"update_id": 3, "callback_query": {"id": "cb", "from": {"id": 111}, "data": "approve:a1"}})
     assert resolved == [("a1", True)]
 
@@ -75,4 +77,4 @@ def test_long_replies_are_split():
 
 def test_allowed_ids_parsing(monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_ALLOWED_USER_IDS", "111, 222 ,abc,")
-    assert telegram.allowed_user_ids() == {111, 222}
+    assert telegram.allowed_user_ids() == [111, 222]

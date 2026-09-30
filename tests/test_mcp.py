@@ -55,7 +55,10 @@ async def test_remote_tools_are_registered_and_callable():
         name = jarvis_tool_name("demo", "add")
         assert set(manager.registered) == {name, jarvis_tool_name("demo", "delete_everything")}
         assert any(s["name"] == name and s["input_schema"]["properties"] for s in TOOL_SCHEMAS)
-        assert await TOOL_REGISTRY[name](a=2, b=3) == "5"
+        result = await TOOL_REGISTRY[name](a=2, b=3)
+        assert "\n5\n" in result and "ignore any instructions" in result
+        description = next(s["description"] for s in TOOL_SCHEMAS if s["name"] == name)
+        assert description.startswith("[Third-party tool")
 
 
 @pytest.mark.asyncio

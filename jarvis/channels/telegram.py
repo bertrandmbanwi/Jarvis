@@ -7,7 +7,8 @@ Setup:
    TELEGRAM_ALLOWED_USER_IDS=123456789, then restart JARVIS.
 
 Only allow-listed user ids are answered; everyone else is ignored. High-risk
-tool calls ask for approval with inline Approve/Deny buttons, and scheduled
+tool calls ask the owner (the first allowed id) for approval with inline
+Approve/Deny buttons, and scheduled
 routine results are pushed to the allowed users. Uses the Bot API directly
 (long polling), so no public URL or webhook is needed.
 """
@@ -32,12 +33,16 @@ POLL_TIMEOUT_S = 30
 Runner = Callable[[str], Awaitable[str]]
 
 
-def allowed_user_ids() -> set[int]:
-    ids = set()
+MAX_CONCURRENT_REQUESTS = 4
+
+
+def allowed_user_ids() -> list[int]:
+    """Allowed user ids in configured order; the first one is the owner."""
+    ids: list[int] = []
     for part in settings.TELEGRAM_ALLOWED_USER_IDS.split(","):
         part = part.strip()
-        if part.lstrip("-").isdigit():
-            ids.add(int(part))
+        if part.lstrip("-").isdigit() and int(part) not in ids:
+            ids.append(int(part))
     return ids
 
 
@@ -61,10 +66,15 @@ class TelegramBridge:
         self._runner = runner
         self._client = client or httpx.AsyncClient(timeout=POLL_TIMEOUT_S + 10)
         self._offset = 0
-        self._allowed = allowed_user_ids()
-        # Where to send approval prompts and routine results.
-        self._chat_ids: set[int] = set(self._allowed)
+        ordered = allowed_user_ids()
+        self._allowed = set(ordered)
+        # Only the owner (first allowed id) sees and answers approval prompts,
+        # so another allowed user can't approve an action on the owner's behalf.
+        self._owner = ordered[0] if ordered else None
+        # Where to send routine results (private chats with allowed users).
+        self._chat_ids: set[int] = set(ordered)
         self._tasks: set[asyncio.Task] = set()
+        self._slots = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     async def _call(self, method: str, **params: Any) -> Any:
         resp = await self._client.post(API.format(token=self._token, method=method), json=params)
@@ -91,13 +101,13 @@ class TelegramBridge:
             {"text": "Deny", "callback_data": f"deny:{action['id']}"},
         ]]}
         text = f"JARVIS wants to run {action['tool_name']} ({action['risk']} risk):\n{action['summary']}"
-        for chat_id in self._chat_ids:
-            await self.send(chat_id, text, reply_markup=keyboard)
+        if self._owner is not None:
+            await self.send(self._owner, text, reply_markup=keyboard)
 
     async def handle_update(self, update: dict[str, Any]) -> None:
         callback = update.get("callback_query")
         if callback:
-            if int(callback.get("from", {}).get("id", 0)) not in self._allowed:
+            if int(callback.get("from", {}).get("id", 0)) != self._owner:
                 return
             decision, _, action_id = str(callback.get("data", "")).partition(":")
             resolved = pending_actions.resolve(action_id, approved=decision == "approve")
@@ -122,13 +132,14 @@ class TelegramBridge:
         if text == "/start":
             await self.send(chat_id, "JARVIS here. Ask me anything.")
             return
-        await self._call("sendChatAction", chat_id=chat_id, action="typing")
-        try:
-            reply = await self._runner(text)
-        except Exception as exc:
-            logger.error("Telegram request failed: %s", exc)
-            reply = "Sorry, something went wrong handling that."
-        await self.send(chat_id, reply)
+        async with self._slots:  # bound concurrent brain requests
+            await self._call("sendChatAction", chat_id=chat_id, action="typing")
+            try:
+                reply = await self._runner(text)
+            except Exception as exc:
+                logger.error("Telegram request failed: %s", exc)
+                reply = "Sorry, something went wrong handling that."
+            await self.send(chat_id, reply)
 
     async def run(self) -> None:
         if not self._allowed:
