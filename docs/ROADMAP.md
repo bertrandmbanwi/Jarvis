@@ -97,6 +97,8 @@ Notes:
 
 ## Phase 4 — Ecosystem (the star drivers)
 
+**Status:** 4.1–4.5 shipped in the Phase 4 PR. 4.6 is deferred: the Decisions API is in limited preview with no public reference yet.
+
 | # | Item | Verify |
 |---|---|---|
 | 4.1 | **MCP client**: stdio and streamable-HTTP servers from `~/.jarvis/mcp.json`; their tools join the registry under the permission catalog (unknown tools default to confirm-required) | Test against a stub MCP server |
@@ -104,7 +106,7 @@ Notes:
 | 4.3 | **Agent Skills**: load `SKILL.md` folders from `~/.jarvis/skills` and the repo `skills/`; progressive disclosure into the prompt | Tests |
 | 4.4 | **Telegram channel**: bot bridge to the brain with a user allow-list, confirmations through inline buttons | Tests with mocked Bot API |
 | 4.5 | **Proactive routines**: morning briefing (calendar, email, weather, news) and scheduled check-ins on the existing scheduler | Tests |
-| 4.6 | Decisions API intent router (optional, behind a flag, when out of preview) | Test with mock |
+| 4.6 | *Deferred:* Decisions API intent router, once the API is out of preview and documented | – |
 
 ## Phase 5 — Offline and Apple
 

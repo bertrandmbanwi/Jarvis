@@ -38,6 +38,9 @@ class RoutineRequest(BaseModel):
     prompt: str
     enabled: bool = True
     tags: list[str] = []
+    schedule_time: str | None = None  # local "HH:MM"
+    schedule_days: list[str] = []  # "mon".."sun"; empty = every day
+    speak: bool = False
 
 
 class RoutineRunRequest(BaseModel):

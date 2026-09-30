@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
+from datetime import datetime, timedelta
 from typing import Any
 
 from jarvis.config import settings
@@ -13,7 +15,7 @@ ROUTINES_FILE = settings.DATA_DIR / "routines.json"
 DEFAULT_ROUTINES = [
     {
         "name": "Morning Brief",
-        "prompt": "Give me a concise morning brief: local weather, calendar, unread email count, and any proactive suggestions.",
+        "prompt": "Use the morning-briefing skill to give me my morning briefing.",
         "enabled": True,
         "tags": ["daily", "brief"],
     },
@@ -40,6 +42,11 @@ def _seed_routine(data: dict[str, Any]) -> dict[str, Any]:
         "prompt": data["prompt"],
         "enabled": bool(data.get("enabled", True)),
         "tags": list(data.get("tags", [])),
+        # Optional schedule: run at schedule_time (local "HH:MM") on schedule_days
+        # (e.g. ["mon", "tue"]; empty = every day). No routine is scheduled by default.
+        "schedule_time": data.get("schedule_time"),
+        "schedule_days": list(data.get("schedule_days", [])),
+        "speak": bool(data.get("speak", False)),
         "created_at": now,
         "updated_at": now,
         "last_run_at": None,
@@ -71,9 +78,20 @@ def get_routine(routine_id: str) -> dict[str, Any] | None:
     return next((item for item in _load() if item.get("id") == routine_id), None)
 
 
-def create_routine(name: str, prompt: str, enabled: bool = True, tags: list[str] | None = None) -> dict[str, Any]:
+def create_routine(
+    name: str,
+    prompt: str,
+    enabled: bool = True,
+    tags: list[str] | None = None,
+    schedule_time: str | None = None,
+    schedule_days: list[str] | None = None,
+    speak: bool = False,
+) -> dict[str, Any]:
     items = _load()
-    item = _seed_routine({"name": name.strip(), "prompt": prompt.strip(), "enabled": enabled, "tags": tags or []})
+    item = _seed_routine({
+        "name": name.strip(), "prompt": prompt.strip(), "enabled": enabled, "tags": tags or [],
+        "schedule_time": schedule_time, "schedule_days": schedule_days or [], "speak": speak,
+    })
     items.append(item)
     _save(items)
     return item
@@ -83,7 +101,7 @@ def update_routine(routine_id: str, updates: dict[str, Any]) -> dict[str, Any] |
     items = _load()
     for item in items:
         if item.get("id") == routine_id:
-            for key in ("name", "prompt", "enabled", "tags"):
+            for key in ("name", "prompt", "enabled", "tags", "schedule_time", "schedule_days", "speak"):
                 if key in updates:
                     item[key] = updates[key]
             item["updated_at"] = time.time()
@@ -111,3 +129,37 @@ def mark_routine_run(routine_id: str) -> dict[str, Any] | None:
             return item
     return None
 
+
+
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+# A run missed while the Mac was asleep still happens if it is at most this late.
+MAX_LATENESS = timedelta(hours=2)
+
+
+def valid_schedule(schedule_time: str | None, schedule_days: list[str]) -> bool:
+    if schedule_time is None:
+        return not schedule_days
+    return bool(_TIME.match(schedule_time)) and all(d in WEEKDAYS for d in schedule_days)
+
+
+def due_routines(now: datetime | None = None) -> list[dict[str, Any]]:
+    """Enabled, scheduled routines whose time today has passed and that haven't run since."""
+    now = now or datetime.now()
+    due = []
+    for item in _load():
+        when = item.get("schedule_time")
+        if not item.get("enabled") or not when or not _TIME.match(str(when)):
+            continue
+        days = item.get("schedule_days") or []
+        if days and WEEKDAYS[now.weekday()] not in days:
+            continue
+        hour, minute = map(int, str(when).split(":"))
+        scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if not scheduled <= now <= scheduled + MAX_LATENESS:
+            continue
+        last = item.get("last_run_at")
+        if last is not None and datetime.fromtimestamp(float(last)) >= scheduled:
+            continue
+        due.append(item)
+    return due

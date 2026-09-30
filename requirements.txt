@@ -13,6 +13,9 @@ python-multipart>=0.0.18
 openai>=3.20.0
 anthropic>=0.52.0
 
+# Model Context Protocol (MCP client + JARVIS MCP server)
+mcp>=2.2.0
+
 # Voice: Speech-to-Text
 useful-moonshine-onnx>=1.0.0
 faster-whisper>=1.1.0
