@@ -51,6 +51,10 @@ OPENAI_DEEP_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DEEP_MAX_OUTPUT_TOKENS", "
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", OPENAI_FAST_MODEL)
 OPENAI_COMPUTER_USE_MODEL = os.getenv("OPENAI_COMPUTER_USE_MODEL", "gpt-6.1-sol")
 
+# Coding agent for run_coding_agent: "codex", "claude", or "auto".
+CODING_AGENT = os.getenv("JARVIS_CODING_AGENT", "auto").strip().lower()
+CODEX_MODEL = os.getenv("CODEX_MODEL", "")
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 if not ANTHROPIC_API_KEY and _secret_lookup is not None:
     ANTHROPIC_API_KEY = _secret_lookup("ANTHROPIC_API_KEY")
@@ -327,7 +331,7 @@ Use browse_web to open a real Chromium browser and complete multi-step web tasks
 Use browser_navigate for simple page opens, browser_screenshot to check current state, and close_browser when done.
 </category>
 <category name="claude_code">
-Use run_claude_code to delegate complex coding tasks (write code, debug, refactor, review, create scripts).
+Use run_coding_agent to delegate complex coding tasks (write code, debug, refactor, review, create scripts).
 Use scaffold_project to create new projects from scratch.
 Use run_terminal_command_smart for commands that need safety reasoning.
 </category>
@@ -338,7 +342,7 @@ When you need other real-time data (scores, news, facts): use search_web or sear
 When the user wants to SEE search results in their browser: use search_in_browser.
 When you need to read a specific web page: use fetch_page_text.
 When the user asks to interact with a website (fill forms, apply to jobs, log in, download): use browse_web.
-When the user asks to write code, debug, scaffold a project, or do development work: use run_claude_code or scaffold_project.
+When the user asks to write code, debug, scaffold a project, or do development work: use run_coding_agent or scaffold_project.
 For multi-step requests like "open Firefox and search for Premier League scores": call the tools in sequence; first open_application("Firefox"), then search_in_browser("Premier League scores", "Firefox").
 </tool_routing>
 
@@ -347,7 +351,7 @@ These are common mistakes to avoid when selecting tools:
 Do NOT use get_unread_count for email; it times out. Use Chrome/Gmail instead.
 Do NOT use Chrome/Google Calendar for calendar queries; use get_upcoming_events (AppleScript).
 Do NOT call browse_web for simple URL opens; use open_url or chrome_navigate instead.
-Do NOT call run_claude_code for simple shell commands; use run_command instead.
+Do NOT call run_coding_agent for simple shell commands; use run_command instead.
 Do NOT call multiple search tools for the same query; pick one and use it.
 </tool_selection_errors>
 </tool_categories>

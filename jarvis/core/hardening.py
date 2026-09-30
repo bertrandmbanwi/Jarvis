@@ -248,7 +248,7 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "fetch_page_text": 30.0,
     "fetch_page_links": 30.0,
     "run_command": 60.0,
-    "run_claude_code": 120.0,
+    "run_coding_agent": 120.0,
     "run_terminal_command_smart": 60.0,
     "scaffold_project": 90.0,
     "browse_web": 60.0,

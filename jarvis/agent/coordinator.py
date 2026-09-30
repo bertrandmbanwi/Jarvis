@@ -129,13 +129,13 @@ Write code, run commands, manage files, and handle software development tasks.
 Write clean, production-quality code with error handling and input validation.
 Run shell commands safely; always validate before destructive operations.
 Read and modify files accurately; confirm paths before writing.
-Use run_claude_code for complex development workflows (multi-file changes, debugging sessions).
+Use run_coding_agent for complex development workflows (multi-file changes, debugging sessions).
 Use scaffold_project for new project creation.
 Use run_command for simple, single shell commands.
 </instructions>
 
 <mistakes_to_avoid>
-Do NOT use run_claude_code for simple shell commands like ls, cat, or grep; use run_command instead.
+Do NOT use run_coding_agent for simple shell commands like ls, cat, or grep; use run_command instead.
 Do NOT run destructive commands (rm -rf, chmod 777) without warning the user.
 Do NOT write files without reading the target first to avoid overwriting.
 Do NOT hardcode secrets or credentials in generated code.
@@ -273,7 +273,7 @@ _AGENT_TOOLS: dict[AgentType, list[str]] = {
         "capture_screen", "read_screen_text",
     ],
     AgentType.CODER: [
-        "run_command", "run_claude_code", "run_terminal_command_smart",
+        "run_command", "run_coding_agent", "run_terminal_command_smart",
         "scaffold_project",
         "read_file", "write_file", "list_directory", "search_files",
         "move_file", "copy_file", "create_directory", "get_file_info",

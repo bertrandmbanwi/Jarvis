@@ -62,7 +62,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "get_cache_stats", "clear_cache",
     },
     "development": {
-        "run_claude_code", "run_terminal_command_smart", "scaffold_project",
+        "run_coding_agent", "run_terminal_command_smart", "scaffold_project",
         "run_command", "list_directory", "read_file", "write_file",
         "search_files", "get_file_info", "search_web", "fetch_page_text",
     },
