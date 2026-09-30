@@ -1,6 +1,8 @@
 """Cloud LLM providers behind one interface (OpenAI default, Anthropic optional)."""
 from __future__ import annotations
 
+import os
+
 from jarvis.config import settings
 from jarvis.core.providers.base import (
     CloudProvider,
@@ -32,8 +34,12 @@ async def _retry(call, context: str):
 
 
 def build_provider(name: str | None = None) -> CloudProvider:
-    """Create the configured cloud provider from current settings."""
+    """Create the configured provider from current settings."""
     name = (name or settings.LLM_PROVIDER).lower()
+    if name == "local":
+        from jarvis.core.providers.local_provider import LocalProvider
+
+        return LocalProvider(settings.LOCAL_LLM_BASE_URL, tool_model=settings.LOCAL_LLM_MODEL, retry=_retry)
     if name == "anthropic":
         from jarvis.core.providers.anthropic_provider import AnthropicProvider
 
@@ -50,12 +56,20 @@ def build_provider(name: str | None = None) -> CloudProvider:
 
 def provider_api_key(name: str | None = None) -> str:
     name = (name or settings.LLM_PROVIDER).lower()
+    if name == "local":
+        return settings.LOCAL_LLM_BASE_URL
     return settings.ANTHROPIC_API_KEY if name == "anthropic" else settings.OPENAI_API_KEY
 
 
 def tier_specs(name: str | None = None) -> dict[str, TierSpec]:
     """Model, output budget and effort for each tier, read from settings at call time."""
     name = (name or settings.LLM_PROVIDER).lower()
+    if name == "local":
+        return {
+            "fast": TierSpec(settings.LOCAL_FAST_MODEL, settings.LOCAL_MAX_OUTPUT_TOKENS),
+            "brain": TierSpec(settings.LOCAL_LLM_MODEL, settings.LOCAL_MAX_OUTPUT_TOKENS),
+            "deep": TierSpec(settings.LOCAL_LLM_MODEL, settings.LOCAL_MAX_OUTPUT_TOKENS),
+        }
     if name == "anthropic":
         return {
             "fast": TierSpec(settings.CLAUDE_FAST_MODEL, settings.CLAUDE_FAST_MAX_TOKENS,
@@ -78,6 +92,8 @@ def tier_specs(name: str | None = None) -> dict[str, TierSpec]:
 def vision_spec(name: str | None = None) -> TierSpec:
     """Model settings for screenshot analysis."""
     name = (name or settings.LLM_PROVIDER).lower()
+    if name == "local":
+        return TierSpec(os.getenv("LOCAL_VISION_MODEL", settings.LOCAL_LLM_MODEL), 1024)
     if name == "anthropic":
         return TierSpec(settings.CLAUDE_FAST_MODEL, 1024)
     return TierSpec(settings.OPENAI_VISION_MODEL, 2048, effort="low")
