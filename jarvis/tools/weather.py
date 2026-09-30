@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+from datetime import date
 from typing import Any, cast
 
 from jarvis.core import profile
@@ -14,12 +15,18 @@ try:
 except ImportError:
     HAS_HTTPX = False
 
+DEFAULT_FORECAST_DAYS = 2
+MAX_FORECAST_DAYS = 10
 
-async def get_weather(location: str = "") -> str:
-    """Get current weather and tomorrow's forecast for a location.
+
+async def get_weather(location: str = "", days: int = DEFAULT_FORECAST_DAYS) -> str:
+    """Get current weather and a forecast for a location.
 
     If no location is provided, use the user's default profile location.
+    With the default two days the forecast covers tomorrow; more days give a
+    day-by-day forecast including today.
     """
+    days = DEFAULT_FORECAST_DAYS if days < 1 else min(days, MAX_FORECAST_DAYS)
     location = _resolve_weather_location(location)
     if not location:
         return "Please set your default location in your profile, or ask for weather in a specific city."
@@ -34,7 +41,7 @@ async def get_weather(location: str = "") -> str:
         lat, lon, place_name = coords
         logger.info("Geocoded '%s' to %.4f, %.4f (%s)", location, lat, lon, place_name)
 
-        weather_data = await _fetch_weather(lat, lon)
+        weather_data = await _fetch_weather(lat, lon, days)
         if not weather_data:
             return f"Could not retrieve weather for {place_name}. Please try again."
 
@@ -134,7 +141,7 @@ def _build_search_variants(location: str) -> list[str]:
     return variants
 
 
-async def _fetch_weather(lat: float, lon: float) -> dict | None:
+async def _fetch_weather(lat: float, lon: float, days: int = DEFAULT_FORECAST_DAYS) -> dict | None:
     """Fetch weather data from Open-Meteo Weather API."""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -145,7 +152,7 @@ async def _fetch_weather(lat: float, lon: float) -> dict | None:
         "temperature_unit": "fahrenheit",
         "wind_speed_unit": "mph",
         "precipitation_unit": "inch",
-        "forecast_days": 2,
+        "forecast_days": days,
     }
 
     try:
@@ -221,7 +228,10 @@ def _format_weather_summary(place_name: str, weather_data: dict) -> str:
         temps_min = daily.get("temperature_2m_min", [])
         precip_chance = daily.get("precipitation_probability_max", [])
 
-        if len(times) > 1:
+        if len(times) > DEFAULT_FORECAST_DAYS:
+            lines.append("")
+            lines.extend(_format_daily_lines(daily))
+        elif len(times) > 1:
             tomorrow_code = codes[1] if len(codes) > 1 else None
             tomorrow_max = temps_max[1] if len(temps_max) > 1 else None
             tomorrow_min = temps_min[1] if len(temps_min) > 1 else None
@@ -238,6 +248,40 @@ def _format_weather_summary(place_name: str, weather_data: dict) -> str:
                 lines.append(f"Precipitation chance: {tomorrow_precip}%")
 
     return "\n".join(lines)
+
+
+def _format_daily_lines(daily: dict) -> list[str]:
+    """One line per forecast day, with rain chance and amount."""
+    lines = []
+    for index, day in enumerate(daily.get("time", [])):
+        parts = [_weather_code_to_text(_daily_value(daily, "weather_code", index))]
+        high = _daily_value(daily, "temperature_2m_max", index)
+        low = _daily_value(daily, "temperature_2m_min", index)
+        chance = _daily_value(daily, "precipitation_probability_max", index)
+        amount = _daily_value(daily, "precipitation_sum", index)
+        if high is not None:
+            parts.append(f"high {high}F")
+        if low is not None:
+            parts.append(f"low {low}F")
+        if chance is not None:
+            parts.append(f"rain chance {chance}%")
+        if amount is not None:
+            parts.append(f"{amount} in")
+        lines.append(f"{_day_label(day)}: {', '.join(parts)}")
+    return lines
+
+
+def _daily_value(daily: dict, key: str, index: int) -> Any:
+    values = daily.get(key, [])
+    return values[index] if index < len(values) else None
+
+
+def _day_label(iso_day: str) -> str:
+    try:
+        day = date.fromisoformat(iso_day)
+    except ValueError:
+        return iso_day
+    return f"{day:%A %b} {day.day}"
 
 
 def _weather_code_to_text(code: int | None) -> str:
