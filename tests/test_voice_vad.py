@@ -61,6 +61,7 @@ async def test_barge_in_needs_sustained_speech_and_is_opt_in(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_queued_chunks_are_dropped_after_stop(monkeypatch):
+    pytest.importorskip("soundfile")
     from jarvis.voice.speaker import VoiceSpeaker
 
     speaker = VoiceSpeaker()
