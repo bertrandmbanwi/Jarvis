@@ -415,6 +415,56 @@ class JarvisLLM:
         logger.info("Agentic loop complete: %d tool calls", len(result.tool_calls))
         return result.text, result.tool_calls
 
+    async def chat_with_tools_stream(
+        self,
+        user_message: str,
+        tools: list[dict],
+        tool_executor,
+        conversation_history: list[dict] | None = None,
+        tier: str = "brain",
+        max_iterations: int = 10,
+        system_prompt_override: str | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Run the tool loop, yielding answer text as the model writes it.
+
+        Providers without ``stream_tools`` (and any failure before the first
+        token) fall back to the non-streaming loop, yielded in one piece.
+        """
+        tier = self._apply_cost_mode(tier)
+        paid_blocked, _ = await self._budget_blocked()
+        stream_tools = getattr(self.provider, "stream_tools", None)
+        streamed_any = False
+        if stream_tools is not None and not paid_blocked and self._cloud_ready():
+            start = time.time()
+            try:
+                async for token in stream_tools(
+                    system=self._system(system_prompt_override),
+                    messages=self._build_messages(user_message, conversation_history),
+                    tools=tools,
+                    executor=tool_executor,
+                    spec=self.tier_spec(tier),
+                    max_iterations=max_iterations,
+                    on_usage=lambda usage: self._track_usage(usage, tier, time.time() - start, user_message[:80]),
+                    on_result=lambda result: None,
+                ):
+                    streamed_any = True
+                    yield token
+                self._cloud_succeeded()
+                perf_tracker.record(f"llm.tool_loop.{tier}", time.time() - start)
+                if streamed_any:
+                    return
+            except Exception as e:
+                self._cloud_failed(e)
+                if streamed_any:
+                    yield "\n\n[Response interrupted — please retry.]"
+                    return
+
+        text, _ = await self.chat_with_tools(
+            user_message, tools, tool_executor, conversation_history,
+            tier=tier, max_iterations=max_iterations, system_prompt_override=system_prompt_override,
+        )
+        yield text or "I completed the tool work, but did not receive a final response."
+
     async def _chat_cloud(
         self,
         user_message: str,

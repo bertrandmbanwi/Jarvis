@@ -26,13 +26,21 @@ def brain(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_streaming_agent_path_runs_the_same_executor_as_process(brain, monkeypatch):
+async def test_agent_replies_stream_in_the_ui_and_are_qa_verified_elsewhere(brain, monkeypatch):
     monkeypatch.setattr(brain_module, "_select_tier", lambda text: "brain")
-    streamed = [t async for t in brain.process_stream("summarise my inbox")]
-    assert streamed == ["agent answer"]
+
+    async def fake_stream(*args, **kwargs):
+        for token in ("agent ", "answer"):
+            yield token
+
+    brain.agent.execute_stream = fake_stream
+    # Chat UI: tokens as they are written.
+    assert [t async for t in brain.process_stream("summarise my inbox")] == ["agent ", "answer"]
+    brain.agent.execute.assert_not_awaited()
+    # Voice / REST / jobs: whole reply through the QA-verified executor.
     assert await brain.process("summarise my inbox") == "agent answer"
-    assert brain.agent.execute.await_count == 2  # QA-verified path on both entry points
-    assert [t.role for t in brain.conversation] == ["user", "assistant"] * 2
+    brain.agent.execute.assert_awaited_once()
+    assert [t.content for t in brain.conversation if t.role == "assistant"] == ["agent answer"] * 2
     assert all(t.request_id for t in brain.conversation)
 
 
