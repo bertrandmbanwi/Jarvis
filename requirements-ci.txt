@@ -10,6 +10,7 @@ httpx>=0.28.0
 pydantic>=2.10.0
 websockets>=14.0
 python-multipart>=0.0.18
+openai>=3.20.0
 anthropic>=0.52.0
 chromadb>=0.6.0
 ddgs>=7.0.0
