@@ -16,11 +16,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: requirements-ci.lock
 
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-ci.txt
+          python -m pip install --require-hashes -r requirements-ci.lock
 
       - name: Compile
         run: python -m compileall -q jarvis tests scripts
@@ -79,6 +80,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: requirements-ci.lock
 
       - uses: actions/setup-node@v4
         with:
@@ -89,7 +91,7 @@ jobs:
       - name: Install backend and browser dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-ci.txt
+          python -m pip install --require-hashes -r requirements-ci.lock
           python -m playwright install --with-deps chromium
 
       - name: Install frontend dependencies
