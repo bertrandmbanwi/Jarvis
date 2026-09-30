@@ -18,14 +18,14 @@ Complexity heuristics (checked BEFORE calling the LLM):
 If heuristics are ambiguous, the planner asks Claude (fast tier) to decide.
 This keeps costs low: simple requests never touch the planner LLM at all.
 """
-import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 from jarvis.agent.ab_testing import ABTester
 from jarvis.agent.planning_session import PlanningSession, detect_planning_mode
+from jarvis.agent.schemas import COMPLEXITY_SCHEMA, PLAN_SCHEMA
 from jarvis.agent.task_tracker import TaskPlan, TaskTracker
 from jarvis.agent.templates import fill_template, get_template
 
@@ -94,22 +94,8 @@ Do NOT include greeting or sign-off subtasks. Focus on actions only.
 </mistakes_to_avoid>
 
 <response_format>
-Respond ONLY with valid JSON (no markdown, no code fences).
-
-Simple request:
-{{"needs_decomposition": false, "reason": "Single action request"}}
-
-Complex request:
-{{
-  "needs_decomposition": true,
-  "goal_summary": "Brief description of the overall goal",
-  "subtasks": [
-    {{
-      "title": "Short action title",
-      "description": "What to do in this step, including any context needed"
-    }}
-  ]
-}}
+For a simple request, set needs_decomposition to false, explain why in reason, and leave goal_summary empty and subtasks empty.
+For a complex request, set needs_decomposition to true, give a brief goal_summary, and list the subtasks in order.
 </response_format>
 """
 
@@ -119,7 +105,7 @@ or is it a single action? Consider whether different tools or actions are needed
 
 Request: "{request}"
 
-Respond with ONLY "simple" or "complex". Nothing else.
+Answer with the verdict "simple" or "complex".
 """
 
 
@@ -237,10 +223,8 @@ class TaskPlanner:
 
         try:
             prompt = _COMPLEXITY_CHECK_PROMPT.format(request=user_input[:500])
-            response = await self.llm.chat(prompt, tier="fast")
-            # Read the verdict word, not a substring: "not complex" must stay simple.
-            verdict = re.match(r"\W*(simple|complex)\b", response.lower())
-            is_complex = verdict is not None and verdict.group(1) == "complex"
+            data = await self.llm.chat_json(prompt, COMPLEXITY_SCHEMA, tier="fast")
+            is_complex = bool(data) and data.get("verdict") == "complex"
             logger.info(
                 "Decomposition LLM check: %s (input: '%s')",
                 "complex" if is_complex else "simple",
@@ -314,15 +298,15 @@ class TaskPlanner:
                 except Exception as e:
                     logger.debug("Template selection failed (non-critical): %s", e)
 
-            response = await self.llm.chat(
-                user_message=user_input,
-                conversation_history=conversation_history,
-                system_prompt_override=system_prompt,
+            plan_data = await self.llm.chat_json(
+                user_input,
+                PLAN_SCHEMA,
                 tier="brain",
+                system_prompt_override=system_prompt,
+                conversation_history=conversation_history,
             )
-
-            plan_data = self._parse_plan_response(response)
             if not plan_data:
+                logger.warning("Planner returned no valid plan.")
                 return None
 
             if not plan_data.get("needs_decomposition", False):
@@ -365,30 +349,6 @@ class TaskPlanner:
         except Exception as e:
             logger.error("Planning failed: %s", e)
             return None
-
-    def _parse_plan_response(self, response: str) -> dict | None:
-        """Parse the planner's JSON response, handling markdown code fences."""
-        text = response.strip()
-
-        if text.startswith("```"):
-            text = re.sub(r'^```(?:json)?\s*\n?', '', text)
-            text = re.sub(r'\n?```\s*$', '', text)
-            text = text.strip()
-
-        try:
-            return cast(dict[str, Any], json.loads(text))
-        except json.JSONDecodeError:
-            pass
-
-        match = re.search(r'\{[\s\S]*\}', text)
-        if match:
-            try:
-                return cast(dict[str, Any], json.loads(match.group()))
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning("Could not parse planner response as JSON: %s", text[:200])
-        return None
 
     def get_active_plan(self) -> TaskPlan | None:
         """Get the currently active plan, if any."""

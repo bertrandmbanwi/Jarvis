@@ -1,5 +1,4 @@
 """Tests for JARVIS task planner module."""
-import json
 
 import pytest
 
@@ -238,7 +237,7 @@ class TestPlannerShouldDecompose:
     @pytest.mark.asyncio
     async def test_should_decompose_llm_fallback(self, mock_llm):
         """should_decompose should use LLM for ambiguous cases."""
-        mock_llm.chat.return_value = "complex"
+        mock_llm.chat_json.return_value = {"verdict": "complex"}
         planner = TaskPlanner(llm=mock_llm)
         # Use input that is ambiguous (compound actions, 2 verbs, no sequence markers)
         result = await planner.should_decompose("search the web and read the full documentation for me")
@@ -247,15 +246,16 @@ class TestPlannerShouldDecompose:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("reply", "expected"),
-        [("not complex", False), ("Simple.", False), ("complex", True), ("**Complex**", True), ("", False)],
+        ("verdict", "expected"),
+        [({"verdict": "simple"}, False), ({"verdict": "complex"}, True), (None, False)],
     )
-    async def test_should_decompose_reads_verdict_word(self, mock_llm, reply, expected):
-        """The LLM verdict is read as a word; 'not complex' must not count as complex."""
-        mock_llm.chat.return_value = reply
+    async def test_should_decompose_reads_structured_verdict(self, mock_llm, verdict, expected):
+        """The complexity check uses a structured verdict; no verdict means no decomposition."""
+        mock_llm.chat_json.return_value = verdict
         planner = TaskPlanner(llm=mock_llm)
         result = await planner.should_decompose("search the web and read the full documentation for me")
         assert result is expected
+        assert mock_llm.chat_json.await_args.args[1]["title"] == "complexity_verdict"
 
 
 class TestCreatePlan:
@@ -271,42 +271,26 @@ class TestCreatePlan:
     @pytest.mark.asyncio
     async def test_create_plan_with_valid_response(self, mock_llm):
         """create_plan should parse valid LLM response."""
-        mock_llm.chat.return_value = json.dumps({
+        mock_llm.chat_json.return_value = {
             "needs_decomposition": True,
             "goal_summary": "Search and summarize Python docs",
             "subtasks": [
                 {"title": "Search", "description": "Search for Python docs"},
                 {"title": "Summarize", "description": "Summarize findings"},
             ]
-        })
+        }
         planner = TaskPlanner(llm=mock_llm)
         plan = await planner.create_plan("search for Python docs and summarize")
         assert plan is not None
         assert len(plan.subtasks) == 2
 
     @pytest.mark.asyncio
-    async def test_create_plan_json_with_markdown_fence(self, mock_llm):
-        """create_plan should handle JSON with markdown code fences."""
-        mock_llm.chat.return_value = """```json
-{
-  "needs_decomposition": true,
-  "goal_summary": "Test goal",
-  "subtasks": [
-    {"title": "Step 1", "description": "Do something"}
-  ]
-}
-```"""
-        planner = TaskPlanner(llm=mock_llm)
-        plan = await planner.create_plan("complex task")
-        assert plan is not None
-
-    @pytest.mark.asyncio
     async def test_create_plan_no_decomposition_needed(self, mock_llm):
         """create_plan should return None if no decomposition is needed."""
-        mock_llm.chat.return_value = json.dumps({
+        mock_llm.chat_json.return_value = {
             "needs_decomposition": False,
             "reason": "Single action request"
-        })
+        }
         planner = TaskPlanner(llm=mock_llm)
         plan = await planner.create_plan("simple request")
         assert plan is None
@@ -318,11 +302,11 @@ class TestCreatePlan:
             {"title": f"Step {i}", "description": f"Do step {i}"}
             for i in range(15)
         ]
-        mock_llm.chat.return_value = json.dumps({
+        mock_llm.chat_json.return_value = {
             "needs_decomposition": True,
             "goal_summary": "Long plan",
             "subtasks": many_subtasks
-        })
+        }
         planner = TaskPlanner(llm=mock_llm)
         plan = await planner.create_plan("complex task with many steps")
         assert plan is not None
@@ -331,7 +315,7 @@ class TestCreatePlan:
     @pytest.mark.asyncio
     async def test_create_plan_invalid_json_response(self, mock_llm):
         """create_plan should handle invalid JSON gracefully."""
-        mock_llm.chat.return_value = "This is not JSON at all"
+        mock_llm.chat_json.return_value = None  # no backend produced valid JSON
         planner = TaskPlanner(llm=mock_llm)
         plan = await planner.create_plan("search then read then summarize")
         assert plan is None
@@ -339,73 +323,14 @@ class TestCreatePlan:
     @pytest.mark.asyncio
     async def test_create_plan_missing_subtasks(self, mock_llm):
         """create_plan should return None if subtasks are missing."""
-        mock_llm.chat.return_value = json.dumps({
+        mock_llm.chat_json.return_value = {
             "needs_decomposition": True,
             "goal_summary": "Goal",
             "subtasks": []
-        })
+        }
         planner = TaskPlanner(llm=mock_llm)
         plan = await planner.create_plan("complex task")
         assert plan is None
-
-
-class TestParseplanResponse:
-    """Test the _parse_plan_response method."""
-
-    def test_parse_valid_json(self):
-        """Should parse valid JSON."""
-        planner = TaskPlanner()
-        response = '{"needs_decomposition": true, "goal_summary": "test"}'
-        result = planner._parse_plan_response(response)
-        assert result is not None
-        assert result["needs_decomposition"] is True
-
-    def test_parse_json_with_markdown_fence(self):
-        """Should strip markdown code fences."""
-        planner = TaskPlanner()
-        response = """```json
-{"needs_decomposition": true}
-```"""
-        result = planner._parse_plan_response(response)
-        assert result is not None
-        assert result["needs_decomposition"] is True
-
-    def test_parse_json_with_backticks_no_language(self):
-        """Should handle backticks without language specification."""
-        planner = TaskPlanner()
-        response = """```
-{"needs_decomposition": false}
-```"""
-        result = planner._parse_plan_response(response)
-        assert result is not None
-
-    def test_parse_json_with_leading_text(self):
-        """Should extract JSON from text with leading content."""
-        planner = TaskPlanner()
-        response = 'Some text {"needs_decomposition": true} trailing text'
-        result = planner._parse_plan_response(response)
-        assert result is not None
-        assert result["needs_decomposition"] is True
-
-    def test_parse_invalid_json(self):
-        """Should return None for invalid JSON."""
-        planner = TaskPlanner()
-        response = "This is not JSON"
-        result = planner._parse_plan_response(response)
-        assert result is None
-
-    def test_parse_empty_response(self):
-        """Should handle empty response."""
-        planner = TaskPlanner()
-        result = planner._parse_plan_response("")
-        assert result is None
-
-    def test_parse_malformed_json(self):
-        """Should return None for malformed JSON."""
-        planner = TaskPlanner()
-        response = '{"needs_decomposition": true, "incomplete": '
-        result = planner._parse_plan_response(response)
-        assert result is None
 
 
 class TestPlannerEdgeCases:
@@ -414,7 +339,7 @@ class TestPlannerEdgeCases:
     @pytest.mark.asyncio
     async def test_should_decompose_llm_error(self, mock_llm):
         """should_decompose should handle LLM errors gracefully."""
-        mock_llm.chat.side_effect = Exception("LLM error")
+        mock_llm.chat_json.side_effect = Exception("LLM error")
         planner = TaskPlanner(llm=mock_llm)
         result = await planner.should_decompose("search and read and write")
         assert result is False  # Should default to False on error
@@ -422,7 +347,7 @@ class TestPlannerEdgeCases:
     @pytest.mark.asyncio
     async def test_create_plan_llm_error(self, mock_llm):
         """create_plan should handle LLM errors gracefully."""
-        mock_llm.chat.side_effect = Exception("LLM error")
+        mock_llm.chat_json.side_effect = Exception("LLM error")
         planner = TaskPlanner(llm=mock_llm)
         plan = await planner.create_plan("search then read")
         assert plan is None
