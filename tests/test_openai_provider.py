@@ -294,3 +294,58 @@ def test_browser_agent_keeps_only_recent_screenshots():
     _prune_openai_screenshots(items)
     kept = [i["output"]["image_url"] for i in items if i["output"]["image_url"] != _PLACEHOLDER_IMAGE]
     assert kept == [f"img{i}" for i in range(5 - (KEEP_SCREENSHOTS - 1), 5)]
+
+
+class FakeStream:
+    def __init__(self, deltas, final):
+        self._deltas, self._final = deltas, final
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def __aiter__(self):
+        async def gen():
+            for d in self._deltas:
+                yield SimpleNamespace(type="response.output_text.delta", delta=d)
+        return gen()
+
+    async def get_final_response(self):
+        return self._final
+
+
+@pytest.mark.asyncio
+async def test_stream_tools_yields_text_and_runs_tools_between_turns():
+    turns = [
+        FakeStream(["Checking"], response([call("get_weather", {"location": "Paris"}, "c1")])),
+        FakeStream(["Sunny", " today."], response([message("Sunny today.")], text="Sunny today.")),
+    ]
+    requests = []
+
+    def stream(**kwargs):
+        requests.append({**kwargs, "input": list(kwargs["input"])})
+        return turns.pop(0)
+
+    client = SimpleNamespace(responses=SimpleNamespace(stream=stream))
+    results = []
+    tokens = [
+        t async for t in OpenAIProvider("key", client=client).stream_tools(
+            system=SYSTEM, messages=[{"role": "user", "content": "weather?"}],
+            tools=[{"name": "get_weather", "input_schema": {"type": "object"}}],
+            executor=AsyncMock(return_value="72F"), spec=SPEC, max_iterations=4,
+            on_usage=lambda u: None, on_result=results.append,
+        )
+    ]
+    assert tokens == ["Checking", "Sunny", " today."]
+    assert results[0].text == "Sunny today." and results[0].tool_calls[0]["name"] == "get_weather"
+    assert any(i.get("type") == "function_call_output" for i in requests[1]["input"])
+
+
+@pytest.mark.asyncio
+async def test_llm_tool_stream_falls_back_when_provider_cannot_stream(llm):
+    instance, provider = llm
+    provider.fail = False
+    provider.run_tools = AsyncMock(return_value=SimpleNamespace(text="whole answer", tool_calls=[], completed=True))
+    assert [t async for t in instance.chat_with_tools_stream("x", [], AsyncMock())] == ["whole answer"]

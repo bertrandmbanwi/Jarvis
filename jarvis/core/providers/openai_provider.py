@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
 from jarvis.core.providers.base import (
@@ -34,6 +34,7 @@ from jarvis.core.providers.base import (
 logger = logging.getLogger("jarvis.providers.openai")
 
 _INCLUDE = ["reasoning.encrypted_content"]
+_ITERATION_LIMIT_TEXT = "I hit my processing limit. Let me know if you would like to continue."
 
 
 def _usage_from(resp_usage: Any, model: str) -> Usage:
@@ -254,6 +255,49 @@ class OpenAIProvider:
             raise ProviderError(str(exc)) from exc
         on_usage(_usage_from(getattr(final, "usage", None), spec.model))
 
+    def _tool_kwargs(self, system: SystemPrompt, spec: TierSpec, tools: list[dict[str, Any]]) -> dict[str, Any]:
+        kwargs = self._base_kwargs(system, spec)
+        openai_tools = [to_openai_tool(t) for t in tools]
+        if any(t.get("defer_loading") for t in openai_tools):
+            openai_tools.append({"type": "tool_search"})
+        if openai_tools:
+            kwargs["tools"] = openai_tools
+            kwargs["parallel_tool_calls"] = True
+        return kwargs
+
+    async def _advance(
+        self,
+        resp: Any,
+        input_items: list[dict[str, Any]],
+        log: list[dict[str, Any]],
+        executor: ToolExecutor,
+        spec: TierSpec,
+        on_usage: UsageSink,
+    ) -> ToolLoopResult | None:
+        """Process one response: run its tool calls, or return the final result."""
+        on_usage(_usage_from(getattr(resp, "usage", None), spec.model))
+        output = list(getattr(resp, "output", None) or [])
+        calls = [item for item in output if getattr(item, "type", "") == "function_call"]
+        input_items.extend(_as_input_item(item) for item in output)
+        logger.info("Tool loop [%s]: %d call(s), status=%s", spec.model, len(calls), getattr(resp, "status", ""))
+
+        if not calls:
+            incomplete = getattr(resp, "status", "") == "incomplete"
+            text = _response_text(resp)
+            if not text and incomplete:
+                text = "I hit a processing limit. Could you simplify the request?"
+            return ToolLoopResult(text=text, tool_calls=log, completed=not incomplete)
+
+        results = await asyncio.gather(*(self._run_call(call, executor) for call in calls))
+        for call, (tool_input, result) in zip(calls, results, strict=True):
+            log.append({"name": call.name, "input": tool_input, "result": tool_result_text(result)[:2000]})
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": _tool_output(result),
+            })
+        return None
+
     async def run_tools(
         self,
         *,
@@ -265,53 +309,56 @@ class OpenAIProvider:
         max_iterations: int,
         on_usage: UsageSink,
     ) -> ToolLoopResult:
-        kwargs = self._base_kwargs(system, spec)
-        openai_tools = [to_openai_tool(t) for t in tools]
-        if any(t.get("defer_loading") for t in openai_tools):
-            openai_tools.append({"type": "tool_search"})
-        if openai_tools:
-            kwargs["tools"] = openai_tools
-            kwargs["parallel_tool_calls"] = True
+        kwargs = self._tool_kwargs(system, spec, tools)
         input_items = self._input(system, messages)
         log: list[dict[str, Any]] = []
 
-        for iteration in range(1, max_iterations + 1):
+        for _ in range(max_iterations):
             resp = await self._create(input=input_items, **kwargs)
-            on_usage(_usage_from(getattr(resp, "usage", None), spec.model))
-            output = list(getattr(resp, "output", None) or [])
-            calls = [item for item in output if getattr(item, "type", "") == "function_call"]
-            input_items.extend(_as_input_item(item) for item in output)
-            logger.info(
-                "Tool loop [iter %d, %s]: %d call(s), status=%s",
-                iteration, spec.model, len(calls), getattr(resp, "status", ""),
-            )
+            result = await self._advance(resp, input_items, log, executor, spec, on_usage)
+            if result is not None:
+                return result
 
-            if not calls:
-                incomplete = getattr(resp, "status", "") == "incomplete"
-                text = _response_text(resp)
-                if not text and incomplete:
-                    text = "I hit a processing limit. Could you simplify the request?"
-                return ToolLoopResult(text=text, tool_calls=log, completed=not incomplete)
+        return ToolLoopResult(text=_ITERATION_LIMIT_TEXT, tool_calls=log, completed=False)
 
-            results = await asyncio.gather(*(self._run_call(call, executor) for call in calls))
-            for call, (tool_input, result) in zip(calls, results, strict=True):
-                output_value = _tool_output(result)
-                log.append({
-                    "name": call.name,
-                    "input": tool_input,
-                    "result": tool_result_text(result)[:2000],
-                })
-                input_items.append({
-                    "type": "function_call_output",
-                    "call_id": call.call_id,
-                    "output": output_value,
-                })
+    async def stream_tools(
+        self,
+        *,
+        system: SystemPrompt,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+        executor: ToolExecutor,
+        spec: TierSpec,
+        max_iterations: int,
+        on_usage: UsageSink,
+        on_result: Callable[[ToolLoopResult], None],
+    ) -> AsyncIterator[str]:
+        """Tool loop that yields answer text as it is generated.
 
-        return ToolLoopResult(
-            text="I hit my processing limit. Let me know if you would like to continue.",
-            tool_calls=log,
-            completed=False,
-        )
+        Tool calls still run between model turns; ``on_result`` receives the
+        final ToolLoopResult. Not retried: text may already have been shown.
+        """
+        client = self._get_client()
+        kwargs = self._tool_kwargs(system, spec, tools)
+        input_items = self._input(system, messages)
+        log: list[dict[str, Any]] = []
+
+        for _ in range(max_iterations):
+            try:
+                async with client.responses.stream(input=input_items, **kwargs) as stream:
+                    async for event in stream:
+                        if getattr(event, "type", "") == "response.output_text.delta":
+                            yield event.delta
+                    resp = await stream.get_final_response()
+            except Exception as exc:
+                raise ProviderError(str(exc)) from exc
+            result = await self._advance(resp, input_items, log, executor, spec, on_usage)
+            if result is not None:
+                on_result(result)
+                return
+
+        yield _ITERATION_LIMIT_TEXT
+        on_result(ToolLoopResult(text=_ITERATION_LIMIT_TEXT, tool_calls=log, completed=False))
 
     @staticmethod
     async def _run_call(call: Any, executor: ToolExecutor) -> tuple[dict, Any]:
