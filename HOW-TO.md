@@ -25,7 +25,7 @@ Optional (recommended):
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/Jarvis.git
+git clone https://github.com/bertrandmbanwi/Jarvis.git
 cd Jarvis
 
 # 2. Run the setup script (installs Python deps, pulls Ollama models)
