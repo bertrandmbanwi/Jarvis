@@ -131,12 +131,14 @@ Notes:
 
 ## Phase 7 — Growth and release
 
+**Status:** everything that can be done in the repository is in the community-files PR and the launch PR. Posting, repository settings, signing and recording are steps for the owner, listed in `docs/launch/LAUNCH_KIT.md`.
+
 | # | Item | Needs owner |
 |---|---|---|
 | 7.1 | README hero rewrite around one hook, a comparison table and quick start | – |
 | 7.2 | CONTRIBUTING, CODE_OF_CONDUCT, issue and PR templates, SECURITY.md | – |
 | 7.3 | 5–10 "good first issue" drafts | Owner files them |
-| 7.4 | Demo GIF/WebP of the orb plus UI screenshots | Owner records the voice demo |
+| 7.4 | Demo GIF of the boot sequence and live orb (recorded from the real UI) at the top of the README; social preview image | Owner records the voice demo video |
 | 7.5 | v1.0.0 release: changelog, DMG from `scripts/package_macos_app.sh` | Owner signs and publishes |
 | 7.6 | Repo metadata: description (fix 104 vs 109 tools), topics (`mcp`, `openai`, `local-llm`, `ai-agent`), Discussions, social preview | Owner approves |
 | 7.7 | Launch kit: Show HN, r/LocalLLaMA, r/macapps and Product Hunt drafts; PRs to awesome-lists | Owner posts |
