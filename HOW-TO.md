@@ -238,7 +238,6 @@ Jarvis/
   requirements.txt            # Python dependencies
   com.jarvis.assistant.plist  # macOS auto-start config
   tests/                      # Unit tests (pytest)
-  templates/prompts/          # Structured prompt templates (build, feature, fix, etc.)
   desktop-overlay/
     JarvisOverlay.swift       # macOS native overlay (Swift + WKWebView)
     build-overlay.sh          # Compile and bundle into .app
@@ -270,9 +269,6 @@ Jarvis/
       learning.py             # Pattern learning from past plans
       suggestions.py          # Proactive follow-up suggestions
       templates.py            # Structured prompt template library
-      template_evolution.py   # Template A/B testing and evolution
-      evolution_pipeline.py   # Cross-session performance evolution
-      ab_testing.py           # A/B testing framework
     memory/
       store.py                # Abstract memory interface
       sqlite_store.py         # SQLite-backed semantic memory
@@ -378,7 +374,6 @@ JARVIS includes a full multi-agent pipeline for complex task execution:
 | QA Agent | Verifies task quality and retries if below threshold |
 | Coordinator | Orchestrates parallel and sequential execution |
 | Learning | Captures patterns from successful plans for reuse |
-| Evolution Pipeline | A/B tests prompt templates and evolves them over sessions |
 | Task Tracker | Persists plan state so multi-step work survives restarts |
 
 The UI shows real-time plan progress via the PlanProgress component, with per-subtask status indicators.
@@ -470,7 +465,6 @@ JARVIS stores persistent data in the `data/` directory:
 | `data/profile/` | User profile and preference data |
 | `data/sessions/` | Persistent work session state |
 | `data/jarvis_dispatch.db` | Tool dispatch tracking (SQLite) |
-| `data/jarvis_experiments.db` | A/B testing experiment data (SQLite) |
 | `data/jarvis_memory.db` | Semantic memory with FTS (SQLite) |
 
 ## Troubleshooting

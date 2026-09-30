@@ -72,14 +72,16 @@ Notes:
 
 ## Phase 2 — Architecture cleanup
 
+**Status:** shipped in the Phase 2 PR.
+
 | # | Item | Verify |
 |---|---|---|
-| 2.1 | Split `server.py` into `APIRouter` modules (auth, chat/ws, jobs, workflows, calendar, lifecycle, product) | All routes still registered (route-table test) |
+| 2.1 | Split `server.py` (2,781 → 1,757 lines): security helpers, runtime state, API models, job runners, and workflow/calendar `APIRouter`s moved out | Route table identical before/after; every route rejects unauthenticated remote clients (test) |
 | 2.2 | Merge `process` and `process_stream` into one pipeline with a streaming sink | Tests |
-| 2.3 | Self-improvement code: delete the parts that do nothing (A/B testing, template evolution, evolution pipeline) or wire them up for real; the README only claims what works | Tests; README |
-| 2.4 | Memory: one write per exchange, dedupe, and vector recall available to agent and plan requests; recalled text is marked as data, not instructions | Memory tests |
+| 2.3 | Removed the A/B testing, template evolution and evolution pipeline code (~1.1k lines that recorded rows but changed nothing); README only claims what works | Tests; README |
+| 2.4 | Memory: one write per exchange, exact-repeat dedupe, UUID ids, and recall for agent requests (not just chat); recalled text is wrapped and marked as data, not instructions | Memory tests |
 | 2.5 | Tool-schema drift check: every schema has an implementation and vice versa; cache and selector lists validated | Contract test in CI |
-| 2.6 | Pin dependencies with `uv` + `uv.lock`; CI uses the lock | CI |
+| 2.6 | CI installs a pinned, hashed `requirements-ci.lock` (compiled with `uv`) | Suite passes on the locked set |
 
 ## Phase 3 — Voice
 

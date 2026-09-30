@@ -434,8 +434,6 @@ UI_PORT = int(os.getenv("UI_PORT", "3000"))
 CHROMA_PERSIST_DIR = str(MEMORY_DIR / "chroma")
 MEMORY_COLLECTION = "jarvis_conversations"
 
-# Template system
-TEMPLATES_DIR = str(JARVIS_HOME / "templates" / "prompts")
 
 # SQLite memory
 SQLITE_MEMORY_DB = str(DATA_DIR / "jarvis_memory.db")
@@ -443,8 +441,6 @@ SQLITE_MEMORY_DB = str(DATA_DIR / "jarvis_memory.db")
 # Dispatch registry
 DISPATCH_DB = str(DATA_DIR / "jarvis_dispatch.db")
 
-# A/B testing experiments
-EXPERIMENTS_DB = str(DATA_DIR / "jarvis_experiments.db")
 
 # QA verification
 QA_MAX_RETRIES = int(os.getenv("QA_MAX_RETRIES", "3"))
