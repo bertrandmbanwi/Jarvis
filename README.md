@@ -31,7 +31,7 @@ Say "Hey JARVIS" and it answers in a British voice. You can ask it to check your
 | 🛠️ **Acts, not just answers** | macOS control, a Chrome extension, a Playwright browser agent with computer use, and Codex or Claude Code for coding tasks. |
 | 🔌 **MCP both ways** | Use any MCP server's tools, or make JARVIS's tools available to Claude Code, Cursor and Codex. |
 | 📚 **Agent Skills** | Drop in `SKILL.md` skills (the open format used by Claude and Codex). Ships with a morning briefing and meeting prep. |
-| 📱 **Everywhere** | Cinematic web UI, desktop overlay, phone access via Cloudflare Tunnel, and Telegram with approval buttons. |
+| 📱 **Everywhere** | Cinematic web UI, desktop overlay, phone access via Cloudflare Tunnel, and Telegram or iMessage with approval prompts. |
 | 🔒 **Safe by default** | Human approval for high-risk actions, local-origin checks, PIN-protected remote access, and secrets in the macOS Keychain. |
 
 ```bash
@@ -103,8 +103,8 @@ Plug any MCP server into JARVIS through `~/.jarvis/mcp.json` (the same format as
 **Agent Skills**
 Drop `SKILL.md` folders into `skills/` or `~/.jarvis/skills` and JARVIS loads their instructions only when a task needs them. This is the open Agent Skills format, so skills written for other agents work here too. Ships with `morning-briefing` and `meeting-prep`.
 
-**Telegram and Scheduled Routines**
-Message JARVIS from Telegram (allow-listed users only), with Approve/Deny buttons for anything risky. Give a routine a time (for example, the morning briefing at 07:30 on weekdays) and JARVIS runs it and sends you the result.
+**Telegram, iMessage and Scheduled Routines**
+Message JARVIS from Telegram or iMessage (allow-listed senders only), with approval prompts for anything risky. Give a routine a time (for example, the morning briefing at 07:30 on weekdays) and JARVIS runs it and sends you the result.
 
 **Cloud Voice Mode (GPT-Live)**
 Press **Live** for a hands-free, full-duplex conversation on OpenAI's GPT-Live: interrupt at any time, and JARVIS does the actual work (tools, memory, approvals) behind it. Local voice stays the free, offline default.

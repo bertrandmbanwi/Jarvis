@@ -305,15 +305,20 @@ class JarvisBrain:
         return True
 
     async def process(self, user_input: str) -> str:
-        """Process user message and return the complete response."""
-        return "".join([token async for token in self.process_stream(user_input)])
+        """Process user message and return the complete response.
 
-    async def process_stream(self, user_input: str):
+        Agent replies are QA-verified here (they are returned whole, so a
+        corrected answer can still replace the first one).
+        """
+        return "".join([token async for token in self.process_stream(user_input, stream_agent=False)])
+
+    async def process_stream(self, user_input: str, stream_agent: bool = True):
         """Process a user message, yielding the response as it is produced.
 
         This is the single request pipeline: ``process`` collects its output.
-        Plain chat streams token by token; agent and plan responses arrive in
-        one piece once their tool work finishes.
+        Chat streams token by token, and so do agent replies when
+        ``stream_agent`` is set (the chat UI); plan responses arrive in one
+        piece once their subtasks finish.
         """
         if not self._initialized:
             yield "I am not fully initialized yet. Please wait a moment."
@@ -372,12 +377,20 @@ class JarvisBrain:
                 logger.info("[req:%s] Routing to PLAN+EXECUTE mode [tier: %s].", request_id, tier)
                 with trace_span("brain.plan_execute", request_id=request_id, tier=tier):
                     result = await self._execute_plan(user_input, history, tier)
+            elif stream_agent:
+                logger.info("[req:%s] Routing to AGENT mode (streaming) [tier: %s].", request_id, tier)
+                result = ""
+                with trace_span("brain.agent_execute", request_id=request_id, tier=tier):
+                    async for token in self.agent.execute_stream(enriched_input, history, tier=tier):
+                        parts.append(token)
+                        yield token
             else:
                 logger.info("[req:%s] Routing to AGENT mode [tier: %s].", request_id, tier)
                 with trace_span("brain.agent_execute", request_id=request_id, tier=tier):
                     result = await self.agent.execute(enriched_input, history, tier=tier)
-            parts.append(result)
-            yield result
+            if result:
+                parts.append(result)
+                yield result
 
         response = "".join(parts)
         followups = await self._after_response(user_input, response, start_time)

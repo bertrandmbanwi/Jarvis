@@ -585,8 +585,16 @@ async def lifespan(app: FastAPI):
             TelegramBridge(settings.TELEGRAM_BOT_TOKEN, runner=brain.process).run(), name="telegram"
         )
 
+    imessage_task = None
+    if settings.IMESSAGE_ALLOWED_HANDLES:
+        from jarvis.channels.imessage import IMessageBridge
+
+        imessage_task = asyncio.create_task(IMessageBridge(runner=brain.process).run(), name="imessage")
+
     yield
 
+    if imessage_task is not None:
+        imessage_task.cancel()
     pending_actions.remove_notifier(ws_manager.broadcast_json)
     cleanup_task.cancel()
     scheduler_task.cancel()
@@ -834,6 +842,13 @@ async def _workflow_scheduler_loop():
         if not settings.WORKFLOW_SCHEDULER_ENABLED:
             continue
         try:
+            if settings.ANTHROPIC_BATCH_FOR_BACKGROUND and settings.LLM_PROVIDER != "local":
+                # Batch results can take hours; run in the background so the
+                # scheduler keeps ticking.
+                spawn_background(
+                    workflow_scheduler.run_due_workflows(runner=batch.run_prompt), name="workflow-batch"
+                )
+                continue
             runs = await workflow_scheduler.run_due_workflows(runner=brain.process)
             if runs:
                 logger.info("Scheduled workflows completed: %d", len(runs))
