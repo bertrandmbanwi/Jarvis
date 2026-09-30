@@ -47,7 +47,7 @@ A Manifest V3 Chrome extension that gives JARVIS direct control over your browse
 A full Playwright-driven Chromium browser that JARVIS controls autonomously for complex multi-step workflows. Fill forms, click buttons, log into sites, apply to jobs, download files. Persistent browser profile means sessions and cookies survive restarts. The Chrome extension handles lightweight tab operations; Playwright handles deep page automation.
 
 **macOS System Control**
-104 registered tools across 16 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, query free public-data APIs, read Gmail, manage Apple Notes, and delegate coding tasks via Claude Code CLI.
+104 registered tools across 16 categories: open and close apps, adjust volume and brightness, manage files, execute shell commands, take screenshots with OCR, search the web, check weather, query free public-data APIs, read Gmail, manage Apple Notes, and delegate coding tasks to OpenAI Codex CLI or Claude Code.
 
 **Multi-Agent Coordination**
 Complex requests are automatically decomposed into subtasks by the planner agent, then executed in parallel or sequence by specialized executor agents. The QA agent verifies task quality, and the UI shows real-time plan progress with per-subtask status.
@@ -91,7 +91,7 @@ cd Jarvis
 chmod +x setup.sh && ./setup.sh
 
 # Configure
-echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' > .env
+echo 'OPENAI_API_KEY=sk-your-key-here' > .env
 
 # Launch
 ./start.sh full
@@ -147,12 +147,15 @@ For the full setup guide including environment variables, launch modes, mobile a
 
 ## Intelligence Tiers
 
-| Tier | Model | When Used |
+| Tier | Model (OpenAI, default) | When Used |
 |------|-------|-----------|
-| Fast | Claude Haiku 4.5 | Quick lookups, simple questions |
-| Brain | Claude Sonnet 4.6 | General conversation, single tool calls |
-| Deep | Claude Opus 4.6 | Complex reasoning, multi-step plans |
+| Fast | GPT-6 Luna, low effort | Quick lookups, routing, QA checks |
+| Brain | GPT-6.1 Sol, medium effort | General conversation, tool use, planning |
+| Deep | GPT-6.1 Sol, high effort | Complex reasoning, multi-step plans |
 | Local | Ollama (llama3.1:8b) | Free fallback, no API key needed |
+
+Prefer Claude? Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`; the same tiers map to Claude Haiku 4.5, Sonnet 5 and Opus 5.
+All 104 tools are sent with OpenAI's native tool search, so the model loads only the tool schemas it needs.
 
 Cost tracking is built in. The System dashboard shows per-session spend, token counts, and requests by tier.
 
@@ -195,7 +198,7 @@ bash scripts/package_macos_app.sh --install-user
 | Frontend | Next.js 15, TypeScript, Three.js 0.183, Tailwind CSS 4 |
 | Desktop Overlay | Swift, WKWebView, Three.js (macOS native) |
 | Chrome Extension | Manifest V3, chrome.alarms keepalive, WebSocket |
-| Intelligence | Claude API (3 tiers) + Ollama (local fallback) |
+| Intelligence | OpenAI Responses API (3 tiers; Anthropic optional) + Ollama (local fallback) |
 | Speech-to-Text | Moonshine ONNX (primary), faster-whisper (fallback) |
 | Text-to-Speech | Kokoro TTS (local), Edge TTS (cloud), macOS say |
 | Audio Format | Opus/WebM via FFmpeg (~10x compression) |
