@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/bertrandmbanwi/Jarvis/discussions
+    about: Ask questions, share setups and discuss ideas.
+  - name: Report a security vulnerability
+    url: https://github.com/bertrandmbanwi/Jarvis/security/advisories/new
+    about: Please report security issues privately.
