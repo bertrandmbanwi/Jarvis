@@ -277,6 +277,7 @@ class JarvisLLM:
         schema: dict[str, Any],
         tier: str = "fast",
         system_prompt_override: str | None = None,
+        conversation_history: list[dict] | None = None,
     ) -> dict[str, Any] | None:
         """Get a response that conforms to ``schema`` (structured outputs).
 
@@ -292,7 +293,7 @@ class JarvisLLM:
             try:
                 raw, usage = await self.provider.complete(
                     system=self._system(system_prompt_override),
-                    messages=[{"role": "user", "content": sanitize_user_input(user_message)}],
+                    messages=self._build_messages(sanitize_user_input(user_message), conversation_history),
                     spec=spec,
                     json_schema=schema,
                 )
@@ -302,7 +303,7 @@ class JarvisLLM:
                 self._cloud_failed(e)
                 raw = ""
         if not raw and await self._check_ollama_health():
-            raw = await self._chat_ollama(user_message, None, json_schema=schema)
+            raw = await self._chat_ollama(user_message, conversation_history, json_schema=schema)
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
