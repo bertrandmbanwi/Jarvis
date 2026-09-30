@@ -1,5 +1,9 @@
 # CI-friendly dependency set.
 #
+# CI installs the pinned, hashed requirements-ci.lock. After changing this
+# file, regenerate it with:
+#   uv pip compile requirements-ci.txt --universal --python-version 3.11 --generate-hashes -o requirements-ci.lock
+#
 # The full macOS voice stack depends on local audio drivers and large ML
 # packages, so CI installs the API/test/runtime subset needed for linting,
 # type-checking, unit tests, contract checks, evals, and Playwright smoke tests.

@@ -67,6 +67,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "search_files", "get_file_info", "search_web", "fetch_page_text",
     },
     "screen": {"capture_screen", "read_screen_text", "analyze_screen"},
+    "proactive": {"get_proactive_status", "set_proactive_setting"},
 }
 
 KEYWORD_GROUPS: list[tuple[set[str], str]] = [
@@ -92,6 +93,7 @@ KEYWORD_GROUPS: list[tuple[set[str], str]] = [
     ({"plan", "agent", "learning", "cache", "performance", "health"}, "planning"),
     ({"code", "build", "debug", "repo", "repository", "test", "implement", "fix"}, "development"),
     ({"screen", "display", "look at", "visible"}, "screen"),
+    ({"proactive", "suggestion", "suggestions", "check-in", "check in", "nudge"}, "proactive"),
 ]
 
 

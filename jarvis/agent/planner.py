@@ -23,7 +23,6 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from jarvis.agent.ab_testing import ABTester
 from jarvis.agent.planning_session import PlanningSession, detect_planning_mode
 from jarvis.agent.schemas import COMPLEXITY_SCHEMA, PLAN_SCHEMA
 from jarvis.agent.task_tracker import TaskPlan, TaskTracker
@@ -127,14 +126,6 @@ def _infer_template_task_type(text: str) -> str:
     return "feature"
 
 
-def _ab_task_type_for(template_task_type: str) -> str:
-    """Map in-memory template names to versioned YAML template filenames."""
-    return {
-        "bug_fix": "fix",
-        "fullstack_app": "build",
-    }.get(template_task_type, template_task_type)
-
-
 def _has_sequence_markers(text: str) -> bool:
     """Check if the text contains explicit sequencing language."""
     text_lower = text.lower()
@@ -199,12 +190,6 @@ class TaskPlanner:
         self.llm = llm
         self.tracker: TaskTracker = TaskTracker()
         self._get_learning_context: Callable[[], str] | None = None
-        self._ab_tester: ABTester | None = None
-        try:
-            self._ab_tester = ABTester()
-            logger.info("A/B testing framework initialized for planner.")
-        except Exception as e:
-            logger.warning("A/B testing init failed (non-critical): %s", e)
         self._active_planning_session: PlanningSession | None = None
 
     async def should_decompose(self, user_input: str) -> bool:
@@ -280,24 +265,6 @@ class TaskPlanner:
             except Exception as e:
                 logger.debug("Template selection failed (non-critical): %s", e)
 
-            # A/B testing: select template if available
-            experiment_id = None
-            experiment_template_version = ""
-            if self._ab_tester:
-                try:
-                    ab_task_type = _ab_task_type_for(_infer_template_task_type(user_input))
-                    template, selected_experiment_id = self._ab_tester.select_template(ab_task_type)
-                    if template:
-                        template_context = "\n\nTemplate guidance for this task:\n"
-                        for section in template.sections:
-                            heading = section.get("heading") or section.get("name") or "Section"
-                            template_context += f"\n## {heading}\n{section.get('content', '')}\n"
-                        system_prompt = system_prompt + template_context
-                        experiment_id = selected_experiment_id
-                        experiment_template_version = template.version
-                except Exception as e:
-                    logger.debug("Template selection failed (non-critical): %s", e)
-
             plan_data = await self.llm.chat_json(
                 user_input,
                 PLAN_SCHEMA,
@@ -336,10 +303,6 @@ class TaskPlanner:
                 subtasks=subtasks,
             )
 
-            if experiment_id:
-                plan._experiment_id = experiment_id
-                plan._experiment_template_version = experiment_template_version
-
             logger.info(
                 "Plan created: '%s' with %d subtasks.",
                 goal_summary, len(plan.subtasks),
@@ -373,14 +336,3 @@ class TaskPlanner:
             logger.debug("Planning mode detection failed: %s", e)
         return None
 
-    def record_experiment_outcome(self, plan, success: bool):
-        """Record the outcome of an A/B tested plan."""
-        if self._ab_tester and hasattr(plan, '_experiment_id') and plan._experiment_id:
-            try:
-                self._ab_tester.record_result(
-                    plan._experiment_id,
-                    getattr(plan, "_experiment_template_version", ""),
-                    success,
-                )
-            except Exception as e:
-                logger.debug("A/B result recording failed: %s", e)

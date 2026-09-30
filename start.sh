@@ -290,7 +290,6 @@ fi
 
 # Ensure data directories exist for SQLite databases
 mkdir -p "${SCRIPT_DIR}/data"
-mkdir -p "${SCRIPT_DIR}/templates/prompts"
 write_lifecycle_state "starting"
 
 # Build and launch desktop overlay (macOS only, optional)
