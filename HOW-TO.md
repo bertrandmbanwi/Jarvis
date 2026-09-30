@@ -205,6 +205,62 @@ cloudflared tunnel create jarvis
 cloudflared tunnel route dns jarvis jarvis.yourdomain.com
 ```
 
+## MCP Servers
+
+### Use MCP servers from JARVIS
+
+Create `~/.jarvis/mcp.json` in the same format Claude Desktop and Cursor use, then restart JARVIS:
+
+```json
+{
+  "mcpServers": {
+    "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+               "env": {"GITHUB_TOKEN": "ghp_..."}},
+    "docs": {"url": "https://example.com/mcp"},
+    "files": {"command": "uvx", "args": ["mcp-server-filesystem", "~/Documents"],
+              "auto_approve": ["read_file", "list_directory"]}
+  }
+}
+```
+
+Remote tools appear as `mcp__<server>__<tool>`. Each one asks for approval before it runs unless it is listed in that server's `auto_approve`. `GET /mcp/status` shows the connected servers, their tools and any connection errors.
+
+### Use JARVIS from other AI tools
+
+```bash
+claude mcp add jarvis -- /path/to/Jarvis/.venv/bin/python -m jarvis.mcp_server
+```
+
+For Cursor or another client, add `{"command": "/path/to/Jarvis/.venv/bin/python", "args": ["-m", "jarvis.mcp_server"]}` to its MCP config.
+
+By default JARVIS shares only read-only public-data tools (weather, web search, currency, holidays, and so on). To share tools that read files, the clipboard, the screen, email or calendar, name them explicitly, e.g. `JARVIS_MCP_TOOLS=read_file,get_upcoming_events`. Tools that need your approval are never shared, because an MCP client can't show JARVIS's approval prompt.
+
+## Agent Skills
+
+A skill is a folder with a `SKILL.md`: YAML frontmatter with a `name` and `description`, followed by Markdown instructions. Put skills in `skills/` (in this repo) or `~/.jarvis/skills` (your own; these win on a name clash). JARVIS puts only the names and descriptions in its prompt, and calls `use_skill` to load the full instructions when a request matches. Bundled scripts are never executed.
+
+## Telegram
+
+1. Create a bot with @BotFather and copy the token.
+2. Find your numeric Telegram user id (for example, message @userinfobot).
+3. Set `TELEGRAM_BOT_TOKEN` (in Settings, where it is stored in Keychain, or in `.env`) and `TELEGRAM_ALLOWED_USER_IDS=123456789`, then restart JARVIS.
+
+Only allow-listed users get answers. Risky actions ask for approval with inline buttons, and scheduled routine results are sent to you. Telegram bot messages go through Telegram's servers and are not end-to-end encrypted.
+
+## Scheduled Routines
+
+Give a routine a time with the routines API, for example:
+
+```bash
+curl -X PUT localhost:8741/routines/<id> -H 'Content-Type: application/json' -d '{"name": "Morning Brief", "prompt": "Use the morning-briefing skill to give me my morning briefing.", "enabled": true, "schedule_time": "07:30", "schedule_days": ["mon","tue","wed","thu","fri"], "speak": true}'
+```
+
+JARVIS runs each routine once per scheduled time, even if the Mac wakes up to two hours late. It shows the result in the UI, speaks it if `speak` is true, and sends it to Telegram if that is set up. No routine is scheduled by default.
+
+## Cloud Voice Mode (GPT-Live)
+
+The **Live** button in the voice view starts a hands-free conversation on OpenAI `gpt-live-1` ($0.05/min plus any work JARVIS does). The browser streams audio to the JARVIS server, which relays it to OpenAI, so your API key stays on your Mac. When GPT-Live needs something done, JARVIS runs it with its usual tools and approvals and hands back the result to be spoken. You can interrupt at any time. It requires `OPENAI_API_KEY`.
+
 ## Auto-Start on Boot (macOS launchd)
 
 To have JARVIS start automatically when you log into your Mac:
@@ -380,13 +436,14 @@ The UI shows real-time plan progress via the PlanProgress component, with per-su
 
 ## WebSocket Endpoints
 
-The FastAPI server exposes three WebSocket endpoints:
+The FastAPI server exposes four WebSocket endpoints:
 
 | Endpoint | Purpose | Client |
 |----------|---------|--------|
 | `/ws` | Main client connection (voice, chat, audio) | Next.js UI, mobile browser |
 | `/ws/overlay` | Desktop overlay state and text updates | JarvisOverlay.app (Swift) |
 | `/ws/extension` | Chrome extension command/response channel | Chrome extension (background.js) |
+| `/ws/live` | Cloud voice mode relay to OpenAI GPT-Live | Next.js UI ("Live" button) |
 
 ## API Endpoints
 

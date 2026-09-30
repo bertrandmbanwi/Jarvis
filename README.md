@@ -73,6 +73,18 @@ Task-specific prompt templates (build, feature, fix, refactor, research) guide t
 **Multi-Device Audio Routing**
 Connect from your Mac, phone, and tablet simultaneously. Each device registers independently and audio is routed only to devices that want it. Interrupt JARVIS mid-sentence from any device.
 
+**MCP (Model Context Protocol)**
+Plug any MCP server into JARVIS through `~/.jarvis/mcp.json` (the same format as Claude Desktop and Cursor), and its tools become JARVIS tools, still behind the approval prompt. It works the other way too: `python -m jarvis.mcp_server` exposes JARVIS's tools to Claude Code, Cursor or Codex.
+
+**Agent Skills**
+Drop `SKILL.md` folders into `skills/` or `~/.jarvis/skills` and JARVIS loads their instructions only when a task needs them. This is the open Agent Skills format, so skills written for other agents work here too. Ships with `morning-briefing` and `meeting-prep`.
+
+**Telegram and Scheduled Routines**
+Message JARVIS from Telegram (allow-listed users only), with Approve/Deny buttons for anything risky. Give a routine a time (for example, the morning briefing at 07:30 on weekdays) and JARVIS runs it and sends you the result.
+
+**Cloud Voice Mode (GPT-Live)**
+Press **Live** for a hands-free, full-duplex conversation on OpenAI's GPT-Live: interrupt at any time, and JARVIS does the actual work (tools, memory, approvals) behind it. Local voice stays the free, offline default.
+
 **Mobile Access**
 Built-in Cloudflare Tunnel support is available when you set `JARVIS_ENABLE_TUNNEL=true`. The UI is fully responsive, and the microphone works over HTTPS. Remote access requires PIN authentication by default; localhost still opens directly.
 
