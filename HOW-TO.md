@@ -227,6 +227,22 @@ For MLX on Apple silicon, run `mlx_lm.server --model <model>` and set `LOCAL_LLM
 
 Without offline mode, you can still pick `LLM_PROVIDER=local` to use local models while keeping cloud features like Live voice available. Web tools (search, weather, public data) still use the internet in offline mode; only model calls stay on your Mac.
 
+## Linux, Windows (WSL) and Docker
+
+The backend and web UI run anywhere Docker does:
+
+```bash
+echo 'OPENAI_API_KEY=sk-...' > .env
+echo 'JARVIS_PIN=123456' >> .env      # your login PIN for the UI
+docker compose up --build
+```
+
+Open http://localhost:3000 and enter the PIN. Both ports are published on localhost only. To use local models, run Ollama on the host and set `LLM_PROVIDER=local` in `.env`; the containers reach it at `host.docker.internal`.
+
+What works off a Mac: chat, web search and public-data tools, files, the shell tool, MCP servers, skills, Telegram, scheduled routines, and the Live voice button in the browser. What doesn't: the 34 tools that drive macOS (apps, screen, Apple Calendar, Mail and Notes), local wake-word voice, the desktop overlay and iMessage. JARVIS hides the macOS-only tools from the model on other systems.
+
+To run the backend on Linux without Docker: `pip install -r requirements-server.txt && python -m jarvis.main server`.
+
 ## MCP Servers
 
 ### Use MCP servers from JARVIS
