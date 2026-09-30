@@ -94,6 +94,8 @@ ANTHROPIC_CACHE_TOOLS = os.getenv("ANTHROPIC_CACHE_TOOLS", "true").lower() in {"
 ANTHROPIC_PROMPT_CACHE_TTL = os.getenv("ANTHROPIC_PROMPT_CACHE_TTL", "5m").strip().lower()
 ANTHROPIC_BATCH_FOR_BACKGROUND = os.getenv("ANTHROPIC_BATCH_FOR_BACKGROUND", "false").lower() in {"1", "true", "yes", "on"}
 WORKFLOW_SCHEDULER_ENABLED = os.getenv("WORKFLOW_SCHEDULER_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+# Runs routines that have a schedule_time (none do by default).
+ROUTINE_SCHEDULER_ENABLED = os.getenv("ROUTINE_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 CONTEXT_RECENT_MESSAGES = int(os.getenv("CONTEXT_RECENT_MESSAGES", "10"))
 CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("CONTEXT_SUMMARY_MAX_CHARS", "1800"))
 
