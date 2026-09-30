@@ -39,6 +39,8 @@ def find_codex_binary() -> str | None:
 def choose_agent(requested: str = "") -> str:
     """Return "codex" or "claude" for this call."""
     choice = (requested or settings.CODING_AGENT).strip().lower()
+    if settings.OFFLINE_MODE:
+        return "codex"  # Claude Code needs the cloud; Codex can run on Ollama (--oss)
     if choice in ("codex", "claude"):
         return choice
     has_codex = find_codex_binary() is not None
@@ -74,6 +76,8 @@ def build_codex_command(
         "--skip-git-repo-check",
         "--output-last-message", output_file,
     ]
+    if settings.OFFLINE_MODE:
+        cmd += ["--oss", "--local-provider", "ollama"]  # Codex on a local model
     if settings.CODEX_MODEL:
         cmd += ["--model", settings.CODEX_MODEL]
     # "--" ends option parsing so a task starting with "-" isn't read as a flag.

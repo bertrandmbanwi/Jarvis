@@ -28,8 +28,20 @@ try:
 except Exception:
     _secret_lookup = None
 
-# Cloud LLM provider: "openai" (default) or "anthropic".
+# LLM provider: "openai" (default), "anthropic", or "local" (Ollama/MLX/LM Studio).
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+
+# Offline mode: no cloud model calls at all. Uses the local provider, Apple's
+# on-device model for quick replies when available, and local speech.
+OFFLINE_MODE = os.getenv("OFFLINE_MODE", "false").lower() in {"1", "true", "yes", "on"}
+if OFFLINE_MODE:
+    LLM_PROVIDER = "local"
+# OpenAI-compatible local server: Ollama by default; mlx_lm.server uses http://localhost:8080/v1.
+LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
+LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", os.getenv("OLLAMA_MODEL", "llama3.1:8b"))
+# "apple" = Apple's on-device Foundation Model (macOS 26+), falling back to LOCAL_LLM_MODEL.
+LOCAL_FAST_MODEL = os.getenv("LOCAL_FAST_MODEL", "apple")
+LOCAL_MAX_OUTPUT_TOKENS = int(os.getenv("LOCAL_MAX_OUTPUT_TOKENS", "2048"))
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 if not OPENAI_API_KEY and _secret_lookup is not None:
@@ -54,7 +66,7 @@ OPENAI_LIVE_MODEL = os.getenv("OPENAI_LIVE_MODEL", "gpt-live-1")
 OPENAI_LIVE_VOICE = os.getenv("OPENAI_LIVE_VOICE", "marin")
 # Cloud speech-to-text fallback when local Moonshine/Whisper is unavailable or
 # returns nothing. Off by default: it sends microphone audio to OpenAI.
-STT_CLOUD_FALLBACK = os.getenv("STT_CLOUD_FALLBACK", "false").lower() in {"1", "true", "yes", "on"}
+STT_CLOUD_FALLBACK = os.getenv("STT_CLOUD_FALLBACK", "false").lower() in {"1", "true", "yes", "on"} and not OFFLINE_MODE
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-transcribe")
 OPENAI_COMPUTER_USE_MODEL = os.getenv("OPENAI_COMPUTER_USE_MODEL", "gpt-6.1-sol")
 

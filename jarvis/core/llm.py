@@ -160,6 +160,8 @@ class JarvisLLM:
         return False, ""
 
     async def _budget_blocked(self) -> tuple[bool, str]:
+        if self.cloud_name == "local":
+            return False, ""  # local models cost nothing
         # Reads the day and month cost files; keep that disk I/O off the event loop.
         return await asyncio.to_thread(self._paid_usage_blocked)
 
@@ -184,6 +186,8 @@ class JarvisLLM:
         )
 
     def _no_backend_message(self) -> str:
+        if self.cloud_name == "local":
+            return f"I can't reach the local model server at {settings.LOCAL_LLM_BASE_URL}. Is Ollama running?"
         key_name = "ANTHROPIC_API_KEY" if self.cloud_name == "anthropic" else "OPENAI_API_KEY"
         return f"I have no language model available. Please set {key_name} or start Ollama."
 
