@@ -15,11 +15,12 @@ from jarvis.core import auth
 
 logger = logging.getLogger("jarvis.server")
 
+# Only the ports JARVIS itself serves on are trusted. start.sh exports the UI
+# port it actually chose (it picks a free one when the default is taken), so
+# another local app that happens to sit on port 3000 is not a trusted origin.
 _cors_origins = [
-    "http://localhost:3000",
-    "http://localhost:3741",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3741",
+    f"http://localhost:{settings.UI_PORT}",
+    f"http://127.0.0.1:{settings.UI_PORT}",
     f"http://localhost:{settings.API_PORT}",
     f"http://127.0.0.1:{settings.API_PORT}",
 ]

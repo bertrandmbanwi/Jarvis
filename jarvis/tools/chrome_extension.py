@@ -6,6 +6,8 @@ import logging
 import uuid
 from typing import Any, cast
 
+from jarvis.config import settings
+
 logger = logging.getLogger("jarvis.tools.chrome_extension")
 
 _extension_ws: Any | None = None
@@ -120,8 +122,9 @@ async def chrome_navigate(url: str, tab_id: int | None = None, new_tab: bool = F
                     if active_tab:
                         active_url = (active_tab.get("url") or "").lower()
                         jarvis_patterns = [
-                            "localhost:3000", "localhost:3741",
-                            "0.0.0.0:3000", "0.0.0.0:3741",
+                            f"localhost:{settings.UI_PORT}",
+                            f"127.0.0.1:{settings.UI_PORT}",
+                            f"0.0.0.0:{settings.UI_PORT}",
                             ".trycloudflare.com",
                         ]
                         is_jarvis_tab = any(p in active_url for p in jarvis_patterns)
