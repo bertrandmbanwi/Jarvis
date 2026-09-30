@@ -99,6 +99,39 @@ async def test_local_router_handles_weather_without_llm(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_router_shortcuts_simple_weather_with_location(monkeypatch):
+    await tool_cache.invalidate()
+
+    async def fake_weather(location: str = "") -> str:
+        return f"weather called for {location or 'default'}"
+
+    monkeypatch.setattr(weather, "get_weather", fake_weather)
+
+    result = await route_local("What's the weather in Forney Texas?")
+
+    assert result is not None
+    assert result.response == "weather called for forney texas"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "can you check the weather schedule for this weekend in Forney Texas tell me how much rain we are expecting",
+        "What's the forecast for Saturday?",
+        "weather for the next five days in Dallas",
+    ],
+)
+async def test_local_router_leaves_multi_day_weather_to_the_agent(monkeypatch, text):
+    async def fake_weather(location: str = "") -> str:
+        raise AssertionError("weather shortcut should not run")
+
+    monkeypatch.setattr(weather, "get_weather", fake_weather)
+
+    assert await route_local(text) is None
+
+
+@pytest.mark.asyncio
 async def test_local_router_handles_currency_without_llm(monkeypatch):
     await tool_cache.invalidate()
 
