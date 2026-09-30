@@ -113,7 +113,12 @@ PIN_AUTH_ENABLED = os.getenv("JARVIS_PIN_AUTH_ENABLED", "true").lower() in {"1",
 ANTHROPIC_LAZY_HEALTHCHECK = os.getenv("ANTHROPIC_LAZY_HEALTHCHECK", "true").lower() in {"1", "true", "yes", "on"}
 ANTHROPIC_CACHE_TOOLS = os.getenv("ANTHROPIC_CACHE_TOOLS", "true").lower() in {"1", "true", "yes", "on"}
 ANTHROPIC_PROMPT_CACHE_TTL = os.getenv("ANTHROPIC_PROMPT_CACHE_TTL", "5m").strip().lower()
-ANTHROPIC_BATCH_FOR_BACKGROUND = os.getenv("ANTHROPIC_BATCH_FOR_BACKGROUND", "false").lower() in {"1", "true", "yes", "on"}
+# Scheduled workflow prompts go through the Batch API: half price, but no tools,
+# and results can take minutes to hours. (BATCH_FOR_BACKGROUND is the current
+# name; the ANTHROPIC_ one is kept for existing .env files.)
+ANTHROPIC_BATCH_FOR_BACKGROUND = os.getenv(
+    "BATCH_FOR_BACKGROUND", os.getenv("ANTHROPIC_BATCH_FOR_BACKGROUND", "false")
+).lower() in {"1", "true", "yes", "on"}
 WORKFLOW_SCHEDULER_ENABLED = os.getenv("WORKFLOW_SCHEDULER_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 # Runs routines that have a schedule_time (none do by default).
 ROUTINE_SCHEDULER_ENABLED = os.getenv("ROUTINE_SCHEDULER_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
