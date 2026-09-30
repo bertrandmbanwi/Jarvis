@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest a new capability or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like JARVIS to do?
+      description: Describe the use case. "When I ask JARVIS to ..., I want ..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Ideas for how it could work
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to work on this myself
