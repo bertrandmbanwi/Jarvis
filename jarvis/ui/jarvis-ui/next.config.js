@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const path = require("path");
 const apiPort = process.env.JARVIS_API_PORT || process.env.API_PORT || "8741";
+// In Docker the API runs in another container (JARVIS_API_HOST=api).
+const apiHost = process.env.JARVIS_API_HOST || "127.0.0.1";
 
 const nextConfig = {
   outputFileTracingRoot: path.join(__dirname),
@@ -23,23 +25,23 @@ const nextConfig = {
     return [
       {
         source: "/jarvis-api/:path*",
-        destination: `http://127.0.0.1:${apiPort}/:path*`,
+        destination: `http://${apiHost}:${apiPort}/:path*`,
       },
       {
         // Compatibility for older browser bundles that queried auth directly.
         source: "/auth/:path*",
-        destination: `http://127.0.0.1:${apiPort}/auth/:path*`,
+        destination: `http://${apiHost}:${apiPort}/auth/:path*`,
       },
       {
         // WebSocket endpoint: the Next.js dev server proxies upgrade
         // requests through rewrites, so this handles ws:// connections too.
         source: "/jarvis-ws",
-        destination: `http://127.0.0.1:${apiPort}/ws`,
+        destination: `http://${apiHost}:${apiPort}/ws`,
       },
       {
         // Cloud voice mode (GPT-Live relay).
         source: "/jarvis-ws-live",
-        destination: `http://127.0.0.1:${apiPort}/ws/live`,
+        destination: `http://${apiHost}:${apiPort}/ws/live`,
       },
     ];
   },

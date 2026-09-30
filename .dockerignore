@@ -1,0 +1,11 @@
+.git
+.venv
+data
+dist
+**/node_modules
+**/.next
+**/__pycache__
+.env
+docs/screenshots
+desktop-overlay
+tests

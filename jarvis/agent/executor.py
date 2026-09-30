@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable
 from typing import Any, cast
 
+from jarvis.agent.platform_tools import available_schemas, is_available
 from jarvis.agent.qa_agent import QAAgent
 from jarvis.agent.tool_selector import select_tools_for_request, with_deferred_loading
 from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS
@@ -89,9 +90,10 @@ class AgentExecutor:
 
     def _tools_for(self, text: str, history: list[dict] | None, tools: list[dict] | None) -> list[dict]:
         """OpenAI gets every tool with native tool search; other providers get keyword pruning."""
+        candidates = available_schemas(tools or TOOL_SCHEMAS)
         if getattr(self.llm, "cloud_name", None) == "openai":
-            return with_deferred_loading(tools or TOOL_SCHEMAS)
-        return tools or select_tools_for_request(text, TOOL_SCHEMAS, history)
+            return with_deferred_loading(candidates)
+        return candidates if tools else select_tools_for_request(text, candidates, history)
 
     async def execute(
         self,
@@ -217,6 +219,8 @@ class AgentExecutor:
         """Execute a tool with validation, timeout, circuit breaker, and caching."""
         if tool_name not in TOOL_REGISTRY:
             return f"Unknown tool: {tool_name}. Available tools: {', '.join(TOOL_REGISTRY.keys())}"
+        if not is_available(tool_name):
+            return f"Tool '{tool_name}' only works on macOS, and JARVIS is running on another system."
 
         circuit = get_tool_circuit(tool_name)
         if not circuit.allow_request():

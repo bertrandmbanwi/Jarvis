@@ -23,6 +23,7 @@ import os
 from typing import Any
 
 from jarvis.agent.executor import AgentExecutor
+from jarvis.agent.platform_tools import is_available
 from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS
 from jarvis.core.permissions import Capability, RiskLevel, get_tool_permission, is_side_effect_free
 
@@ -42,8 +43,8 @@ def exposed_tools(extra: str | None = None) -> list[str]:
     names = []
     for schema in TOOL_SCHEMAS:
         name = str(schema["name"])
-        if name.startswith("mcp__"):
-            continue  # don't re-export tools JARVIS itself borrowed from other MCP servers
+        if name.startswith("mcp__") or not is_available(name):
+            continue  # skip tools borrowed from other MCP servers and ones this OS can't run
         permission = get_tool_permission(name)
         if permission.requires_confirmation:
             continue
