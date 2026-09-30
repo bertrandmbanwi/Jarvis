@@ -378,8 +378,14 @@ def get_system_prompt() -> str:
 
 
 def get_system_prompt_parts() -> tuple[str, str]:
-    """Return (static, dynamic) system prompt text for provider-level caching."""
-    return _SYSTEM_PROMPT_STATIC, _build_dynamic_context()
+    """Return (static, dynamic) system prompt text for provider-level caching.
+
+    The skill index is part of the static text: it only changes when a
+    SKILL.md changes, so the prefix stays cacheable.
+    """
+    from jarvis.core.skills import skills_prompt
+
+    return _SYSTEM_PROMPT_STATIC + skills_prompt(), _build_dynamic_context()
 
 
 def get_system_prompt_blocks(cache_static: bool = True) -> list[dict]:
