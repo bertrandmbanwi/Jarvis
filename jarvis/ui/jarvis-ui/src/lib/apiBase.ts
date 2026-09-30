@@ -26,6 +26,11 @@ export function getWsUrl(): string {
   return `${proto}//${window.location.host}/jarvis-ws`;
 }
 
+export function getLiveWsUrl(): string {
+  const base = getWsUrl();
+  return base.endsWith("/jarvis-ws") ? `${base}-live` : `${base}/live`;
+}
+
 export function jarvisHeaders(
   authToken?: string | null,
   json = false,

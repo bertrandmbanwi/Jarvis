@@ -85,13 +85,15 @@ Notes:
 
 ## Phase 3 — Voice
 
+**Status:** shipped in the Phase 3 PR. GPT-Live and cloud STT are tested against mocked OpenAI endpoints only; they need a live check with an OpenAI key.
+
 | # | Item | Verify |
 |---|---|---|
 | 3.1 | Silero VAD instead of the amplitude threshold; `vad_filter` for faster-whisper | Unit tests on sample audio |
-| 3.2 | Barge-in: keep listening while speaking (relying on echo cancellation) and stop playback when the user talks | Manual |
+| 3.2 | Barge-in: stop playback when the user talks over JARVIS. Opt-in (`BARGE_IN_ENABLED`) because the local mic has no echo cancellation; native in the GPT-Live mode | Unit test; manual with headphones |
 | 3.3 | Local Kokoro chunk playback as chunks arrive (streamed locally, not only to the browser) | Manual |
-| 3.4 | **Cloud voice mode on `gpt-live-1`**: browser mic → Live session; delegation events run through JARVIS's tools and permission gate; the local wake word still activates it | Integration test with mocked Live socket; manual with key |
-| 3.5 | `gpt-live-transcribe` as a cloud STT fallback | Test |
+| 3.4 | **Cloud voice mode on `gpt-live-1`** ("Live" button): browser mic → JARVIS server → GPT-Live; delegations run through the brain (tools, memory, approval prompts). The key stays on the server | Tests with a mocked Live socket; manual with key |
+| 3.5 | Opt-in cloud STT fallback (`gpt-transcribe`) when local transcription is unavailable or empty | Test |
 
 ## Phase 4 — Ecosystem (the star drivers)
 

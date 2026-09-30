@@ -77,3 +77,19 @@ async def test_queued_chunks_are_dropped_after_stop(monkeypatch):
     queue.put_nowait(None)
     await speaker._play_chunks(queue)
     assert len(played) == 1
+
+
+def test_cloud_stt_fallback_is_opt_in(monkeypatch):
+    from jarvis.voice.listener import VoiceListener
+
+    listener = VoiceListener()
+    monkeypatch.setattr(listener, "_transcribe_local", lambda audio: "")
+    calls = []
+    monkeypatch.setattr(listener, "_transcribe_cloud", lambda audio: calls.append(1) or "hello")
+    audio = np.zeros(16000, dtype=np.int16)
+
+    monkeypatch.setattr(settings, "STT_CLOUD_FALLBACK", False)
+    assert listener._transcribe(audio) == ""
+    monkeypatch.setattr(settings, "STT_CLOUD_FALLBACK", True)
+    assert listener._transcribe(audio) == "hello"
+    assert calls == [1]

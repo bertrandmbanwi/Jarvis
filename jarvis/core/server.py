@@ -1677,6 +1677,64 @@ async def websocket_chat(websocket: WebSocket):
         ws_manager.disconnect(websocket)
 
 
+async def _authorize_websocket(websocket: WebSocket) -> bool:
+    """Apply the /ws origin and remote-auth rules; close the socket and return False on failure."""
+    is_local = _client_is_local(websocket)
+    if not _origin_allowed(websocket.headers.get("origin"), local=is_local):
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return False
+    if not is_local and not auth.pin_auth_enabled():
+        await websocket.close(code=4001, reason="Remote access requires PIN authentication")
+        return False
+    if not is_local:
+        ws_token = websocket.cookies.get("jarvis_token", "") or websocket.query_params.get("token", "")
+        if not ws_token or not auth.validate_token(ws_token):
+            await websocket.close(code=4001, reason="Authentication required")
+            return False
+    return True
+
+
+@app.websocket("/ws/live")
+async def websocket_live(websocket: WebSocket):
+    """Cloud voice mode: relay browser audio to GPT-Live and delegated work to the brain.
+
+    Client sends {"audio": <base64 PCM16 24 kHz mono>} or {"stop": true};
+    server sends {"type": "audio" | "user_transcript" | "assistant_transcript" |
+    "working" | "result" | "ready" | "error" | "closed", ...}.
+    """
+    if not await _authorize_websocket(websocket):
+        return
+    await websocket.accept()
+
+    from jarvis.voice.live_session import LiveSession
+
+    session = LiveSession(runner=brain.process, client_sink=websocket.send_json)
+    try:
+        await session.open()
+    except Exception as exc:
+        logger.warning("GPT-Live session failed to open: %s", exc)
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close(code=1011)
+        return
+
+    pump = asyncio.create_task(session.run(), name="gpt-live-pump")
+    try:
+        while not pump.done():
+            data = await websocket.receive_json()
+            if data.get("stop"):
+                break
+            if isinstance(data.get("audio"), str):
+                await session.send_audio(data["audio"])
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.warning("GPT-Live relay error: %s", exc)
+    finally:
+        pump.cancel()
+        with suppress(Exception):
+            await session.close()
+
+
 @app.websocket("/ws/extension")
 async def websocket_extension(websocket: WebSocket):
     """WebSocket endpoint for JARVIS Chrome Extension browser automation."""

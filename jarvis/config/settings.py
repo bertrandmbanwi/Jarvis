@@ -49,6 +49,13 @@ OPENAI_FAST_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_FAST_MAX_OUTPUT_TOKENS", "
 OPENAI_BRAIN_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_BRAIN_MAX_OUTPUT_TOKENS", "8192"))
 OPENAI_DEEP_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DEEP_MAX_OUTPUT_TOKENS", "16000"))
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", OPENAI_FAST_MODEL)
+# Cloud voice mode (GPT-Live, full-duplex speech; $0.05/min plus delegated work)
+OPENAI_LIVE_MODEL = os.getenv("OPENAI_LIVE_MODEL", "gpt-live-1")
+OPENAI_LIVE_VOICE = os.getenv("OPENAI_LIVE_VOICE", "marin")
+# Cloud speech-to-text fallback when local Moonshine/Whisper is unavailable or
+# returns nothing. Off by default: it sends microphone audio to OpenAI.
+STT_CLOUD_FALLBACK = os.getenv("STT_CLOUD_FALLBACK", "false").lower() in {"1", "true", "yes", "on"}
+OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-transcribe")
 OPENAI_COMPUTER_USE_MODEL = os.getenv("OPENAI_COMPUTER_USE_MODEL", "gpt-6.1-sol")
 
 # Coding agent for run_coding_agent: "codex", "claude", or "auto".

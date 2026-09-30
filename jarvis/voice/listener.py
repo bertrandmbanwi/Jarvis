@@ -538,9 +538,15 @@ class VoiceListener:
         return await asyncio.to_thread(stream.read, settings.AUDIO_CHUNK_SIZE, exception_on_overflow=False)
 
     def _transcribe(self, audio: np.ndarray) -> str:
-        """Transcribe audio to text using the active STT engine."""
+        """Transcribe audio with the local STT engine, then the opt-in cloud fallback."""
+        text = self._transcribe_local(audio)
+        if not text.strip() and settings.STT_CLOUD_FALLBACK:
+            text = self._transcribe_cloud(audio)
+        return text
+
+    def _transcribe_local(self, audio: np.ndarray) -> str:
         if self._stt_engine == "none":
-            logger.error("No STT engine available.")
+            logger.error("No local STT engine available.")
             return ""
 
         try:
@@ -558,6 +564,34 @@ class VoiceListener:
         except Exception as e:
             logger.error("Transcription error (%s): %s", self._stt_engine, e)
             return ""
+
+    def _transcribe_cloud(self, audio: np.ndarray) -> str:
+        """Transcribe with OpenAI (STT_CLOUD_FALLBACK=true): sends the audio to OpenAI."""
+        if not settings.OPENAI_API_KEY:
+            return ""
+        import io
+        import wave
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(settings.AUDIO_SAMPLE_RATE)
+            wav.writeframes(audio.astype(np.int16).tobytes())
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=settings.OPENAI_API_KEY, max_retries=1, timeout=30.0)
+            result = client.audio.transcriptions.create(
+                model=settings.OPENAI_TRANSCRIBE_MODEL,
+                file=("speech.wav", buffer.getvalue(), "audio/wav"),
+            )
+        except Exception as e:
+            logger.error("Cloud transcription failed: %s", e)
+            return ""
+        text = str(getattr(result, "text", "") or "").strip()
+        logger.info("Cloud transcription (%s): '%s'", settings.OPENAI_TRANSCRIBE_MODEL, text[:80])
+        return text
 
     def _transcribe_moonshine(self, audio_float: np.ndarray) -> str:
         """Transcribe using Moonshine ONNX (low hallucination, real-time optimized)."""
