@@ -1,23 +1,36 @@
-"""Multi-backend LLM engine with three-tier Claude API and Ollama fallback."""
+"""Multi-backend LLM engine: a cloud provider (OpenAI by default, Anthropic
+optional) across three tiers, with Ollama as the local fallback.
+
+Provider-specific request building lives in ``jarvis.core.providers``; this
+module owns routing, fallback, cost guards and usage accounting.
+"""
+import asyncio
 import json
 import logging
 import time
 from collections.abc import AsyncGenerator
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 import httpx
 
 from jarvis.config import settings
 from jarvis.core.hardening import (
-    API_RETRY_POLICY,
     classify_error,
-    claude_circuit,
-    retry_with_backoff,
+    cloud_circuit,
     sanitize_user_input,
     user_friendly_error,
 )
 from jarvis.core.ollama import list_ollama_models
 from jarvis.core.perf import perf_tracker
+from jarvis.core.providers import (
+    CloudProvider,
+    SystemPrompt,
+    TierSpec,
+    Usage,
+    build_provider,
+    provider_api_key,
+    tier_specs,
+)
 
 logger = logging.getLogger("jarvis.llm")
 
@@ -29,53 +42,6 @@ class ToolLoopError(RuntimeError):
     loop returns a user-facing message, which callers cannot tell apart from
     a successful answer.
     """
-
-_anthropic_client = None
-_anthropic_available = False
-
-# Anthropic tool_result `content` must be a string or a list of valid content
-# blocks (each a dict with a recognized "type"). Some tools return plain data
-# lists (e.g. note metadata as list[dict], folder names as list[str]); those are
-# NOT content blocks and would make the Messages API reject the follow-up call.
-_VALID_CONTENT_BLOCK_TYPES = {
-    "text", "image", "document", "tool_use", "tool_result",
-    "thinking", "redacted_thinking",
-}
-_MAX_TOOL_RESULT_CHARS = 8000
-
-
-def _is_content_block_list(value: list) -> bool:
-    """True only if every element is a valid Anthropic content block."""
-    return bool(value) and all(
-        isinstance(block, dict) and block.get("type") in _VALID_CONTENT_BLOCK_TYPES
-        for block in value
-    )
-
-
-def _to_tool_result_content(result: Any) -> str | list:
-    """Coerce a tool result into a valid Anthropic tool_result content value."""
-    if isinstance(result, list) and _is_content_block_list(result):
-        return result
-    if isinstance(result, str):
-        text = result
-    else:
-        try:
-            text = json.dumps(result, ensure_ascii=False, default=str)
-        except (TypeError, ValueError):
-            text = str(result)
-    if len(text) > _MAX_TOOL_RESULT_CHARS:
-        text = text[:_MAX_TOOL_RESULT_CHARS] + "\n... (truncated)"
-    return text
-
-
-def _tool_result_log_text(content: str | list) -> str:
-    """Human-readable preview of tool_result content for the tool-call log."""
-    if isinstance(content, list):
-        return " ".join(
-            block.get("text", "") for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    return content
 
 
 def _ollama_model_matches(installed_name: str) -> bool:
@@ -93,67 +59,14 @@ def _ollama_model_matches(installed_name: str) -> bool:
         return installed_name.split(":")[0] == configured
     return False
 
-class TierConfig(TypedDict):
-    model: str
-    max_tokens: int
-    temperature: float
-
-
-TIER_CONFIG: dict[str, TierConfig] = {
-    "fast": {
-        "model": settings.CLAUDE_FAST_MODEL,
-        "max_tokens": settings.CLAUDE_FAST_MAX_TOKENS,
-        "temperature": settings.CLAUDE_FAST_TEMPERATURE,
-    },
-    "brain": {
-        "model": settings.CLAUDE_BRAIN_MODEL,
-        "max_tokens": settings.CLAUDE_BRAIN_MAX_TOKENS,
-        "temperature": settings.CLAUDE_BRAIN_TEMPERATURE,
-    },
-    "deep": {
-        "model": settings.CLAUDE_DEEP_MODEL,
-        "max_tokens": settings.CLAUDE_DEEP_MAX_TOKENS,
-        "temperature": settings.CLAUDE_DEEP_TEMPERATURE,
-    },
-}
-
-
-def _get_anthropic_client():
-    """Lazy-initialize the Anthropic async client."""
-    global _anthropic_client, _anthropic_available
-    if _anthropic_client is not None:
-        return _anthropic_client
-
-    if not settings.ANTHROPIC_API_KEY:
-        logger.warning("ANTHROPIC_API_KEY not set. Claude API unavailable.")
-        _anthropic_available = False
-        return None
-
-    try:
-        import anthropic
-        _anthropic_client = anthropic.AsyncAnthropic(
-            api_key=settings.ANTHROPIC_API_KEY,
-            timeout=120.0,
-        )
-        _anthropic_available = True
-        logger.info("Anthropic client initialized.")
-        return _anthropic_client
-    except ImportError:
-        logger.warning("anthropic package not installed. Run: pip install anthropic")
-        _anthropic_available = False
-        return None
-    except Exception as e:
-        logger.error("Failed to initialize Anthropic client: %s", e)
-        _anthropic_available = False
-        return None
-
 
 class JarvisLLM:
-    """Multi-backend LLM engine with Claude API primary and Ollama fallback."""
+    """Routes requests to the cloud provider with Ollama as the fallback."""
 
     def __init__(
         self,
         system_prompt: str | None = None,
+        provider: CloudProvider | None = None,
     ):
         self._static_system_prompt = system_prompt
         self.active_backend = "initializing"
@@ -161,6 +74,15 @@ class JarvisLLM:
         self.privacy_mode = False
         self._ollama_client = httpx.AsyncClient(timeout=120.0)
         self._ollama_base_url = settings.OLLAMA_BASE_URL.rstrip("/")
+
+        # An injected provider is kept as-is (tests); otherwise the provider is
+        # rebuilt whenever the provider name or its API key changes in Settings.
+        self._provider_fixed = provider is not None
+        self._provider: CloudProvider | None = provider
+        self._provider_key: tuple[str, str] | None = None
+        # After a cloud failure, requests go to Ollama until this time, then
+        # the cloud is tried again (the old behaviour switched permanently).
+        self._cloud_down_until = 0.0
 
         self._session_costs: dict[str, Any] = {
             "total_input_tokens": 0,
@@ -172,6 +94,26 @@ class JarvisLLM:
             "requests_by_tier": {"fast": 0, "brain": 0, "deep": 0, "ollama": 0},
         }
 
+    # ── provider and prompt plumbing ────────────────────────────────────
+
+    @property
+    def provider(self) -> CloudProvider:
+        if self._provider_fixed and self._provider is not None:
+            return self._provider
+        key = (settings.LLM_PROVIDER, provider_api_key())
+        if self._provider is None or key != self._provider_key:
+            self._provider = build_provider()
+            self._provider_key = key
+        return self._provider
+
+    @property
+    def cloud_name(self) -> str:
+        return self.provider.name
+
+    def tier_spec(self, tier: str) -> TierSpec:
+        specs = tier_specs(self.cloud_name)
+        return specs.get(tier, specs["brain"])
+
     @property
     def system_prompt(self) -> str:
         """Return the system prompt, rebuilding dynamically to keep date/time current."""
@@ -179,36 +121,13 @@ class JarvisLLM:
             return self._static_system_prompt
         return settings.get_system_prompt()
 
-    def _prompt_cache_control(self) -> dict[str, str]:
-        cache_control: dict[str, str] = {"type": "ephemeral"}
-        if settings.ANTHROPIC_PROMPT_CACHE_TTL == "1h":
-            cache_control["ttl"] = "1h"
-        return cache_control
-
-    def _system_blocks(self, system_prompt_override: str | None = None) -> list[dict]:
-        """Build Anthropic system blocks with cache-stable content separated."""
-        if system_prompt_override:
-            block: dict = {"type": "text", "text": system_prompt_override}
-            if len(system_prompt_override) >= 1024:
-                block["cache_control"] = self._prompt_cache_control()
-            return [block]
+    def _system(self, override: str | None = None) -> SystemPrompt:
+        if override:
+            return SystemPrompt(static=override)
         if self._static_system_prompt:
-            block = {
-                "type": "text",
-                "text": self._static_system_prompt,
-            }
-            if len(self._static_system_prompt) >= 1024:
-                block["cache_control"] = self._prompt_cache_control()
-            return [block]
-        return settings.get_system_prompt_blocks(cache_static=True)
-
-    def _tools_with_cache_breakpoint(self, tools: list[dict] | None) -> list[dict] | None:
-        """Return tool schemas with a cache breakpoint on the final definition."""
-        if not tools or not settings.ANTHROPIC_CACHE_TOOLS:
-            return tools
-        prepared = [dict(tool) for tool in tools]
-        prepared[-1] = {**prepared[-1], "cache_control": self._prompt_cache_control()}
-        return prepared
+            return SystemPrompt(static=self._static_system_prompt)
+        static, dynamic = settings.get_system_prompt_parts()
+        return SystemPrompt(static=static, dynamic=dynamic)
 
     def _apply_cost_mode(self, tier: str) -> str:
         """Downgrade expensive tiers when the user chooses economy mode."""
@@ -223,7 +142,7 @@ class JarvisLLM:
         return tier
 
     def _paid_usage_blocked(self) -> tuple[bool, str]:
-        """Return whether Anthropic calls should be blocked by hard budget limits."""
+        """Return whether paid API calls should be blocked by hard budget limits."""
         try:
             from jarvis.core.cost_tracker import get_month_summary, get_today_summary
             today = get_today_summary()
@@ -240,48 +159,62 @@ class JarvisLLM:
             return True, f"monthly hard limit of ${monthly_limit:.2f}"
         return False, ""
 
+    async def _budget_blocked(self) -> tuple[bool, str]:
+        # Reads the day and month cost files; keep that disk I/O off the event loop.
+        return await asyncio.to_thread(self._paid_usage_blocked)
+
+    def _cloud_ready(self) -> bool:
+        return (
+            self.provider.is_configured()
+            and time.monotonic() >= self._cloud_down_until
+            and cloud_circuit.allow_request()
+        )
+
+    def _cloud_succeeded(self) -> None:
+        cloud_circuit.record_success()
+        self._cloud_down_until = 0.0
+        self.active_backend = self.cloud_name
+
+    def _cloud_failed(self, error: Exception) -> None:
+        cloud_circuit.record_failure()
+        self._cloud_down_until = time.monotonic() + settings.CLOUD_RETRY_COOLDOWN_S
+        logger.error(
+            "%s call failed (%s): %s. Using Ollama for %.0fs before retrying the cloud.",
+            self.cloud_name, classify_error(error).value, error, settings.CLOUD_RETRY_COOLDOWN_S,
+        )
+
+    def _no_backend_message(self) -> str:
+        key_name = "ANTHROPIC_API_KEY" if self.cloud_name == "anthropic" else "OPENAI_API_KEY"
+        return f"I have no language model available. Please set {key_name} or start Ollama."
+
+    # ── health ──────────────────────────────────────────────────────────
+
     async def check_health(self) -> bool:
         """Check available backends and set active_backend. Returns True if any available."""
-        claude_ok = await self._check_claude_health()
+        cloud_ok = await self._check_cloud_health()
         ollama_ok = await self._check_ollama_health()
 
-        if settings.PREFER_CLAUDE and claude_ok:
-            self.active_backend = "claude"
-            logger.info("Active backend: Claude API (primary)")
+        if cloud_ok and (settings.PREFER_CLAUDE or not ollama_ok):
+            self.active_backend = self.cloud_name
+            logger.info("Active backend: %s (primary)", self.cloud_name)
         elif ollama_ok:
             self.active_backend = "ollama"
             logger.info("Active backend: Ollama (fallback)")
-        elif claude_ok:
-            self.active_backend = "claude"
-            logger.info("Active backend: Claude API")
         else:
             self.active_backend = "none"
             logger.error("No LLM backend available.")
             return False
-
         return True
 
-    async def _check_claude_health(self) -> bool:
-        """Verify Claude availability without spending tokens unless requested."""
-        client = _get_anthropic_client()
-        if client is None:
+    async def _check_cloud_health(self) -> bool:
+        """Verify the cloud provider without spending tokens unless requested."""
+        if not self.provider.is_configured():
+            logger.warning("%s API key not set; cloud models unavailable.", self.cloud_name)
             return False
-
         if settings.ANTHROPIC_LAZY_HEALTHCHECK:
-            logger.info("Claude API configured; skipping paid startup health request.")
+            logger.info("%s configured; skipping startup health request.", self.cloud_name)
             return True
-
-        try:
-            await client.messages.create(
-                model=settings.CLAUDE_FAST_MODEL,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "ping"}],
-            )
-            logger.info("Claude API health check passed (model: %s).", settings.CLAUDE_FAST_MODEL)
-            return True
-        except Exception as e:
-            logger.warning("Claude API health check failed: %s", e)
-            return False
+        return await self.provider.health()
 
     async def _check_ollama_health(self) -> bool:
         """Check if Ollama is running and has the configured model."""
@@ -300,6 +233,8 @@ class JarvisLLM:
             logger.info("Ollama health check passed (model: %s).", settings.OLLAMA_MODEL)
         return available
 
+    # ── chat ────────────────────────────────────────────────────────────
+
     async def chat(
         self,
         user_message: str,
@@ -309,34 +244,72 @@ class JarvisLLM:
         max_tokens_override: int | None = None,
         temperature_override: float | None = None,
     ) -> str:
-        """Send message and get complete response. Routes to Claude or Ollama with fallback."""
+        """Send message and get complete response, falling back to Ollama."""
         tier = self._apply_cost_mode(tier)
-        paid_blocked, block_reason = self._paid_usage_blocked()
+        paid_blocked, block_reason = await self._budget_blocked()
         if paid_blocked:
-            logger.warning("Claude request blocked by %s.", block_reason)
+            logger.warning("Cloud request blocked by %s.", block_reason)
             if await self._check_ollama_health():
-                self.active_backend = "ollama"
                 return await self._chat_ollama(user_message, conversation_history)
             return f"I am in cost guard mode because the {block_reason} has been reached. Local tools still work."
 
-        if self.active_backend == "claude":
+        error: Exception | None = None
+        if self._cloud_ready():
             try:
-                return await self._chat_claude(
+                return await self._chat_cloud(
                     user_message, conversation_history, tier,
                     system_prompt_override, max_tokens_override, temperature_override,
                 )
             except Exception as e:
-                logger.error("Claude chat failed: %s. Trying Ollama fallback.", e)
-                if await self._check_ollama_health():
-                    self.active_backend = "ollama"
-                    return await self._chat_ollama(user_message, conversation_history)
-                return f"I encountered an error and my fallback is also unavailable: {e}"
+                self._cloud_failed(e)
+                error = e
 
-        elif self.active_backend == "ollama":
+        if await self._check_ollama_health():
+            self.active_backend = "ollama"
             return await self._chat_ollama(user_message, conversation_history)
+        if error is not None:
+            return f"I encountered an error and my fallback is also unavailable: {error}"
+        return self._no_backend_message()
 
-        else:
-            return "I have no language model available. Please check that either your Anthropic API key is set or Ollama is running."
+    async def chat_json(
+        self,
+        user_message: str,
+        schema: dict[str, Any],
+        tier: str = "fast",
+        system_prompt_override: str | None = None,
+        conversation_history: list[dict] | None = None,
+    ) -> dict[str, Any] | None:
+        """Get a response that conforms to ``schema`` (structured outputs).
+
+        Returns None when no backend could produce valid JSON, so callers can
+        fall back to a safe default instead of parsing free text.
+        """
+        tier = self._apply_cost_mode(tier)
+        paid_blocked, _ = await self._budget_blocked()
+        raw = ""
+        if not paid_blocked and self._cloud_ready():
+            spec = self.tier_spec(tier)
+            start = time.time()
+            try:
+                raw, usage = await self.provider.complete(
+                    system=self._system(system_prompt_override),
+                    messages=self._build_messages(sanitize_user_input(user_message), conversation_history),
+                    spec=spec,
+                    json_schema=schema,
+                )
+                self._cloud_succeeded()
+                self._track_usage(usage, tier, time.time() - start, user_message[:80])
+            except Exception as e:
+                self._cloud_failed(e)
+                raw = ""
+        if not raw and await self._check_ollama_health():
+            raw = await self._chat_ollama(user_message, conversation_history, json_schema=schema)
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Structured output was not valid JSON: %s", str(raw)[:200])
+            return None
+        return data if isinstance(data, dict) else None
 
     async def chat_stream(
         self,
@@ -346,36 +319,41 @@ class JarvisLLM:
     ) -> AsyncGenerator[str, None]:
         """Stream response tokens one at a time."""
         tier = self._apply_cost_mode(tier)
-        paid_blocked, block_reason = self._paid_usage_blocked()
-        if paid_blocked:
-            if await self._check_ollama_health():
-                self.active_backend = "ollama"
-            else:
-                yield f"I am in cost guard mode because the {block_reason} has been reached. Local tools still work."
-                return
+        paid_blocked, block_reason = await self._budget_blocked()
+        use_cloud = not paid_blocked and self._cloud_ready()
+        if paid_blocked and not await self._check_ollama_health():
+            yield f"I am in cost guard mode because the {block_reason} has been reached. Local tools still work."
+            return
 
-        if self.active_backend == "claude":
+        if use_cloud:
+            spec = self.tier_spec(tier)
+            start = time.time()
             streamed_any = False
             try:
-                async for token in self._stream_claude(user_message, conversation_history, tier):
+                async for token in self.provider.stream(
+                    system=self._system(),
+                    messages=self._build_messages(user_message, conversation_history),
+                    spec=spec,
+                    on_usage=lambda usage: self._track_usage(usage, tier, time.time() - start),
+                ):
                     streamed_any = True
                     yield token
+                self._cloud_succeeded()
                 return
             except Exception as e:
-                logger.error("Claude stream failed: %s. Trying Ollama fallback.", e)
+                self._cloud_failed(e)
                 if streamed_any:
                     # Tokens were already emitted; replaying on Ollama would
                     # duplicate the partial answer the user has already seen.
                     yield "\n\n[Response interrupted — please retry.]"
                     return
-                if await self._check_ollama_health():
-                    self.active_backend = "ollama"
 
-        if self.active_backend == "ollama":
+        if await self._check_ollama_health():
+            self.active_backend = "ollama"
             async for token in self._stream_ollama(user_message, conversation_history):
                 yield token
         else:
-            yield "I have no language model available."
+            yield self._no_backend_message()
 
     async def chat_with_tools(
         self,
@@ -394,129 +372,44 @@ class JarvisLLM:
         returning an apology string, so plan subtasks can retry or be marked failed.
         """
         tier = self._apply_cost_mode(tier)
-        paid_blocked, block_reason = self._paid_usage_blocked()
+        paid_blocked, block_reason = await self._budget_blocked()
         if paid_blocked:
-            logger.warning("Claude tool-use request blocked by %s.", block_reason)
+            logger.warning("Cloud tool-use request blocked by %s.", block_reason)
             if raise_on_failure:
                 raise ToolLoopError(f"Paid usage blocked by {block_reason}")
             return f"I am in cost guard mode because the {block_reason} has been reached. Try a local command or switch cost mode.", []
 
-        client = _get_anthropic_client()
-        if client is None:
-            response = await self._chat_ollama(user_message, conversation_history)
-            return response, []
+        if not self._cloud_ready():
+            if raise_on_failure:
+                raise ToolLoopError(f"{self.cloud_name} is unavailable")
+            return await self._chat_ollama(user_message, conversation_history), []
 
-        config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-        system_blocks = self._system_blocks(system_prompt_override)
-        prepared_tools = self._tools_with_cache_breakpoint(tools)
-
-        messages = self._build_claude_messages(user_message, conversation_history)
-
-        tool_calls_log: list[dict[str, Any]] = []
-        iteration = 0
-
-        while iteration < max_iterations:
-            iteration += 1
-            start = time.time()
-
-            async def _make_tool_request():
-                return await client.messages.create(
-                    model=config["model"],
-                    max_tokens=config["max_tokens"],
-                    temperature=config["temperature"],
-                    system=system_blocks,
-                    messages=messages,
-                    tools=prepared_tools,
-                )
-
-            try:
-                resp = await retry_with_backoff(
-                    _make_tool_request,
-                    policy=API_RETRY_POLICY,
-                    context=f"Claude tool-use (iter {iteration})",
-                )
-                claude_circuit.record_success()
-            except Exception as e:
-                claude_circuit.record_failure()
-                category = classify_error(e)
-                logger.error(
-                    "Claude tool-use call failed (iteration %d, %s): %s",
-                    iteration, category.value, e,
-                )
-                if raise_on_failure:
-                    raise ToolLoopError(f"Tool-use call failed ({category.value}): {e}") from e
-                # Try Ollama fallback for a simple response
-                if await self._check_ollama_health():
-                    self.active_backend = "ollama"
-                    response = await self._chat_ollama(user_message, conversation_history)
-                    return response, tool_calls_log
-                return user_friendly_error(category, context="processing your request"), tool_calls_log
-
-            elapsed = time.time() - start
-            self._track_usage(resp.usage, config["model"], tier, elapsed, user_message[:80])
-            perf_tracker.record(f"llm.tool_loop.{tier}.iter", elapsed)
-
-            logger.info(
-                "Agentic loop [iter %d, %s/%s]: stop_reason=%s, %d blocks, %.2fs",
-                iteration, tier, config["model"].split("-")[1],
-                resp.stop_reason, len(resp.content), elapsed,
+        spec = self.tier_spec(tier)
+        start = time.time()
+        try:
+            result = await self.provider.run_tools(
+                system=self._system(system_prompt_override),
+                messages=self._build_messages(user_message, conversation_history),
+                tools=tools,
+                executor=tool_executor,
+                spec=spec,
+                max_iterations=max_iterations,
+                on_usage=lambda usage: self._track_usage(usage, tier, time.time() - start, user_message[:80]),
             )
+            self._cloud_succeeded()
+        except Exception as e:
+            self._cloud_failed(e)
+            if raise_on_failure:
+                raise ToolLoopError(f"Tool-use call failed ({classify_error(e).value}): {e}") from e
+            if await self._check_ollama_health():
+                return await self._chat_ollama(user_message, conversation_history), []
+            return user_friendly_error(classify_error(e), context="processing your request"), []
 
-            if resp.stop_reason == "tool_use":
-                messages.append({"role": "assistant", "content": resp.content})
-
-                tool_results = []
-                for block in resp.content:
-                    if block.type == "tool_use":
-                        tool_name = block.name
-                        tool_input = block.input
-                        tool_id = block.id
-
-                        logger.info("Tool call: %s(%s)", tool_name, str(tool_input)[:200])
-
-                        try:
-                            result = await tool_executor(tool_name, tool_input)
-                        except Exception as e:
-                            logger.error("Tool execution error (%s): %s", tool_name, e)
-                            result = f"Error executing {tool_name}: {e}"
-
-                        content = _to_tool_result_content(result)
-                        log_text = _tool_result_log_text(content)
-                        tool_calls_log.append({"name": tool_name, "input": tool_input, "result": log_text[:2000]})
-                        tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": content})
-
-                messages.append({"role": "user", "content": tool_results})
-
-            elif resp.stop_reason == "end_turn":
-                text_parts = []
-                for block in resp.content:
-                    if hasattr(block, "text"):
-                        text_parts.append(block.text)
-                final_text = "\n".join(text_parts).strip()
-
-                logger.info(
-                    "Agentic loop complete: %d iterations, %d tool calls",
-                    iteration, len(tool_calls_log),
-                )
-                return final_text, tool_calls_log
-
-            else:
-                logger.warning("Unexpected stop_reason: %s", resp.stop_reason)
-                text_parts = []
-                for block in resp.content:
-                    if hasattr(block, "text"):
-                        text_parts.append(block.text)
-                final_text = "\n".join(text_parts).strip()
-                if not final_text:
-                    final_text = "I hit a processing limit. Could you simplify the request?"
-                return final_text, tool_calls_log
-
-        logger.warning("Agentic loop hit max iterations (%d).", max_iterations)
-        if raise_on_failure:
-            raise ToolLoopError(f"Hit max iterations ({max_iterations})")
-        return (
-            "I hit my processing limit. Let me know if you would like to continue."
-        ), tool_calls_log
+        perf_tracker.record(f"llm.tool_loop.{tier}", time.time() - start)
+        if not result.completed and raise_on_failure:
+            raise ToolLoopError(f"Tool loop did not complete: {result.text}")
+        logger.info("Agentic loop complete: %d tool calls", len(result.tool_calls))
+        return result.text, result.tool_calls
 
     async def chat_with_tools_stream(
         self,
@@ -528,194 +421,57 @@ class JarvisLLM:
         max_iterations: int = 10,
         system_prompt_override: str | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Run tool-use loop non-streaming, then stream final response."""
-        tier = self._apply_cost_mode(tier)
-        paid_blocked, block_reason = self._paid_usage_blocked()
-        if paid_blocked:
-            logger.warning("Claude tool-use stream blocked by %s.", block_reason)
-            yield f"I am in cost guard mode because the {block_reason} has been reached. Try a local command or switch cost mode."
-            return
+        """Run the tool loop, then yield the final response."""
+        text, _ = await self.chat_with_tools(
+            user_message, tools, tool_executor, conversation_history,
+            tier=tier, max_iterations=max_iterations,
+            system_prompt_override=system_prompt_override,
+        )
+        yield text or "I completed the tool work, but did not receive a final response."
 
-        client = _get_anthropic_client()
-        if client is None:
-            response = await self._chat_ollama(user_message, conversation_history)
-            yield response
-            return
-
-        config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-        system_blocks = self._system_blocks(system_prompt_override)
-        prepared_tools = self._tools_with_cache_breakpoint(tools)
-        messages = self._build_claude_messages(user_message, conversation_history)
-
-        iteration = 0
-
-        while iteration < max_iterations:
-            iteration += 1
-            start = time.time()
-
-            try:
-                resp = await client.messages.create(
-                    model=config["model"],
-                    max_tokens=config["max_tokens"],
-                    temperature=config["temperature"],
-                    system=system_blocks,
-                    messages=messages,
-                    tools=prepared_tools,
-                )
-            except Exception as e:
-                logger.error("Claude tool-use stream call failed (iteration %d): %s", iteration, e)
-                yield f"I encountered an error: {e}"
-                return
-
-            elapsed = time.time() - start
-            self._track_usage(resp.usage, config["model"], tier, elapsed, user_message[:80])
-
-            if resp.stop_reason == "tool_use":
-                messages.append({"role": "assistant", "content": resp.content})
-                tool_results = []
-                for block in resp.content:
-                    if block.type == "tool_use":
-                        tool_name = block.name
-                        tool_input = block.input
-                        tool_id = block.id
-
-                        logger.info("Tool call (stream): %s(%s)", tool_name, str(tool_input)[:200])
-                        try:
-                            result = await tool_executor(tool_name, tool_input)
-                        except Exception as e:
-                            logger.error("Tool execution error (%s): %s", tool_name, e)
-                            result = f"Error executing {tool_name}: {e}"
-
-                        content = _to_tool_result_content(result)
-                        tool_results.append({"type": "tool_result", "tool_use_id": tool_id, "content": content})
-
-                messages.append({"role": "user", "content": tool_results})
-
-            elif resp.stop_reason == "end_turn":
-                text_parts = [
-                    block.text
-                    for block in resp.content
-                    if hasattr(block, "text") and block.text.strip()
-                ]
-                yield "\n".join(text_parts).strip() or "I completed the tool work, but did not receive a final response."
-                return
-
-            else:
-                text_parts = []
-                for block in resp.content:
-                    if hasattr(block, "text"):
-                        text_parts.append(block.text)
-                yield "\n".join(text_parts).strip() or "I hit a processing limit."
-                return
-
-        yield "I hit my processing limit. Let me know if you would like me to continue."
-
-    async def _chat_claude(
+    async def _chat_cloud(
         self,
         user_message: str,
-        conversation_history: list[dict] | None = None,
-        tier: str = "brain",
+        conversation_history: list[dict] | None,
+        tier: str,
         system_prompt_override: str | None = None,
         max_tokens_override: int | None = None,
         temperature_override: float | None = None,
     ) -> str:
-        """Send message to Claude API with circuit breaker and retry logic."""
-        if not claude_circuit.allow_request():
-            raise ConnectionError(
-                "Claude API circuit breaker is open (repeated failures). "
-                "Will retry automatically after recovery window."
-            )
-
-        client = _get_anthropic_client()
-        if client is None:
-            raise ConnectionError("Anthropic client not available.")
-
-        config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-        system_blocks = self._system_blocks(system_prompt_override)
-        max_tokens = max_tokens_override or config["max_tokens"]
-        temperature = temperature_override or config["temperature"]
+        spec = self.tier_spec(tier)
+        if max_tokens_override is not None:
+            # Reasoning tokens share the output budget on reasoning models, so
+            # never shrink below the tier's own budget.
+            spec = TierSpec(spec.model, max(max_tokens_override, spec.max_output_tokens),
+                            spec.effort, spec.temperature)
+        if temperature_override is not None and spec.temperature is not None:
+            spec = TierSpec(spec.model, spec.max_output_tokens, spec.effort, temperature_override)
 
         user_message = sanitize_user_input(user_message)
-        messages = self._build_claude_messages(user_message, conversation_history)
-
         start = time.time()
-
-        async def _make_request():
-            return await client.messages.create(
-                model=config["model"],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system_blocks,
-                messages=messages,
-            )
-
-        try:
-            resp = await retry_with_backoff(
-                _make_request,
-                policy=API_RETRY_POLICY,
-                context=f"Claude chat ({tier})",
-            )
-            claude_circuit.record_success()
-        except Exception:
-            claude_circuit.record_failure()
-            raise
-
+        text, usage = await self.provider.complete(
+            system=self._system(system_prompt_override),
+            messages=self._build_messages(user_message, conversation_history),
+            spec=spec,
+        )
+        self._cloud_succeeded()
         elapsed = time.time() - start
-        # Use the first text block, not content[0]: a leading thinking/tool block
-        # has no .text and would raise AttributeError on an otherwise-valid reply.
-        content = next(
-            (block.text for block in resp.content if getattr(block, "type", None) == "text"),
-            "",
-        )
-
-        # Track costs and performance
-        self._track_usage(resp.usage, config["model"], tier, elapsed, user_message[:80])
+        self._track_usage(usage, tier, elapsed, user_message[:80])
         perf_tracker.record(f"llm.chat.{tier}", elapsed)
-
         logger.info(
-            "Claude [%s/%s] response: %d chars in %.2fs (in:%d out:%d tokens)",
-            tier, config["model"].split("-")[1], len(content), elapsed,
-            resp.usage.input_tokens, resp.usage.output_tokens,
+            "%s [%s/%s] response: %d chars in %.2fs",
+            self.cloud_name, tier, spec.model, len(text), elapsed,
         )
-        return content.strip()
+        return text.strip()
 
-    async def _stream_claude(
+    # ── message building ────────────────────────────────────────────────
+
+    def _build_messages(
         self,
         user_message: str,
         conversation_history: list[dict] | None = None,
-        tier: str = "brain",
-    ) -> AsyncGenerator[str, None]:
-        """Stream response tokens from Claude API."""
-        client = _get_anthropic_client()
-        if client is None:
-            raise ConnectionError("Anthropic client not available.")
-
-        config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-        messages = self._build_claude_messages(user_message, conversation_history)
-
-        start = time.time()
-
-        async with client.messages.stream(
-            model=config["model"],
-            max_tokens=config["max_tokens"],
-            temperature=config["temperature"],
-            system=self._system_blocks(),
-            messages=messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                yield text
-
-            final_message = await stream.get_final_message()
-            if final_message and final_message.usage:
-                elapsed = time.time() - start
-                self._track_usage(final_message.usage, config["model"], tier, elapsed)
-
-    def _build_claude_messages(
-        self,
-        user_message: str,
-        conversation_history: list[dict] | None = None,
-    ) -> list[dict]:
-        """Build message list for Claude API."""
+    ) -> list[dict[str, str]]:
+        """Build a user/assistant message list, summarising older turns."""
         messages: list[dict[str, str]] = []
         if conversation_history:
             recent_count = max(2, min(settings.CONTEXT_RECENT_MESSAGES, settings.MAX_CONTEXT_MESSAGES))
@@ -764,28 +520,31 @@ class JarvisLLM:
             summary = summary[:budget].rsplit("\n", 1)[0]
         return summary
 
+    # ── Ollama ──────────────────────────────────────────────────────────
+
     async def _chat_ollama(
         self,
         user_message: str,
         conversation_history: list[dict] | None = None,
+        json_schema: dict[str, Any] | None = None,
     ) -> str:
         """Send message to Ollama and return response."""
         messages = self._build_ollama_messages(user_message, conversation_history)
+        payload: dict[str, Any] = {
+            "model": settings.OLLAMA_MODEL,
+            "messages": messages,
+            "stream": False,
+            "keep_alive": "10m",
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 256 if json_schema is None else 1024,
+                "num_ctx": 4096,
+            },
+        }
+        if json_schema is not None:
+            payload["format"] = json_schema
         try:
-            resp = await self._ollama_client.post(
-                f"{self._ollama_base_url}/api/chat",
-                json={
-                    "model": settings.OLLAMA_MODEL,
-                    "messages": messages,
-                    "stream": False,
-                    "keep_alive": "10m",
-                    "options": {
-                        "temperature": 0.7,
-                        "num_predict": 256,
-                        "num_ctx": 4096,
-                    },
-                },
-            )
+            resp = await self._ollama_client.post(f"{self._ollama_base_url}/api/chat", json=payload)
             resp.raise_for_status()
             data = cast(dict[str, Any], resp.json())
             message = data.get("message", {})
@@ -796,7 +555,7 @@ class JarvisLLM:
             return content.strip()
         except httpx.ConnectError:
             logger.error("Cannot connect to Ollama. Is it running?")
-            return "I cannot connect to any language model. Please check that Ollama is running or that your Anthropic API key is set."
+            return self._no_backend_message()
         except Exception as e:
             logger.error("Ollama chat error: %s", e)
             return f"I encountered an error: {e}"
@@ -847,6 +606,8 @@ class JarvisLLM:
         messages.append({"role": "user", "content": user_message})
         return messages
 
+    # ── tokens and cost ─────────────────────────────────────────────────
+
     async def count_input_tokens(
         self,
         user_message: str,
@@ -855,69 +616,41 @@ class JarvisLLM:
         tools: list[dict] | None = None,
         system_prompt_override: str | None = None,
     ) -> dict[str, Any]:
-        """Estimate input tokens with Anthropic's free token-counting endpoint."""
-        client = _get_anthropic_client()
-        if client is None:
-            from jarvis.core.perf import estimate_tokens
-            return {
-                "input_tokens": estimate_tokens(user_message),
-                "source": "local_estimate",
-            }
+        """Count input tokens with the provider's free counting endpoint."""
+        from jarvis.core.perf import estimate_tokens
 
-        config = TIER_CONFIG.get(self._apply_cost_mode(tier), TIER_CONFIG["brain"])
-        messages = self._build_claude_messages(user_message, conversation_history)
-        kwargs: dict[str, Any] = {
-            "model": config["model"],
-            "system": self._system_blocks(system_prompt_override),
-            "messages": messages,
-        }
-        prepared_tools = self._tools_with_cache_breakpoint(tools)
-        if prepared_tools:
-            kwargs["tools"] = prepared_tools
-
-        try:
-            response = await client.messages.count_tokens(**kwargs)
-            return {
-                "input_tokens": int(getattr(response, "input_tokens", 0) or 0),
-                "model": config["model"],
-                "tier": tier,
-                "source": "anthropic_count_tokens",
-            }
-        except Exception as exc:
-            logger.debug("Anthropic token counting failed: %s", exc)
-            from jarvis.core.perf import estimate_tokens
-            return {
-                "input_tokens": estimate_tokens(user_message),
-                "model": config["model"],
-                "tier": tier,
-                "source": "local_estimate",
-                "error": str(exc)[:200],
-            }
-
-    def _track_usage(self, usage: Any, model: str, tier: str, elapsed: float, user_preview: str = ""):
-        """Record token usage and cost."""
-        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-        cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
-        cache_creation = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
-
-        pricing = settings.CLAUDE_PRICING.get(model, {})
-        if pricing:
-            # Anthropic's input_tokens already excludes cache reads and writes.
-            standard_input = input_tokens
-            cost = (
-                (standard_input / 1_000_000) * pricing["input"]
-                + (output_tokens / 1_000_000) * pricing["output"]
-                + (cache_creation / 1_000_000) * pricing["cache_write"]
-                + (cache_read / 1_000_000) * pricing["cache_read"]
+        tier = self._apply_cost_mode(tier)
+        spec = self.tier_spec(tier)
+        count: int | None = None
+        if self.provider.is_configured():
+            count = await self.provider.count_tokens(
+                system=self._system(system_prompt_override),
+                messages=self._build_messages(user_message, conversation_history),
+                spec=spec,
+                tools=tools,
             )
-        else:
-            cost = 0.0
+        if count is None:
+            return {
+                "input_tokens": estimate_tokens(user_message),
+                "model": spec.model,
+                "tier": tier,
+                "source": "local_estimate",
+            }
+        return {
+            "input_tokens": count,
+            "model": spec.model,
+            "tier": tier,
+            "source": f"{self.cloud_name}_count_tokens",
+        }
 
-        self._session_costs["total_input_tokens"] += input_tokens
-        self._session_costs["total_output_tokens"] += output_tokens
-        self._session_costs["total_cache_read_tokens"] += cache_read
-        self._session_costs["total_cache_creation_tokens"] += cache_creation
+    def _track_usage(self, usage: Usage, tier: str, elapsed: float, user_preview: str = ""):
+        """Record token usage and cost."""
+        cost = usage.cost(settings.MODEL_PRICING.get(usage.model, {}))
+
+        self._session_costs["total_input_tokens"] += usage.input_tokens
+        self._session_costs["total_output_tokens"] += usage.output_tokens
+        self._session_costs["total_cache_read_tokens"] += usage.cache_read_tokens
+        self._session_costs["total_cache_creation_tokens"] += usage.cache_write_tokens
         self._session_costs["total_cost_usd"] += cost
         self._session_costs["request_count"] += 1
         self._session_costs["requests_by_tier"][tier] = (
@@ -927,9 +660,10 @@ class JarvisLLM:
         try:
             from jarvis.core.cost_tracker import log_request
             log_request(
-                model=model, tier=tier,
-                input_tokens=input_tokens, output_tokens=output_tokens,
-                cache_read_tokens=cache_read, cache_creation_tokens=cache_creation,
+                model=usage.model, tier=tier,
+                input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                cache_creation_tokens=usage.cache_write_tokens,
                 cost_usd=cost, elapsed_seconds=elapsed,
                 user_input_preview="" if self.privacy_mode else user_preview,
             )
@@ -938,7 +672,8 @@ class JarvisLLM:
 
         logger.info(
             "Cost: $%.4f (in:%d out:%d cache_r:%d cache_w:%d) | Session: $%.4f (%d reqs)",
-            cost, input_tokens, output_tokens, cache_read, cache_creation,
+            cost, usage.input_tokens, usage.output_tokens,
+            usage.cache_read_tokens, usage.cache_write_tokens,
             self._session_costs["total_cost_usd"],
             self._session_costs["request_count"],
         )
@@ -964,12 +699,11 @@ class JarvisLLM:
 
     def get_active_model(self, tier: str = "brain") -> str:
         """Return the model name for the given tier or current backend."""
-        if self.active_backend == "claude":
-            config = TIER_CONFIG.get(tier, TIER_CONFIG["brain"])
-            return config["model"]
-        elif self.active_backend == "ollama":
+        if self.active_backend == "ollama":
             return settings.OLLAMA_MODEL
-        return "none"
+        if self.active_backend in ("none", "initializing"):
+            return "none"
+        return self.tier_spec(tier).model
 
     async def close(self):
         """Close HTTP clients and log final session cost."""

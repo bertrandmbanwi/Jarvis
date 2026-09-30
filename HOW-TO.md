@@ -18,7 +18,7 @@ Optional (recommended):
 | Tool | Purpose | Install |
 |------|---------|---------|
 | cloudflared | Remote/mobile access via HTTPS tunnel | `brew install cloudflared` |
-| Claude Code CLI | Delegate coding tasks via CLI | `npm install -g @anthropic-ai/claude-code` |
+| Codex CLI or Claude Code | Delegate coding tasks | `npm install -g @openai/codex` or `npm install -g @anthropic-ai/claude-code` |
 | Google Chrome | Required for Chrome Extension (browser bridge) | [google.com/chrome](https://www.google.com/chrome/) |
 
 ## Quick Start
@@ -35,7 +35,7 @@ chmod +x setup.sh
 # 3. Create your .env file with API keys
 cp .env.example .env   # then edit with your keys
 # OR create manually:
-echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' > .env
+echo 'OPENAI_API_KEY=sk-your-key-here' > .env
 
 # 4. Start JARVIS
 ./start.sh full
@@ -45,19 +45,27 @@ JARVIS opens the dashboard automatically at **http://localhost:3000**. You can a
 
 ## Environment Variables (.env)
 
-Create a `.env` file in the project root. `ANTHROPIC_API_KEY` is required for the cloud LLM backend. Without it, JARVIS falls back to Ollama (local, free, slower).
+Create a `.env` file in the project root. `OPENAI_API_KEY` is required for the default cloud LLM backend. Without a cloud key, JARVIS falls back to Ollama (local, free, slower). Keys saved from the Settings panel are stored in macOS Keychain.
 
 ```bash
-# Required for cloud LLM intelligence
-ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+# Required for cloud LLM intelligence (default provider)
+OPENAI_API_KEY=sk-your-openai-key-here
 
-# Optional: override LLM model tiers
-CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001
-CLAUDE_BRAIN_MODEL=claude-sonnet-4-6
-CLAUDE_DEEP_MODEL=claude-opus-4-6
+# Optional: override model tiers and reasoning effort
+OPENAI_FAST_MODEL=gpt-6-luna
+OPENAI_BRAIN_MODEL=gpt-6.1-sol
+OPENAI_DEEP_MODEL=gpt-6.1-sol
+OPENAI_DEEP_EFFORT=high
 
-# Optional: prefer local Ollama instead of cloud API
+# Optional: use Anthropic instead
+# LLM_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+
+# Optional: set false to prefer local Ollama over the cloud API
 PREFER_CLAUDE=true
+
+# Optional: coding agent for development tasks (auto, codex, claude)
+JARVIS_CODING_AGENT=auto
 
 # Optional: TTS configuration
 TTS_ENGINE=kokoro           # kokoro | edge | say
@@ -282,7 +290,8 @@ Jarvis/
       calendar_email.py       # Calendar and email via Chrome/Gmail
       chrome_extension.py     # Chrome extension bridge (tab/DOM control)
       chrome_sync.py          # Chrome cookie sync
-      claude_code.py          # Coding CLI delegation
+      coding_agent.py         # Coding agent delegation (Codex CLI / Claude Code)
+      claude_code.py          # Claude Code runner
       notes_access.py         # Apple Notes integration
       work_session.py         # Persistent coding sessions
     voice/
@@ -325,7 +334,7 @@ JARVIS has 93 registered tools organized into these categories:
 | Calendar/Email | Read Gmail inbox via Chrome, calendar events |
 | Apple Notes | Read, search, and create notes via AppleScript |
 | Weather | Current conditions and forecasts |
-| Coding CLI | Delegate coding tasks via Claude Code, scaffold projects, smart commands |
+| Coding agent | Delegate coding tasks to Codex CLI or Claude Code, scaffold projects, smart commands |
 | Work Sessions | Persistent multi-step coding sessions that survive restarts |
 
 ## Intelligence Tiers
@@ -334,9 +343,9 @@ JARVIS uses a tiered model system that routes requests to the appropriate level 
 
 | Tier | Model | Use Case | Cost |
 |------|-------|----------|------|
-| Fast | Claude Haiku 4.5 | Quick lookups, simple responses | Lowest ($1/$5 per 1M tokens) |
-| Brain | Claude Sonnet 4.6 | General conversation, tool use | Medium ($3/$15 per 1M tokens) |
-| Deep | Claude Opus 4.6 | Complex reasoning, multi-step plans | Highest ($5/$25 per 1M tokens) |
+| Fast | GPT-6 Luna (low effort) | Quick lookups, routing, QA checks | Lowest ($0.10/$0.50 per 1M tokens) |
+| Brain | GPT-6.1 Sol (medium effort) | General conversation, tool use | $2/$10 per 1M tokens |
+| Deep | GPT-6.1 Sol (high effort) | Complex reasoning, multi-step plans | $2/$10 per 1M tokens, more reasoning tokens |
 | Local | Ollama (llama3.1:8b) | Offline fallback, no API needed | Free |
 
 The multi-agent planner automatically escalates complex requests to higher tiers and decomposes them into subtasks.
@@ -467,7 +476,7 @@ JARVIS stores persistent data in the `data/` directory:
 ## Troubleshooting
 
 **JARVIS won't start:**
-Check that Ollama is running (`ollama serve`) and your `.env` has a valid `ANTHROPIC_API_KEY`.
+Check that Ollama is running (`ollama serve`) and your `.env` (or Keychain) has a valid `OPENAI_API_KEY`.
 
 **No voice output in browser:**
 Make sure FFmpeg is installed (`brew install ffmpeg`). Check browser console for WebSocket errors.

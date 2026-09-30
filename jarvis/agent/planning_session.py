@@ -11,13 +11,12 @@ Architecture:
     detect_planning_mode determines if a request needs planning discussion
 """
 import asyncio
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, cast
 
+from jarvis.agent.schemas import PLANNING_DECISION_SCHEMA
 from jarvis.core.llm import JarvisLLM
 
 logger = logging.getLogger("jarvis.planning")
@@ -582,32 +581,18 @@ async def _classify_with_llm(
         f"Analyze this request and determine if it needs a planning discussion:\n\n"
         f"Task type: {task_type}\n"
         f"User request: {user_text}\n\n"
-        f"Respond with JSON only:\n"
-        f"{{\n"
-        f'  "needs_planning": true/false,\n'
-        f'  "confidence": 0.0-1.0,\n'
-        f'  "missing_info": ["question1", "question2"],\n'
-        f'  "reasoning": "..."\n'
-        f"}}\n\n"
+        f"Give needs_planning, a confidence from 0.0 to 1.0, any missing_info questions, "
+        f"and brief reasoning.\n\n"
         f"Consider: Is the request vague, complex, multi-faceted, or ambiguous? "
         f"Or is it clear and straightforward?"
     )
 
     try:
-        response = await asyncio.wait_for(
-            llm.chat(
-                user_message=classification_prompt,
-                tier="fast",
-                max_tokens_override=300,
-                temperature_override=0.3,
-            ),
+        data = await asyncio.wait_for(
+            llm.chat_json(classification_prompt, PLANNING_DECISION_SCHEMA, tier="fast"),
             timeout=10.0,
         )
-
-        # Parse JSON response
-        match = re.search(r'\{.*\}', response, re.DOTALL)
-        if match:
-            data = cast(dict[str, Any], json.loads(match.group(0)))
+        if data:
             missing_info = data.get("missing_info", [])
             return PlanningDecision(
                 needs_planning=bool(data.get("needs_planning", False)),
