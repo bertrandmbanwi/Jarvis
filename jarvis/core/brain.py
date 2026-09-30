@@ -305,186 +305,92 @@ class JarvisBrain:
         return True
 
     async def process(self, user_input: str) -> str:
-        """Process user message and return response."""
+        """Process user message and return the complete response."""
+        return "".join([token async for token in self.process_stream(user_input)])
+
+    async def process_stream(self, user_input: str):
+        """Process a user message, yielding the response as it is produced.
+
+        This is the single request pipeline: ``process`` collects its output.
+        Plain chat streams token by token; agent and plan responses arrive in
+        one piece once their tool work finishes.
+        """
         if not self._initialized:
-            return "I am not fully initialized yet. Please wait a moment."
+            yield "I am not fully initialized yet. Please wait a moment."
+            return
 
         user_input = sanitize_user_input(user_input)
         if not user_input:
-            return "I didn't catch that. Could you say something?"
+            yield "I didn't catch that. Could you say something?"
+            return
 
         start_time = time.time()
         trace_id = get_trace_id()
         self._current_request_id = uuid.uuid4().hex[:12]
         self._last_plan = None
-        logger.info(
-            "[req:%s] Processing: '%s'",
-            self._current_request_id, user_input[:100],
-        )
-        record_event("brain.request.started", request_id=self._current_request_id, trace_id=trace_id)
+        request_id = self._current_request_id
+        logger.info("[req:%s] Processing: '%s'", request_id, user_input[:100])
+        record_event("brain.request.started", request_id=request_id, trace_id=trace_id)
 
         self.proactive.mark_interaction()
 
         if _is_jarvis_shutdown(user_input):
             logger.info("JARVIS shutdown requested by user.")
             self._shutdown_requested = True
-            return "Shutting down JARVIS. All systems offline. Goodbye, sir."
+            yield "Shutting down JARVIS. All systems offline. Goodbye, sir."
+            return
 
         if settings.LOCAL_FIRST_ENABLED:
-            local_result = await route_local(user_input, privacy_mode=self._privacy_mode)
-            if local_result is not None:
-                if local_result.action == "privacy_on":
-                    self._privacy_mode = True
-                elif local_result.action == "privacy_off":
-                    self._privacy_mode = False
+            local_response = await self._try_local_route(user_input, trace_id, start_time)
+            if local_response is not None:
+                yield local_response
+                return
 
-                response = local_result.response
-                savings_tracker.record_local_route(
-                    local_result.action,
-                    tool_name=local_result.tool_name,
-                    cache_hit=local_result.cache_hit,
-                )
-                if local_result.remember and not self._privacy_mode and settings.MEMORY_ENABLED:
-                    user_turn = ConversationTurn(
-                        role="user", content=user_input,
-                        request_id=self._current_request_id,
-                        trace_id=trace_id,
-                    )
-                    assistant_turn = ConversationTurn(
-                        role="assistant", content=response, tier_used=local_result.tier,
-                        request_id=self._current_request_id,
-                        trace_id=trace_id,
-                    )
-                    self.conversation.extend([user_turn, assistant_turn])
-                    self._save_turn(user_turn)
-                    self._save_turn(assistant_turn)
-                    await asyncio.to_thread(
-                        self.memory.process_exchange, user_input, response, tier=local_result.tier
-                    )
-
-                elapsed = time.time() - start_time
-                perf_tracker.record_request(elapsed, local_result.tier)
-                perf_tracker.record(f"request.{local_result.tier}.{local_result.action}", elapsed)
-                logger.info(
-                    "[req:%s] Local route '%s' completed in %.2fs.",
-                    self._current_request_id, local_result.action, elapsed,
-                )
-                return response
-
-        user_turn = ConversationTurn(
-            role="user", content=user_input,
-            request_id=self._current_request_id,
-            trace_id=trace_id,
-        )
+        user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
         self.conversation.append(user_turn)
         if not self._privacy_mode:
             self._save_turn(user_turn)
-
         if len(self.conversation) > MAX_CONVERSATION_TURNS:
             self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
-
-        history = [
-            {"role": turn.role, "content": turn.content}
-            for turn in self.conversation[-20:]
-        ][:-1]
+        history = [{"role": turn.role, "content": turn.content} for turn in self.conversation[-20:]][:-1]
 
         tier = _select_tier(user_input)
+        parts: list[str] = []
 
         if tier == "fast" and _is_chat_only(user_input):
-            logger.info("[req:%s] Routing to CHAT mode [tier: fast].", self._current_request_id)
+            logger.info("[req:%s] Routing to CHAT mode [tier: fast].", request_id)
             # Memory lookup is blocking SQLite/Chroma; run it off the event loop
             # so a concurrent client's request isn't stalled behind it.
-            enriched_context = await asyncio.to_thread(
-                self.memory.get_enriched_context, user_input, 3
-            )
+            enriched_context = await asyncio.to_thread(self.memory.get_enriched_context, user_input, 3)
             enriched_input = f"{enriched_context}\n\nUser: {user_input}" if enriched_context else user_input
-            with trace_span("brain.chat", request_id=self._current_request_id, tier="fast"):
-                response = await self.llm.chat(enriched_input, history, tier="fast")
+            with trace_span("brain.chat", request_id=request_id, tier="fast"):
+                async for token in self.llm.chat_stream(enriched_input, history, tier="fast"):
+                    parts.append(token)
+                    yield token
         else:
-            should_plan = await self.planner.should_decompose(user_input)
-
-            if should_plan:
-                logger.info("[req:%s] Routing to PLAN+EXECUTE mode [tier: %s].", self._current_request_id, tier)
-                with trace_span("brain.plan_execute", request_id=self._current_request_id, tier=tier):
-                    response = await self._execute_plan(user_input, history, tier)
+            if await self.planner.should_decompose(user_input):
+                logger.info("[req:%s] Routing to PLAN+EXECUTE mode [tier: %s].", request_id, tier)
+                with trace_span("brain.plan_execute", request_id=request_id, tier=tier):
+                    result = await self._execute_plan(user_input, history, tier)
             else:
-                logger.info("[req:%s] Routing to AGENT mode [tier: %s].", self._current_request_id, tier)
-                with trace_span("brain.agent_execute", request_id=self._current_request_id, tier=tier):
-                    response = await self.agent.execute(user_input, history, tier=tier)
+                logger.info("[req:%s] Routing to AGENT mode [tier: %s].", request_id, tier)
+                with trace_span("brain.agent_execute", request_id=request_id, tier=tier):
+                    result = await self.agent.execute(user_input, history, tier=tier)
+            parts.append(result)
+            yield result
+
+        response = "".join(parts)
+        followups = await self._after_response(user_input, response, start_time)
+        if followups:
+            yield followups
+            response += followups
 
         assistant_turn = ConversationTurn(
-            role="assistant", content=response, tier_used=tier,
-            request_id=self._current_request_id,
-            trace_id=trace_id,
+            role="assistant", content=response, tier_used=tier, request_id=request_id, trace_id=trace_id,
         )
         self.conversation.append(assistant_turn)
-
-        # Monitor response quality
-        try:
-            quality_issues = self.monitor.analyze_response(user_input, response)
-            if quality_issues:
-                logger.info("Quality issues detected: %s", quality_issues)
-        except Exception as e:
-            logger.debug("Monitor analysis failed (non-critical): %s", e)
-
-        # Track experiment outcomes and suggestions for completed plans
-        task_elapsed = time.time() - start_time
-        if self._last_plan:
-            plan = self._last_plan
-            failed_markers = (
-                "i encountered an error",
-                "error executing",
-                "traceback",
-                "timed out",
-                "i hit my processing limit",
-                "i hit a processing limit",
-            )
-            response_lower = response.lower()
-            task_succeeded = (
-                plan.status == "completed"
-                and plan.failed_count == 0
-                and not any(marker in response_lower for marker in failed_markers)
-            )
-            try:
-                self.success_tracker.log_task(
-                    task_type="planned",
-                    prompt="" if self._privacy_mode else user_input[:200],
-                    success=task_succeeded,
-                    duration_seconds=task_elapsed,
-                )
-            except Exception as e:
-                logger.debug("Success tracking failed (non-critical): %s", e)
-
-            # Proactive follow-up suggestions: sync version first
-            try:
-                suggestion = suggest_followup(
-                    task_type="planned",
-                    task_description=user_input[:200],
-                    working_dir=str(settings.JARVIS_HOME),
-                ) if task_succeeded else None
-                if suggestion:
-                    response += f"\n\nBy the way, sir: {suggestion.text}"
-                    logger.info("Follow-up suggestion appended: %s", suggestion.action_type)
-            except Exception as e:
-                logger.debug("Suggestion generation failed (non-critical): %s", e)
-
-            # Async follow-up suggestions (richer, checks project files)
-            try:
-                async_suggestion = await suggest_task_followup(
-                    completed_task=user_input[:200],
-                    task_result=response[:1000],
-                    working_dir=str(settings.JARVIS_HOME),
-                ) if task_succeeded else None
-                if async_suggestion:
-                    response += f"\n\n{async_suggestion}"
-                    logger.info("Async follow-up appended.")
-            except Exception as e:
-                logger.debug("Async suggestion failed (non-critical): %s", e)
-
-            self._last_plan = None
-
-        assistant_turn.content = response
-
+        if not self._privacy_mode:
+            self._save_turn(assistant_turn)
         if not self._privacy_mode and settings.MEMORY_ENABLED:
             await asyncio.to_thread(
                 self.memory.add,
@@ -495,7 +401,6 @@ class JarvisBrain:
                     "timestamp": time.time(),
                 },
             )
-
             await asyncio.to_thread(
                 self.memory.process_exchange,
                 user_message=user_input,
@@ -503,137 +408,116 @@ class JarvisBrain:
                 tier=tier,
             )
 
-        if not self._privacy_mode:
-            self._save_turn(assistant_turn)
         elapsed = time.time() - start_time
         perf_tracker.record_request(elapsed, tier)
         perf_tracker.record(f"request.{tier}", elapsed)
-
         logger.info(
             "[req:%s] Response generated in %.2fs [tier: %s]: '%s'",
-            self._current_request_id, elapsed, tier, response[:100],
+            request_id, elapsed, tier, response[:100],
         )
-        record_event("brain.request.completed", request_id=self._current_request_id, tier=tier, elapsed_s=elapsed)
+        record_event("brain.request.completed", request_id=request_id, tier=tier, elapsed_s=elapsed)
 
+    async def _try_local_route(self, user_input: str, trace_id: str, start_time: float) -> str | None:
+        """Answer from the local router (no LLM call) when possible."""
+        local_result = await route_local(user_input, privacy_mode=self._privacy_mode)
+        if local_result is None:
+            return None
+        if local_result.action == "privacy_on":
+            self._privacy_mode = True
+        elif local_result.action == "privacy_off":
+            self._privacy_mode = False
+
+        response = local_result.response
+        savings_tracker.record_local_route(
+            local_result.action,
+            tool_name=local_result.tool_name,
+            cache_hit=local_result.cache_hit,
+        )
+        if local_result.remember and not self._privacy_mode and settings.MEMORY_ENABLED:
+            request_id = self._current_request_id
+            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
+            assistant_turn = ConversationTurn(
+                role="assistant", content=response, tier_used=local_result.tier,
+                request_id=request_id, trace_id=trace_id,
+            )
+            self.conversation.extend([user_turn, assistant_turn])
+            self._save_turn(user_turn)
+            self._save_turn(assistant_turn)
+            await asyncio.to_thread(self.memory.process_exchange, user_input, response, tier=local_result.tier)
+
+        elapsed = time.time() - start_time
+        perf_tracker.record_request(elapsed, local_result.tier)
+        perf_tracker.record(f"request.{local_result.tier}.{local_result.action}", elapsed)
+        logger.info(
+            "[req:%s] Local route '%s' completed in %.2fs.",
+            self._current_request_id, local_result.action, elapsed,
+        )
         return response
 
-    async def process_stream(self, user_input: str):
-        """Stream response token by token. Pure chat only; agent mode returns complete."""
-        if not self._initialized:
-            yield "I am not fully initialized yet."
-            return
+    async def _after_response(self, user_input: str, response: str, start_time: float) -> str:
+        """Quality monitoring and plan outcome tracking; returns any follow-up text to append."""
+        try:
+            quality_issues = self.monitor.analyze_response(user_input, response)
+            if quality_issues:
+                logger.info("Quality issues detected: %s", quality_issues)
+        except Exception as e:
+            logger.debug("Monitor analysis failed (non-critical): %s", e)
 
-        user_input = sanitize_user_input(user_input)
-        if not user_input:
-            yield "I didn't catch that. Could you say something?"
-            return
-
-        self._current_request_id = uuid.uuid4().hex[:12]
+        plan = self._last_plan
+        if not plan:
+            return ""
         self._last_plan = None
-        self.proactive.mark_interaction()
 
-        if settings.LOCAL_FIRST_ENABLED:
-            local_result = await route_local(user_input, privacy_mode=self._privacy_mode)
-            if local_result is not None:
-                if local_result.action == "privacy_on":
-                    self._privacy_mode = True
-                elif local_result.action == "privacy_off":
-                    self._privacy_mode = False
-                response = local_result.response
-                savings_tracker.record_local_route(
-                    local_result.action,
-                    tool_name=local_result.tool_name,
-                    cache_hit=local_result.cache_hit,
-                )
-                if local_result.remember and not self._privacy_mode and settings.MEMORY_ENABLED:
-                    user_turn = ConversationTurn(role="user", content=user_input)
-                    assistant_turn = ConversationTurn(role="assistant", content=response, tier_used=local_result.tier)
-                    self.conversation.extend([user_turn, assistant_turn])
-                    self._save_turn(user_turn)
-                    self._save_turn(assistant_turn)
-                    await asyncio.to_thread(
-                        self.memory.process_exchange, user_input, response, tier=local_result.tier
-                    )
-                yield response
-                return
-
-        tier = _select_tier(user_input)
-
-        request_id = uuid.uuid4().hex[:12]
-        trace_id = get_trace_id()
-
-        if tier == "fast" and _is_chat_only(user_input):
-            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
-            self.conversation.append(user_turn)
-            if not self._privacy_mode:
-                self._save_turn(user_turn)
-
-            if len(self.conversation) > MAX_CONVERSATION_TURNS:
-                self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
-
-            history = [
-                {"role": turn.role, "content": turn.content}
-                for turn in self.conversation[-20:]
-            ][:-1]
-
-            full_response = []
-            async for token in self.llm.chat_stream(user_input, history, tier="fast"):
-                full_response.append(token)
-                yield token
-
-            complete = "".join(full_response)
-            assistant_turn = ConversationTurn(
-                role="assistant", content=complete, tier_used="fast", request_id=request_id, trace_id=trace_id,
+        failed_markers = (
+            "i encountered an error",
+            "error executing",
+            "traceback",
+            "timed out",
+            "i hit my processing limit",
+            "i hit a processing limit",
+        )
+        response_lower = response.lower()
+        task_succeeded = (
+            plan.status == "completed"
+            and plan.failed_count == 0
+            and not any(marker in response_lower for marker in failed_markers)
+        )
+        try:
+            self.success_tracker.log_task(
+                task_type="planned",
+                prompt="" if self._privacy_mode else user_input[:200],
+                success=task_succeeded,
+                duration_seconds=time.time() - start_time,
             )
-            self.conversation.append(assistant_turn)
-            if not self._privacy_mode:
-                self._save_turn(assistant_turn)
-            if not self._privacy_mode and settings.MEMORY_ENABLED:
-                await asyncio.to_thread(
-                    self.memory.add,
-                    text=f"User: {user_input}\nJARVIS: {complete}",
-                    metadata={"type": "conversation", "tier": "fast", "timestamp": time.time()},
-                )
-        else:
-            user_turn = ConversationTurn(role="user", content=user_input, request_id=request_id, trace_id=trace_id)
-            self.conversation.append(user_turn)
-            if not self._privacy_mode:
-                self._save_turn(user_turn)
+        except Exception as e:
+            logger.debug("Success tracking failed (non-critical): %s", e)
 
-            if len(self.conversation) > MAX_CONVERSATION_TURNS:
-                self.conversation = self.conversation[-MAX_CONVERSATION_TURNS:]
-
-            history = [
-                {"role": turn.role, "content": turn.content}
-                for turn in self.conversation[-20:]
-            ][:-1]
-
-            should_plan = await self.planner.should_decompose(user_input)
-
-            if should_plan:
-                logger.info("[req:%s] Routing to PLAN+EXECUTE mode (streaming) [tier: %s].", request_id, tier)
-                complete = await self._execute_plan(user_input, history, tier)
-                yield complete
-            else:
-                logger.info("[req:%s] Routing to AGENT mode (streaming) [tier: %s].", request_id, tier)
-                full_response = []
-                async for token in self.agent.execute_stream(user_input, history, tier=tier):
-                    full_response.append(token)
-                    yield token
-                complete = "".join(full_response)
-
-            assistant_turn = ConversationTurn(
-                role="assistant", content=complete, tier_used=tier, request_id=request_id, trace_id=trace_id,
+        if not task_succeeded:
+            return ""
+        followups = ""
+        try:
+            suggestion = suggest_followup(
+                task_type="planned",
+                task_description=user_input[:200],
+                working_dir=str(settings.JARVIS_HOME),
             )
-            self.conversation.append(assistant_turn)
-            if not self._privacy_mode:
-                self._save_turn(assistant_turn)
-            if not self._privacy_mode and settings.MEMORY_ENABLED:
-                await asyncio.to_thread(
-                    self.memory.add,
-                    text=f"User: {user_input}\nJARVIS: {complete}",
-                    metadata={"type": "agent", "tier": tier, "timestamp": time.time()},
-                )
+            if suggestion:
+                followups += f"\n\nBy the way, sir: {suggestion.text}"
+                logger.info("Follow-up suggestion appended: %s", suggestion.action_type)
+        except Exception as e:
+            logger.debug("Suggestion generation failed (non-critical): %s", e)
+        try:
+            async_suggestion = await suggest_task_followup(
+                completed_task=user_input[:200],
+                task_result=response[:1000],
+                working_dir=str(settings.JARVIS_HOME),
+            )
+            if async_suggestion:
+                followups += f"\n\n{async_suggestion}"
+                logger.info("Async follow-up appended.")
+        except Exception as e:
+            logger.debug("Async suggestion failed (non-critical): %s", e)
+        return followups
 
     async def _execute_plan(
         self,
