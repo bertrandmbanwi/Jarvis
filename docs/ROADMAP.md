@@ -119,13 +119,15 @@ Notes:
 
 ## Phase 6 — Frontend and infrastructure
 
+**Status:** shipped in the Phase 6 PR. The UI has no unit-test runner; these changes are covered by type checks, lint, build and the Playwright smoke test.
+
 | # | Item | Verify |
 |---|---|---|
 | 6.1 | Fix the WebSocket reconnect race (StrictMode, token change, CONNECTING guard, backoff with jitter, retry on online/visibilitychange) | Unit tests |
 | 6.2 | Confirmation prompts restored when the approval request fails; messages queued while disconnected | Tests |
 | 6.3 | React 19 and matching types, eslint 9 flat config, dev dependencies moved to `devDependencies` | `npm run build` + lint |
-| 6.4 | Split `ProductView.tsx` into components and hooks; add aria-labels to icon buttons | Build + Playwright smoke |
-| 6.5 | CI on Node 22 and current action versions | CI |
+| 6.4 | Split `ProductView.tsx` (2,303 → 1,388 lines) into types, defaults, formatters, parts and builder-field modules. Every icon-only button already has an aria-label (the other buttons have visible text). *Next:* break the main component body into section components | Build + Playwright smoke |
+| 6.5 | CI on Node 24 LTS and current action versions (v7) | CI |
 
 ## Phase 7 — Growth and release
 
