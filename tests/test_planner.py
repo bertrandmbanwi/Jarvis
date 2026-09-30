@@ -245,6 +245,19 @@ class TestPlannerShouldDecompose:
         assert result is True
 
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("reply", "expected"),
+        [("not complex", False), ("Simple.", False), ("complex", True), ("**Complex**", True), ("", False)],
+    )
+    async def test_should_decompose_reads_verdict_word(self, mock_llm, reply, expected):
+        """The LLM verdict is read as a word; 'not complex' must not count as complex."""
+        mock_llm.chat.return_value = reply
+        planner = TaskPlanner(llm=mock_llm)
+        result = await planner.should_decompose("search the web and read the full documentation for me")
+        assert result is expected
+
+
 class TestCreatePlan:
     """Test the create_plan method."""
 

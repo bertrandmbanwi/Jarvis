@@ -155,3 +155,50 @@ async def test_local_router_privacy_command_is_not_remembered():
     assert result is not None
     assert result.action == "privacy_on"
     assert result.remember is False
+
+
+@pytest.mark.asyncio
+async def test_local_router_does_not_swallow_requests_containing_incorrect():
+    assert await route_local("The event time is incorrect, fix it to 3pm") is None
+
+
+@pytest.mark.asyncio
+async def test_local_router_logs_bare_correction(monkeypatch):
+    from jarvis.core import local_router
+
+    monkeypatch.setattr(local_router.feedback, "add_feedback", lambda raw, category: {"id": "abcdef123"})
+    result = await route_local("That's incorrect.")
+    assert result is not None and result.action == "feedback_correction"
+
+
+def test_track_usage_bills_anthropic_input_tokens_fully(monkeypatch):
+    """Anthropic's input_tokens already excludes cached tokens; nothing is subtracted."""
+    from types import SimpleNamespace
+
+    from jarvis.core import cost_tracker
+
+    logged = {}
+    monkeypatch.setattr(cost_tracker, "log_request", lambda **kw: logged.update(kw))
+    model = next(iter(settings.CLAUDE_PRICING))
+    price = settings.CLAUDE_PRICING[model]
+    llm = JarvisLLM()
+    usage = SimpleNamespace(
+        input_tokens=500, output_tokens=0, cache_read_input_tokens=3000, cache_creation_input_tokens=0
+    )
+    llm._track_usage(usage, model, "brain", 0.1, "hello")
+    expected = 500 / 1e6 * price["input"] + 3000 / 1e6 * price["cache_read"]
+    assert logged["cost_usd"] == pytest.approx(expected)
+
+
+def test_track_usage_redacts_preview_in_privacy_mode(monkeypatch):
+    from types import SimpleNamespace
+
+    from jarvis.core import cost_tracker
+
+    logged = {}
+    monkeypatch.setattr(cost_tracker, "log_request", lambda **kw: logged.update(kw))
+    llm = JarvisLLM()
+    llm.privacy_mode = True
+    usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+    llm._track_usage(usage, "m", "brain", 0.1, "my secret prompt")
+    assert logged["user_input_preview"] == ""

@@ -377,21 +377,22 @@ async function handleExecuteJs(code, tabId) {
   const id = tabId || (await getActiveTabId());
   if (!id) return { success: false, error: "No active tab." };
 
-  // Restrict JS execution to localhost and JARVIS-related URLs only
+  // Restrict JS execution to local pages. Match on the parsed hostname, not a
+  // substring: "https://evil.example/?x=.trycloudflare.com" or a
+  // "localhost.evil.example" host must not qualify. Tunnel hosts are excluded
+  // because anyone can create a *.trycloudflare.com page.
   const tab = await chrome.tabs.get(id);
-  const tabUrl = (tab.url || "").toLowerCase();
-  const allowedPatterns = [
-    "http://localhost",
-    "http://127.0.0.1",
-    "https://localhost",
-    "https://127.0.0.1",
-    "http://0.0.0.0",
-  ];
-  const isAllowed = allowedPatterns.some((p) => tabUrl.startsWith(p)) ||
-    tabUrl.includes(".trycloudflare.com");
+  let isAllowed = false;
+  try {
+    const parsed = new URL(tab.url || "");
+    isAllowed = ["http:", "https:"].includes(parsed.protocol) &&
+      ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"].includes(parsed.hostname);
+  } catch {
+    isAllowed = false;
+  }
 
   if (!isAllowed) {
-    return { success: false, error: "JS execution restricted to localhost and JARVIS tunnel URLs." };
+    return { success: false, error: "JS execution restricted to localhost pages." };
   }
 
   // Block dangerous patterns

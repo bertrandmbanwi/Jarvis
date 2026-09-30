@@ -50,6 +50,7 @@ from jarvis.core.permissions import (
     assess_tool_call,
     call_is_confirmed,
     describe_tool_call,
+    is_side_effect_free,
     record_tool_audit,
 )
 from jarvis.core.tracing import record_event, trace_span
@@ -125,22 +126,30 @@ class AgentExecutor:
                         llm=self.llm,
                         tier="fast",
                     )
-                    if not qa_result.passed:
+                    if qa_result.conclusive and not qa_result.passed:
                         logger.info(
                             "QA verification failed (attempt %d): %s",
                             qa_result.attempt,
                             qa_result.issues,
                         )
-                        # Single retry with QA feedback
+                        # Single retry with QA feedback. The actions already ran,
+                        # so the retry only rewrites the answer: it sees what the
+                        # tools returned and may only call side-effect-free tools
+                        # (no second email, note, or calendar event).
+                        actions_taken = "\n".join(
+                            f"- {tc['name']}: {str(tc.get('result', ''))[:500]}" for tc in tool_calls
+                        )
                         retry_prompt = (
                             f"Your previous response had quality issues:\n"
                             f"Issues: {', '.join(qa_result.issues)}\n\n"
                             f"Original request: {user_input}\n\n"
+                            f"Previous response: {response_text}\n\n"
+                            f"Actions already completed (do NOT repeat them):\n{actions_taken}\n\n"
                             f"Please provide a corrected response addressing these issues."
                         )
                         response_text, _ = await self.llm.chat_with_tools(
                             user_message=retry_prompt,
-                            tools=active_tools,
+                            tools=[t for t in active_tools if is_side_effect_free(t["name"])],
                             tool_executor=self._execute_tool,
                             conversation_history=conversation_history,
                             tier=tier,
@@ -209,6 +218,7 @@ class AgentExecutor:
             tier=tier,
             max_iterations=10,
             system_prompt_override=system_prompt_override,
+            raise_on_failure=True,
         )
 
         if tool_calls:
