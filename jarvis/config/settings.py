@@ -28,19 +28,46 @@ try:
 except Exception:
     _secret_lookup = None
 
+# Cloud LLM provider: "openai" (default) or "anthropic".
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+if not OPENAI_API_KEY and _secret_lookup is not None:
+    OPENAI_API_KEY = _secret_lookup("OPENAI_API_KEY")
+
+# Tier models. The deep tier reuses gpt-6.1-sol at high reasoning effort;
+# set OPENAI_DEEP_MODEL=gpt-6-astra for the flagship (5x the price).
+OPENAI_FAST_MODEL = os.getenv("OPENAI_FAST_MODEL", "gpt-6-luna")
+OPENAI_BRAIN_MODEL = os.getenv("OPENAI_BRAIN_MODEL", "gpt-6.1-sol")
+OPENAI_DEEP_MODEL = os.getenv("OPENAI_DEEP_MODEL", "gpt-6.1-sol")
+OPENAI_FAST_EFFORT = os.getenv("OPENAI_FAST_EFFORT", "low")
+OPENAI_BRAIN_EFFORT = os.getenv("OPENAI_BRAIN_EFFORT", "medium")
+OPENAI_DEEP_EFFORT = os.getenv("OPENAI_DEEP_EFFORT", "high")
+# Reasoning tokens count against max_output_tokens, so these are larger than
+# the visible reply length.
+OPENAI_FAST_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_FAST_MAX_OUTPUT_TOKENS", "2048"))
+OPENAI_BRAIN_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_BRAIN_MAX_OUTPUT_TOKENS", "8192"))
+OPENAI_DEEP_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DEEP_MAX_OUTPUT_TOKENS", "16000"))
+OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", OPENAI_FAST_MODEL)
+OPENAI_COMPUTER_USE_MODEL = os.getenv("OPENAI_COMPUTER_USE_MODEL", "gpt-6.1-sol")
+
+# Coding agent for run_coding_agent: "codex", "claude", or "auto".
+CODING_AGENT = os.getenv("JARVIS_CODING_AGENT", "auto").strip().lower()
+CODEX_MODEL = os.getenv("CODEX_MODEL", "")
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 if not ANTHROPIC_API_KEY and _secret_lookup is not None:
     ANTHROPIC_API_KEY = _secret_lookup("ANTHROPIC_API_KEY")
 
-CLAUDE_FAST_MODEL = os.getenv("CLAUDE_FAST_MODEL", "claude-haiku-4-5-20251001")
-CLAUDE_BRAIN_MODEL = os.getenv("CLAUDE_BRAIN_MODEL", "claude-sonnet-4-6")
-CLAUDE_DEEP_MODEL = os.getenv("CLAUDE_DEEP_MODEL", "claude-opus-4-6")
+CLAUDE_FAST_MODEL = os.getenv("CLAUDE_FAST_MODEL", "claude-haiku-4-5")
+CLAUDE_BRAIN_MODEL = os.getenv("CLAUDE_BRAIN_MODEL", "claude-sonnet-5")
+CLAUDE_DEEP_MODEL = os.getenv("CLAUDE_DEEP_MODEL", "claude-opus-5")
 
 CLAUDE_DEFAULT_TIER = os.getenv("CLAUDE_DEFAULT_TIER", "brain")
 
 CLAUDE_FAST_MAX_TOKENS = int(os.getenv("CLAUDE_FAST_MAX_TOKENS", "256"))
-CLAUDE_BRAIN_MAX_TOKENS = int(os.getenv("CLAUDE_BRAIN_MAX_TOKENS", "1536"))
-CLAUDE_DEEP_MAX_TOKENS = int(os.getenv("CLAUDE_DEEP_MAX_TOKENS", "3072"))
+CLAUDE_BRAIN_MAX_TOKENS = int(os.getenv("CLAUDE_BRAIN_MAX_TOKENS", "8192"))
+CLAUDE_DEEP_MAX_TOKENS = int(os.getenv("CLAUDE_DEEP_MAX_TOKENS", "16000"))
 
 CLAUDE_FAST_TEMPERATURE = float(os.getenv("CLAUDE_FAST_TEMPERATURE", "0.3"))
 CLAUDE_BRAIN_TEMPERATURE = float(os.getenv("CLAUDE_BRAIN_TEMPERATURE", "0.5"))
@@ -77,16 +104,34 @@ if not OUTLOOK_CALENDAR_CLIENT_SECRET and _secret_lookup is not None:
 # cost-based downgrades entirely.
 COST_DEEP_PREMIUM_LIMIT = float(os.getenv("COST_DEEP_PREMIUM_LIMIT", "0.10"))
 
+# USD per 1M tokens. Each token is billed at exactly one of these rates.
 CLAUDE_PRICING = {
+    "claude-haiku-4-5":           {"input": 1.00, "output": 5.00, "cache_write": 1.25, "cache_read": 0.10},
     "claude-haiku-4-5-20251001":  {"input": 1.00, "output": 5.00, "cache_write": 1.25, "cache_read": 0.10},
+    "claude-sonnet-5":            {"input": 2.00, "output": 10.00, "cache_write": 2.50, "cache_read": 0.20},
     "claude-sonnet-4-6":          {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30},
+    "claude-opus-5":              {"input": 5.00, "output": 25.00, "cache_write": 6.25, "cache_read": 0.50},
     "claude-opus-4-6":            {"input": 5.00, "output": 25.00, "cache_write": 6.25, "cache_read": 0.50},
 }
+
+# developers.openai.com, 2026-09-29. Cache writes cost 1.25x input.
+OPENAI_PRICING = {
+    "gpt-6-luna":   {"input": 0.10, "output": 0.50, "cache_write": 0.125, "cache_read": 0.01},
+    "gpt-6-sol":    {"input": 2.00, "output": 10.00, "cache_write": 2.50, "cache_read": 0.20},
+    "gpt-6.1-sol":  {"input": 2.00, "output": 10.00, "cache_write": 2.50, "cache_read": 0.10},
+    "gpt-6-astra":  {"input": 10.00, "output": 50.00, "cache_write": 12.50, "cache_read": 1.00},
+}
+
+MODEL_PRICING = {**CLAUDE_PRICING, **OPENAI_PRICING}
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 OLLAMA_FAST_MODEL = os.getenv("OLLAMA_FAST_MODEL", "llama3.2:latest")
+# Prefer the cloud provider over Ollama when both are available.
+# (Name kept for existing .env files; it applies to whichever provider is active.)
 PREFER_CLAUDE = os.getenv("PREFER_CLAUDE", "true").lower() in ("true", "1", "yes")
+# Seconds to wait after a cloud failure before trying the cloud provider again.
+CLOUD_RETRY_COOLDOWN_S = float(os.getenv("CLOUD_RETRY_COOLDOWN_S", "60"))
 
 
 def _get_default_location_context() -> str:
@@ -286,7 +331,7 @@ Use browse_web to open a real Chromium browser and complete multi-step web tasks
 Use browser_navigate for simple page opens, browser_screenshot to check current state, and close_browser when done.
 </category>
 <category name="claude_code">
-Use run_claude_code to delegate complex coding tasks (write code, debug, refactor, review, create scripts).
+Use run_coding_agent to delegate complex coding tasks (write code, debug, refactor, review, create scripts).
 Use scaffold_project to create new projects from scratch.
 Use run_terminal_command_smart for commands that need safety reasoning.
 </category>
@@ -297,7 +342,7 @@ When you need other real-time data (scores, news, facts): use search_web or sear
 When the user wants to SEE search results in their browser: use search_in_browser.
 When you need to read a specific web page: use fetch_page_text.
 When the user asks to interact with a website (fill forms, apply to jobs, log in, download): use browse_web.
-When the user asks to write code, debug, scaffold a project, or do development work: use run_claude_code or scaffold_project.
+When the user asks to write code, debug, scaffold a project, or do development work: use run_coding_agent or scaffold_project.
 For multi-step requests like "open Firefox and search for Premier League scores": call the tools in sequence; first open_application("Firefox"), then search_in_browser("Premier League scores", "Firefox").
 </tool_routing>
 
@@ -306,7 +351,7 @@ These are common mistakes to avoid when selecting tools:
 Do NOT use get_unread_count for email; it times out. Use Chrome/Gmail instead.
 Do NOT use Chrome/Google Calendar for calendar queries; use get_upcoming_events (AppleScript).
 Do NOT call browse_web for simple URL opens; use open_url or chrome_navigate instead.
-Do NOT call run_claude_code for simple shell commands; use run_command instead.
+Do NOT call run_coding_agent for simple shell commands; use run_command instead.
 Do NOT call multiple search tools for the same query; pick one and use it.
 </tool_selection_errors>
 </tool_categories>
@@ -323,6 +368,11 @@ You have native tool-use capability. When you receive a request that requires ac
 def get_system_prompt() -> str:
     """Get the system prompt with current date/time injected."""
     return _build_system_prompt()
+
+
+def get_system_prompt_parts() -> tuple[str, str]:
+    """Return (static, dynamic) system prompt text for provider-level caching."""
+    return _SYSTEM_PROMPT_STATIC, _build_dynamic_context()
 
 
 def get_system_prompt_blocks(cache_static: bool = True) -> list[dict]:

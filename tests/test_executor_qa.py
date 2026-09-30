@@ -49,9 +49,10 @@ async def test_failed_qa_retry_only_offers_side_effect_free_tools():
     assert "create_note: ok" in retry_kwargs["user_message"]
 
 
-def test_unparseable_qa_reply_is_inconclusive():
-    assert QAAgent()._parse_qa_response("not json").conclusive is False
-    assert QAAgent()._parse_qa_response('{"passed": false, "issues": ["x"]}').conclusive is True
+def test_missing_qa_verdict_is_inconclusive():
+    assert QAAgent._result_from(None).conclusive is False
+    result = QAAgent._result_from({"passed": False, "issues": ["x"], "summary": "bad"})
+    assert result.conclusive is True and result.issues == ["x"]
 
 
 @pytest.mark.asyncio
@@ -86,3 +87,12 @@ async def test_last_plan_is_isolated_per_task():
     set_result, other_result = await asyncio.gather(set_plan(), read_plan())
     assert set_result is sentinel
     assert other_result is None
+
+
+@pytest.mark.asyncio
+async def test_qa_verify_requests_structured_verdict():
+    llm = MagicMock()
+    llm.chat_json = AsyncMock(return_value={"passed": True, "issues": [], "summary": "ok"})
+    result = await QAAgent().verify("task", "output", llm=llm)
+    assert result.passed and result.conclusive
+    assert llm.chat_json.await_args.args[1]["title"] == "qa_verdict"

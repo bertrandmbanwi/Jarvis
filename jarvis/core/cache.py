@@ -129,7 +129,7 @@ UNCACHEABLE_TOOLS: set[str] = {
     "chrome_fill_form",
     "chrome_scroll",
     "sync_browser_sessions",
-    "run_claude_code",
+    "run_coding_agent",
     "scaffold_project",
     "search_in_browser",
     "open_url_in_browser",

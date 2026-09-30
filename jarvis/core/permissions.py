@@ -162,7 +162,7 @@ TOOL_PERMISSIONS: dict[str, ToolPermission] = {
         requires_confirmation=True,
         reason="Delegates shell execution to Claude Code.",
     ),
-    "run_claude_code": _perm(Capability.SHELL, Capability.WRITE_LOCAL, risk=RiskLevel.CRITICAL),
+    "run_coding_agent": _perm(Capability.SHELL, Capability.WRITE_LOCAL, risk=RiskLevel.CRITICAL),
     "scaffold_project": _perm(Capability.SHELL, Capability.WRITE_LOCAL, risk=RiskLevel.HIGH),
     # Web and external APIs
     "search_web": _perm(Capability.EXTERNAL_NETWORK),

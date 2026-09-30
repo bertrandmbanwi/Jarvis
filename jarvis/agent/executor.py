@@ -30,7 +30,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from jarvis.agent.qa_agent import QAAgent
-from jarvis.agent.tool_selector import select_tools_for_request
+from jarvis.agent.tool_selector import select_tools_for_request, with_deferred_loading
 from jarvis.agent.tools_schema import TOOL_REGISTRY, TOOL_SCHEMAS
 from jarvis.core.cache import invalidate_on_mutation, tool_cache
 from jarvis.core.confirmation import confirmed_scope
@@ -87,6 +87,12 @@ class AgentExecutor:
         self._qa_agent = QAAgent()
         self._qa_enabled = True
 
+    def _tools_for(self, text: str, history: list[dict] | None, tools: list[dict] | None) -> list[dict]:
+        """OpenAI gets every tool with native tool search; other providers get keyword pruning."""
+        if getattr(self.llm, "cloud_name", None) == "openai":
+            return with_deferred_loading(tools or TOOL_SCHEMAS)
+        return tools or select_tools_for_request(text, TOOL_SCHEMAS, history)
+
     async def execute(
         self,
         user_input: str,
@@ -97,7 +103,7 @@ class AgentExecutor:
     ) -> str:
         """Process a user request using Claude's agentic tool-use loop."""
         logger.info("Agent executing (tier=%s): '%s'", tier, user_input[:100])
-        active_tools = tools or select_tools_for_request(user_input, TOOL_SCHEMAS)
+        active_tools = self._tools_for(user_input, conversation_history, tools)
         logger.info("Tool schema selection: %d/%d tools", len(active_tools), len(TOOL_SCHEMAS))
 
         response_text, tool_calls = await self.llm.chat_with_tools(
@@ -172,7 +178,7 @@ class AgentExecutor:
     ):
         """Stream the final response token by token after tool iterations."""
         logger.info("Agent executing (streaming, tier=%s): '%s'", tier, user_input[:100])
-        active_tools = tools or select_tools_for_request(user_input, TOOL_SCHEMAS)
+        active_tools = self._tools_for(user_input, conversation_history, tools)
 
         async for token in self.llm.chat_with_tools_stream(
             user_message=user_input,
@@ -208,7 +214,7 @@ class AgentExecutor:
             prompt = subtask_description
 
         logger.info("Subtask executing (tier=%s): '%s'", tier, subtask_description[:100])
-        active_tools = tools or select_tools_for_request(subtask_description, TOOL_SCHEMAS)
+        active_tools = self._tools_for(subtask_description, conversation_history, tools)
 
         response_text, tool_calls = await self.llm.chat_with_tools(
             user_message=prompt,
